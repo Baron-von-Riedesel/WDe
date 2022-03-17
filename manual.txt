@@ -1,0 +1,509 @@
+WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
+
+WDe User Manual
+
+  0.0 - Hot-Key Quick Reference
+  1.0 - Initial Screen
+  2.0 - Editing
+  3.0 - Drive Support
+    3.1 - Physical Disks
+      3.1.1 - BIOS Notes
+    3.2 - Logical Drives
+    3.3 - CD-Rom Drives
+    3.4 - Disk Images
+
+  4.0 - Menu System
+    4.1 - Basics
+    4.2 - Menu Items & Submenus
+      4.2.1 - Item "Save"
+      4.2.2 - Menu "File Ops"
+        4.2.2.1 - Item "Input"
+        4.2.2.2 - Item "MBR/Boot Sector"
+        4.2.2.3 - Item "Partition 1/2/3/4"
+        4.2.2.4 - Item "Fat1/Fat2"
+        4.2.2.5 - Item "Root"
+        4.2.2.6 - Item "Partition"
+        4.2.2.7 - Item "Chain"
+      4.2.3 - Menu "Goto"
+      4.2.4 - Menu "View"
+        4.2.4.1 - View "Directory"
+      4.2.5 - Menu "Find"
+      4.2.6 - Menu "Functions"
+        4.2.6.1 - Item "Fill"
+        4.2.6.2 - Item "Restrict"
+        4.2.6.3 - Item "UnFormat"
+        4.2.6.4 - Item "UnDelete"
+      4.2.7 - Item "Disk"
+
+  5.0 - Error Messages
+    5.1 - "No Matches Found"
+    5.2 - "File Chain Exceeds FAT"
+    5.3 - "File Too Small"
+    5.4 - "File Too Corrupt"
+    5.5 - "Error Reading File"
+    5.6 - "Error Writing File"
+    5.7 - "Error Creating File"
+    5.8 - "Invalid Sector Range"
+    5.9 - "Error Reading Sector"
+      5.9.1 - "Abort/Zero-Fill"
+      5.9.1 - "Abort/Skip/Ignore All"
+    5.10- "Error Writing Sector"
+    5.11- "File Not Found"
+    5.12- "Invalid Start Cluster"
+    5.13- "Recursive Link Not Found"
+    5.14- "Fat Table Not Blank"
+    5.15- "Root Not Blank"
+    5.16- "No Directories Found"
+
+
+  0.0 - Hot-Key Quick Reference
+
+    Universal Keys:
+
+    Escape        - Back out of a menu (Quit also)
+    Arrow Keys    - Change offset within data
+    PageUp        - Back 1 sector
+    PageDown      - Forward 1 sector
+    Ctrl+PageUp   - Back 100 sectors
+    Ctrl+PageDown - Forward 100 sectors
+    Tab           - Switch to/from ascii editing
+    Shift+Tab     - Switch between hex and binary
+    Ctrl+End      - Jump to last sector on drive
+    Ctrl+Home     - Jump to first sector on drive
+    
+    Keys in Fat of Fat32/Fat1x partitions:
+
+    Ctrl+Right    - Jump to linked fat entry
+    Ctrl+Left     - Recurse to find linking fat entry
+    Enter         - Jump to current entry's data
+
+    Keys in Data area of Fat32/Fat1x partitions:
+        
+    Ctrl+Right    - Jump to linked cluster in fat
+    Ctrl+Enter    - Jump to fat entry for this cluster
+
+
+
+  1.0 - Initial Screen
+
+    When WDe loads, a "Drive: " prompt appears.
+
+    A physical drive number can be entered (0/1/2...etc) which will
+    bring up the "Floppy/Hard Disk [F/H]" prompt.  Press "F" to load
+    the matching floppy disk and "H" will load the matching hard disk,
+    respectively. (80h is added to the drive number to get hard disks)
+
+    A logical drive letter can also be entered (A/B/C...etc) which will
+    load the respective drive the operating system is providing.
+
+    If TAB is pressed; the "Filename:" prompt will replace the drive
+    prompt and a full file/path name can be entered to load it into
+    the editor and treat it as a physical drive.  The sector restriction
+    function can then be used to set it as another type of drive.
+
+
+
+
+  2.0 - Editing
+
+    All hex and ascii editing must be saved with 'F1' before changing
+    sectors or quitting the program as changes will be lost.
+
+    Page Down/Page Up changes the current sector being edited.
+    Holding CTRL while pressing pgdn/pgup will jump by 100
+    sectors at a time.
+
+    Ctrl+Home & Ctrl+End jump to the beginning and end of the drive,
+    respectively.
+
+    The current sector, offset, area and cluster/fat-entry is
+    displayed along the top for convenience.  Next to the sector number
+    is a value in square brackets; this specifies what "section" of the
+    sector is currently being edited in the case that the sector size is
+    greater than 512 bytes.
+
+    When in the fat area, Ctrl+Right will jump to the next entry
+    in the fat chain and Ctrl+Left will attempt to recurse to the previous
+    entry in the fat.  Hitting enter will jump directly to the first
+    sector in that cluster in the data area.  Note that Ctrl+Right within
+    the Fat will not jump to entries belonging to non-existant clusters
+    (those that go beyond the end of the drive).
+
+    When in the data area, Ctrl+Enter will jump to the corresponding
+    fat entry.  Hitting Ctrl+Right will jump directly to the cluster
+    connected to it within the fat.
+
+    Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
+    to edit the physical drive that partition belongs to.
+
+    Hitting TAB will switch between hex & ascii editing.
+
+    If you hit the SHIFT+TAB key combination, you'll switch between
+    hex and binary editing.  In this mode, you can use 0 and 1 to set
+    bits or use the space bar to invert them.
+
+    Note: If queried for a value and you wish to type '0' but it is
+    not accepted, simply press enter.
+
+
+
+
+  3.0 - Drive Support:
+
+    3.1 - Physical disks (0, 1, 2, etc)
+
+      WDe supports physical disks using int13h's ah=42h for reads and
+      ah=43h for writes.  If these are not supported, WDe will default
+      to 02h/03h.  Drive information is obtained with ah=48h and ah=08h
+      respectively.  Note that the 'CHS:' information rolls over to 0
+      when a high enough sector is reached if the drive is big enough.
+
+      3.1.1 - BIOS Notes
+
+        Physical disks read by WDe are often limited by the BIOS.
+        A quick calculation should be done by going to the last sector
+        of the disk, multiplying that value by 512 and ensuring that
+        the result is the actual size of the disk.
+
+        If not, then it's likely that your BIOS needs to be updated
+        to support the drive.  It's also possible that WDe contains
+        a bug and is not reading it correctly.
+
+    3.2 - Logical drives (A:, C:, etc)
+
+      WDe uses int21h/ax=7305h to do logical drive reading/writing,
+      (DOS 7.x functions) and int 25h/26h (cx=0FFFFh) for non-fat32
+      partitions/drives.  All drive information is obtained from
+      the bootsector.
+
+    3.3 - CD-Rom drives
+
+      For CD-Rom drives, WDe uses int2Fh's ax=1510h to read, though
+      drives cannot be written to as it is not supported by any known
+      CD-RW drives although WDe should write correctly if a drive were
+      to support it.  Drive parameters are obtained from the first
+      sector.  Due to CD-Rom sector size (2048/2352 bytes), WDe addresses
+      them in separate sections.
+
+    3.4 - Disk Images
+
+      WDe reads files (hit tab when queried for drive) which can then
+      be treated as physical or logical drives using the "Restrict"
+      function.
+
+
+
+
+  4.0 - Menu System
+
+    4.1 - Basics
+
+      The menu is controlled by the function keys on the keyboard,
+      it is shown at the bottom of the screen when a drive is being
+      edited.
+
+      Some menu items open up new "submenus" which will then change
+      the use of the function keys; you can use the 'Escape' key to
+      go back to the previous menu.  Note that while in a submenu,
+      none of the keys used for editing work.
+
+      To quit WDe, pressing 'Escape' when at the main menu will
+      show a Yes/No prompt to quit; hitting escape again will
+      go back to the menu.
+
+    4.2 - Menu Items & Submenus
+
+      4.2.1 - Item "Save"
+
+        This menu option saves any manual changes made to the sector
+        currently being edited.
+
+      4.2.2 - Menu "File Ops"
+
+        This submenu gives two more submenus, "Save Sectors" and
+        "Restore Sectors".  The first is designed to save sectors
+        from the drive being edited to a file.  The second
+        restores sectors saved to file back to a drive.
+
+        Note that currently, due to the file size restrictions,
+        files cannot be saved that will exceed 2GB.  There are
+        plans to allow saving as multiple files.
+
+        4.2.2.1 - Item "Input"
+
+          Sectors are saved or restored beginning at the current
+          position on the drive being edited; the user of WDe
+          is prompted for the number of sectors to save/restore.
+
+        4.2.2.2 - Item "MBR/Boot Sector"
+
+          The MBR/Boot Sector can be saved/restored from/to file.
+          These are always considered to be at sector 0 and
+          considered to take 1 sector.
+
+        4.2.2.3 - Item "Partition 1/2/3/4"
+
+          These functions will save/restore the entire partition
+          selected to a file.  Note that files larger than 2gb's are
+          not yet supported by WDe.
+
+        4.2.2.4 - Item "Fat1/Fat2"
+
+          The first and second fat may be saved/restored.
+          Fat parameters are calculated from the bootsector.
+
+        4.2.2.5 - Item "Root"
+
+          Saves or restores either the root for FAT12/FAT16 or the
+          first cluster of it for FAT32 to/from file.
+
+        4.2.2.6 - Item "Partition"
+
+          Saves/restores the entire current partition to/from file.
+
+        4.2.2.7 - Item "Chain"
+
+          This option will appear when you're currently in the FAT table
+          or in the 32 bytes belonging to a file.  Using this option can
+          save the data in a fat or file chain to a specified file.
+
+      4.2.3 - Menu "Goto"
+
+        This feature jumps to a particular sector, cluster or disk area
+        for your editing convenience.
+
+      4.2.4 - Menu "View"
+
+        The view feature fills in the blank space below the hex editing
+        area with extra details for boot sectors, mbrs, fats and
+        directories when chosen.
+
+        4.2.4.1 - View "Directory"
+
+          If your view is set to 'directory', hitting enter in any of the
+          32 bytes belonging to a directory entry will cause WDe to jump
+          to the first sector of the first cluster of that file or
+          directory.
+
+      4.2.5 - Menu "Find"
+
+        Search functions may be used to find strings, hex, fats,
+        boot sectors, mbrs, and directories.  This is convenient for data
+        recovery if backups are stored, or the originals are lost in a
+        disaster.
+
+        The length of the [hex] string is currently dictated by the width
+        of the screen along with anything already displayed on the same
+        line.
+
+      4.2.6 - Menu "Functions"
+
+        4.2.6.1 - Item "Fill"
+
+          The fill functions allow the filling of sectors with a
+          repeated string or byte.  It also has an invert function
+          which takes each byte and reverses each bit; this is
+          ideal for securely overwriting data when used in conjunction
+          with the random fill function (which fills with random data).
+
+          The incremental function is ideal for rebuilding FAT tables
+          in a very quick and dirty manner.  The decremental function
+          was added because it mostly reuses the same code as the incremental
+          functions although has no obvious purpose.
+
+          Note that filling starts from the current sector.
+
+        4.2.6.2 - Item "Restrict"
+
+          This function was designed to set a range of sectors as a
+          different type of drive.  For example, if DOS was not mounting
+          Drive C (typing "C:" gives "invalid drive specification"), then
+          we could load the physical drive it belongs on ("0"), locate
+          the bootsector to that partition and then restrict it as a
+          fat drive.  This would allow us to jump along the fat chain,
+          jump to the root, etc, to verify drive integrity.  This means
+          that recovery operations may be made on FAT32 partitions under
+          DOS versions that do not support FAT32.
+
+          Another use is specifying the drive type of an image file
+          being read by WDe.
+
+          Restrict gives an "Above/Below" prompt.  If Above is chosen,
+          the current sector will now be considered Sector 0 and any
+          sectors "above" (lower than the current sector) are innaccessible.
+          "Below" will merely make all sectors below (greater than) the
+          current sector innaccessible.
+
+          When "Above" is chosen, an option to set the drive type is also
+          provided; FAT or Physical.  FAT reads the new "Sector 0" as a
+          bootsector and sets all variables accordingly; Physical treats
+          the drive as a hard drive with a master boot record.
+
+        4.2.6.3 - Item "UnFormat"
+
+          This function is only in the menu when editing a FAT partition.
+          It will detect whether or not the FAT and Root are blank before
+          continuing with an UnFormat.  Note that if the partition has been
+          labelled after it was formatted, the label may need to be removed
+          before using this function or the root will not be considered to
+          be blank (as the label may be stored as a 32-byte entry in the root).
+
+          UnFormat only writes to the FAT and Root; so if an unformat
+          is unsuccessful, reformatting the drive will restore it to the
+          state it was in before it was unformatted.
+
+          Unformatting a drive will not restore it to the state it was in
+          before a format; the process should only be used in hopes of
+          recovering required data before formatting the drive again for use.
+
+          Note that keeping a well defragmented drive increases the chances
+          of data being recoverable with unformat.
+
+        4.2.6.4 - Item "UnDelete"
+
+          This function only appears when the sector being edited is
+          detected as being a directory and the cursor is blinking
+          somewhere within the 32 bytes belonging to a deleted file.
+
+          It is recommended that multi-clustered directories be
+          undeleted manually; locating their clusters cannot
+          be accurately (or easily) done by a peice of software.
+
+          Undeletion works by attempting to "guess" which clusters
+          belong to a file; the concept is unreliable at best,
+          always check files once they're undeleted.
+
+          Note that keeping a well defragmented drive increases the chances
+          of data being recoverable with undelete.  Also be aware that WDe
+          is very picky about what a "directory" is; if no "UnDelete" option
+          is coming up when in the 32-bytes of a deleted file, there is
+          likely some sort of invalid data stored in the directory.
+
+      4.2.7 - Item "Disk"
+
+        Simply allows changing the drive being edited.
+        See "initial screen" at the top of this document for more details.
+
+
+
+
+  5.0 - Error Messages
+
+    5.1 - "No Matches Found"
+
+      This error simply means that WDe has reached the end of the drive and
+      whatever it was searching for (using the "Find" functions) was not
+      found.
+
+    5.2 - "File Chain Exceeds FAT"
+
+      This is typically an UnDelete error; it means that the end of the
+      fat table was reached before enough free clusters were found to provide
+      to the file being UnDeleted to restore it to its original size.
+
+    5.3 - "File Too Small"
+
+      This error occurs when attempting to read a file as a disk image when
+      it is smaller than 1 sector.
+
+      This error also occurs when attempting to restore a greater number of
+      sectors to disk from file than the file is large enough to provide.
+
+    5.4 - "File Too Corrupt"
+
+      This is an UnDelete error; the first cluster of the file is already
+      in use by another file on the drive, therefore at least the first
+      portion of the file is overwritten.  Users should manually delete
+      a file when this occurs.
+
+    5.5 - "Error Reading File"
+
+      This error is quite rare; it may occur for any number of reasons,
+      such as part of the file is being stored on damaged media.
+
+    5.6 - "Error Writing File"
+
+      This error may occur for any number of reasons; damaged media is
+      a strong possibility.
+
+    5.7 - "Error Creating File"
+
+      This error will typically occur when the user enters an invalid path
+      for the file to be stored in; or the media to be recorded to is
+      write-only.
+
+    5.8 - "Invalid Sector Range"
+
+      This error means that the range of sectors to be written to or read
+      from is not between the valid first and last sector of the drive being
+      edited.
+
+    5.9 - "Error Reading Sector"
+
+      This can mean that an attempt has been made to read a sector outside
+      the valid first and last sector of a drive.
+
+      The error can also mean that the sector attempting to be read is
+      physically damaged.
+
+      5.9.1 - "Abort/Zero-Fill"
+
+        In some cases when there is an error reading a sector, such as when
+        writing a number of sectors to file, this query will appear.  The
+        abort option will stop writing the file, whereas the "Zero-Fill"
+        option will write null characters to the file where the unreadable
+        sector should have been written.
+
+      5.9.1 - "Abort/Skip/Ignore All"
+
+        When searching and an "Error Reading Sector" message appears; this
+        set of options might be displayed.  The abort option will stop
+        searching, the "Skip" option will ignore the error and read the
+        next sector, and finally the "Ignore All" error will skip any
+        sectors that cannot be read and continue searching.
+
+    5.10- "Error Writing Sector"
+
+        If a sector cannot be written to, it's possible that the drive
+        being written to is read-only media.
+
+    5.11- "File Not Found"
+
+        This error occurs when a file to be read does not exist or the
+        path to it is invalid.
+
+    5.12- "Invalid Start Cluster"
+
+        This error is for UnDelete and Chain Saving/Restoring functions.
+        It means that the very first cluster is not within the valid first
+        and last cluster numbers for the particular drive.
+
+    5.13- "Recursive Link Not Found"
+
+        This error occurs when attempting to find a cluster that links to
+        another by recursively searching through the FAT table.  If WDe
+        reaches the beginning of the FAT without finding a linked entry,
+        this error occurs.
+
+    5.14- "Fat Table Not Blank"
+
+        This error is specific to UnFormat; the FAT Table must not contain
+        any entries; if it does then it is not fully formatted.
+
+    5.15- "Root Not Blank"
+
+        This is a somewhat unnecessary safety precaution taken by UnFormat;
+        if the FAT is blank but there exists an entry in the root, this
+        error occurs.
+
+        It typically means that there is a label in the root; since it's
+        not valid to have a file or directory on the partition that has
+        no clusters.  If the label is removed, this error should no longer
+        occur.
+
+    5.16- "No Directories Found"
+
+        This is another UnFormat error; it means that the entire drive has
+        been scanned but no valid directories were found.  Since UnFormat
+        can only recover files within directories, the UnFormat is aborted.
+    

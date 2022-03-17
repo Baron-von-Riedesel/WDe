@@ -1,0 +1,224 @@
+WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
+
+WDe V0.32
+  - don't change video mode if current mode has at least 43 lines.
+
+WDe V0.31
+  - added WDEVDD to allow WDE running in Windows XP.
+
+WDe V0.21b [04/17/04]
+  - read functions now attempted from newest to oldest (DrDOS fat32 fix)
+  - fat type detection always relies on number of clusters now
+  - re-wrote logical to physical jumping; works for fat1x now
+  - fixed calculation bug for root if it isn't early on the drive
+  - binary editing is now supported (SHIFT+TAB)
+  - added Raw/Cooked CD reading option (for use with all functions now)
+  - current sector numbers now showed for all save/restore sector functions
+  - can no longer jump beyond the end of the drive with goto functions
+  - added some proper support for non-standard sized sectors
+  - old int 13h functions for backwards compatibility were reliant on new
+    int 13h functions to get last sector number; fixed this
+  - recurse and chain saving functions now work with the second fat (slower?)
+  - added some unreadable sector compensation (fill with null)
+  - for searches, unreadable sector skipping added
+  - optimized CHS printing code for physical reads
+  - cleaned writefile function; fixed two chain saving bugs
+  - removed forgotten debug code for switching to CDs (displayed '06')
+  - optimized and centralized a lot of screen and cursor code
+  - re-implemented CD reading code; fixed some bugs (including dump as ISO)
+  - cleaned/optimized various parts of the code; added some debug options
+  - centralized sector saving code
+  - re-wrote some fat12 support functions
+  - re-wrote and centralized current fat entry calculations
+  - jumping to linked clusters in the data area now aborts if fat entry is 0
+  - fixed tiny fat12 finding bug that produced more false positives
+  - CD fat12 view function problems fixed
+  - bug using fat12 view on the last sector of the drive fixed
+  - fixed annoying "file size too big" bug saving sectors to files
+  - moved some code to where it belongs so the view area no longer gets
+    wiped when it's not supposed to while performing certain functions
+  - fixed screen-destroying bug saving sectors from physical drives
+  - fixed bug not allowing aborting from sector saving
+  - fixed bug getting dword values for 32-bit fill functions
+  - aborting with escape key now possible with fill functions
+  - fixed small logic flaw checking if a file to be written is too large
+  - fixed small bug with fat16 fat cluster jumping & chain saving
+  - fixed serious off-by-1 error with fat saving/restoring for the second fat
+  - fixed tiny fat16 cluster jumping bugs with chain ending entries
+  - centralized some filling function code
+  - fixed bug losing high word with 32-bit fill functions
+  - fixed logic error with decrement rollover for 12-bit fill function
+  - fixed bug writing across sector limits with putfatentry for fat12
+  - fixed bootsector view for fat1x showing hard drive number
+  - MBR finding code much better; now finds MBRs created by more OSes
+  - updated directory finding function to be slightly more strict
+  - fixed year digit highlighting for directory view
+  - cluster number now shows in fat32 root regions
+  - fixed logic flaw in string/hex searches
+  - set cursor position now uses bios; speed no longer needed
+  - files can now be read as drives (TAB instead of choosing a drive)
+  - limiting a sector range as a drive is now possible
+  - fixed some bugs with saving/restoring partitions
+
+WDe V0.20  [03/06/04]
+  - jumping support for CDs cut down to sectors
+  - support for direct reading of floppies (using 13h) added
+  - undelete function can no longer accidentally write past fat1
+  - directory detection now works with fat drives touched by Windows NT
+  - int 24h is now hooked to handle errors that once crashed WDe
+  - fixed small directory highlighting bug with modified time
+  - 'CHS:' displayed when using extended int 13h functions
+  - ISOs will automatically be dumped in RAW mode if possible
+  - fat chain and file saving/restoring added
+  - ctrl+left now recurses in the fat/data
+  - now "Searching..." is always displayed while doing searches
+  - full 4-digit dates now displayed in directory view
+  - save/restore sectors now show the sector number being worked with
+
+WDe V0.19  [08/24/02]
+  - optimizations
+  - added fill functions
+  - added 'unknown' to fsinfo view
+  - only the 'delete' key now writes nulls when ascii editing
+  - fixed bug saving fat
+  - fixed nasty bug saving sectors
+  - fixed small bug entering "jump to cluster" values
+  - fixed small bug when switching from fat32 to fat1x
+  - fixed remainder of ctrl+right fat12 bug
+  - jumping to fat2 now jumps to fat1 when there is no fat2
+  - append option added for file writing
+  - file undelete function added
+
+WDe V0.18  [07/29/02]
+  - fixed possible file handle bug
+  - added "tab" to switch between ascii/hex editing
+  - partition starts no longer show boot sector view by default
+  - MBR view shows "Unused" when partition type is 00h
+  - ctrl+enter in sector 0 of a logical drive now jumps to the
+    physical drive that partition is on
+  - logical to physical drive switching no longer shows cluster number
+  - hitting enter in physical drives no longer jumps
+  - physical drives show proper area along the top when views are set
+  - added highest nibble ignoring for fat32 entries
+  - fixed small multiplication bug when using over 8 sectors per cluster
+  - directory view now has Created/Accessed/Modified fields
+  - added FSinfo sector view (default only)
+
+WDe V0.17  [06/22/02]
+  - some optimizations
+  - added a fat search function
+  - added a quit prompt
+  - corrected small mbr view bug again (permanent fix this time)
+  - default view for CDs now clears the view
+  - added 'Hid Fat' (hidden fat) partitions for MBR view
+  - removed Ctrl+Right & Ctrl+Enter in root for fat1x
+  - added directory auto-detect for physical drives
+  - added '[MBR]' and '[Boot/Reserved]' for physical drives
+  - "Save to Disk" now gives status messages
+  - some fat12 view support for CDs
+  - escape quits from file saving/restoring operations
+  - ctrl+right now supports the second fat
+  - fixed accidental re-reading of fat sectors on one ctrl+right
+  - fixed accidental re-reading of fat sectors on multiple ctrl+rights
+  - fixed fat12 ctrl+right for last two bytes of fat sector 1,4,7,10 etc.
+  - added query to overwrite files
+  - ctrl+right now always jumps to the low nibble in the fat
+  - fixed file re-creation bug when saving sector mbr/bootsect
+  - added proper theoretical "save to disk" for CDs
+  - fixed low nibble hex backspace bug
+  - fixed inconsistent locking issue
+  - fixed drive re-locking bug (system would reset)
+  - fixed small stack issues when aborting searches
+
+WDe V0.16  [05/20/02]
+  - some optimizations
+  - mbr, bootsector, and directory search functions now support cd-rom
+  - added proper CD extension detection
+  - added fat12 view, [ctrl+]enter, ctrl+right & entry number display
+  - fixed a stack bug when a string is not found
+  - added more hard disk numbers allowed in boot sector view (up to 9)
+
+WDe V0.15  [05/12/02]
+  - lots of optimizations
+  - implemented ctrl+right to jump to the next entry when in the fat
+    and jumping directly to the next cluster when in the data area
+  - ctrl+enter now jumps to the fat entry corresponding to the
+    current cluster when in the data area
+  - updated the boot sector display, and added 'media descriptor' to it
+  - added 'Ext Fat' (extended fat) partitions for MBR view
+  - boot sector view for backup boot sector added
+  - boot sector view for partitions when using physical view
+  - automatic directory detection added
+
+WDe V0.14  [05/08/02]
+  - some optimizations
+  - fixed nasty key getting bug (created in V0.13b)
+  - restore sectors can no longer go over the partition limit
+
+WDe V0.13b [05/07/02]
+  - some optimizations
+  - fixed locking bug causing writes under windows to fail
+  - save/restore root now supports fat12/fat16
+  - fixed size checking when using restore drive/etc
+  - now checks to see if sectors being saved exceeds 2gb
+  - fixed view problem when saving sectors from cd from a subsector
+  - added jumping from fat entries and directory entries
+    to appropriate clusters by pressing 'enter'
+  - fixed a small directory view bug (high cluster highlighting)
+  - shows partition type in MBR-view (if fat12/fat16/fat32)
+  - re-wrote functions handling hex editing movement
+
+WDe V0.12b [04/25/02]
+  - many optimizations
+  - fixed a bug switching from a "subsector" on a CD drive to a logical
+    or physical drive
+  - fixed a cd-rom reading bug
+  - fixed an MBR view bug (highlighting sectors)
+  - fixed an insignificant potential fat type detection bug
+  - added CHS sector reading (int13h/ah=02) and writing for compatibility
+    with older systems that do not support extended int13h functions
+  - added "entry: [hex entry number]" along the top when in the fat
+  - dumping as ISO added for CDs
+  - added save options to save/restore the mbr, bootsector, fat 1/2,
+    root, entire drives and partitions to/from files
+  - fixed a bug when unable to write to drive (defaulted to CD-rom r/w)
+  - added 'active' for the active partition byte in mbr view
+  - fixed bootsector view issues with non-fat32 drives
+  - all view functions now work for CD subsectors
+  - fixed bug entering cluster when using jump to cluster
+  - fixed jumping bugs to input sector/cluster and last sector
+
+WDe V0.11b
+  - ctrl+pgup/pgdn now jumps 100 sectors at a time instead of 1000
+  - won't crash when sectors per cluster is 0
+  - will abort when unable to write sectors from file
+  - will abort when unable to read sectors when searching
+  - view functions added for fat16, fat32 and directories
+  - directory search functions added
+  - cd-rom support was [somewhat] added
+  - fixed mbr/bs/dir search (ended one sector before the drive ended)
+
+WDe V0.10b [04/01/02]
+  - int13h sector writes were fixed, since the previous versions
+    re-wrote the same data that was read from the drive
+  - display is now properly set to 80x25 text mode on quit
+  - some optimizations
+  - fixed a small cluster miscalculation when the root is immediately
+    after the fat on fat32 partitions
+  - fixed a problem when changing to non-existant physical drives
+    from logical drives
+  - fixed a bug causing wde to quit when hitting escape when changing
+    from a physical drive
+  - view functions added (default/mbr/bootsector)
+  - drive locking was added
+  - proper fat type detection was added (for use with view functions)
+  - bug fixed when saving sectors near the end of the drive
+  - bug fixed when writing to disk after saving sectors
+  - some search functions were added (string/hex/mbr/bs)
+  - added jump functions for int13h disk reading (partition 1/2/3/4)
+  - fixed a bug where two keys must be pressed after trying to read an
+    invalid drive when WDe first starts
+  - ctrl+pgup/pgdn now jumps 1000 sectors at a time
+
+WDe V0.09b [03/18/02]
+  - initial public release

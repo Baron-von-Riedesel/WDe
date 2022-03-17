@@ -1,0 +1,18 @@
+
+ About WDEVDD
+ 
+ WDEVDD is a "Virtual DOS Driver" (VDD) for Windows XP/Vista NTVDM.
+ It allows WDE low-level access to block devices when running in Windows.
+ This feature requires the user to have administrator rights.
+ 
+ Installation
+ 
+ WDEVDD.DLL must be copied to a directory included in the PATH
+ environment variable. AFAIK, for Vista, it has to be copied to the
+ Windows system directory.
+ 
+ License
+ 
+ WDEVDD is Copyright Japheth. Source is released under the GNU GPL2
+ license.
+ 

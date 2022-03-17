@@ -1,0 +1,632 @@
+;-------------------------------------------------------
+;
+; WDe Copyright(C)2005 Ben Cadieux
+;
+;-------------------------------------------------------
+ROOTLINKED_DIRECTORY    EQU 00000001b
+REGULAR_DIRECTORY       EQU 00000010b
+UNLINKED_DIRECTORY      EQU 00000100b
+UNTERMINATED_DIRECTORY  EQU 00001000b
+PROCESSABLE_DIRECTORY   EQU 00010000b
+PROCESSED_DIRECTORY     EQU 00100000b
+SUB_DIRECTORY           EQU 01000000b
+VALID_DIRECTORY         EQU 10000000b
+
+; commandflag for checkDirValidity function
+
+VALIDATE                EQU 1
+PROCESS                 EQU 2
+FILE_RECOVERY           EQU 3
+
+; writerootentry function
+
+ROOT_DIRECTORY          EQU 1
+LOST_DIRECTORY          EQU 2
+
+;
+; flaws:
+;   - there can be a blank sector in the middle of a directory cluster
+;     with the remaining sectors filled.
+;   - should check if [dirs] > 65535
+;     it should allocate more memory at ~8000 directories
+;   - error handling missing for out of root entry problems
+
+unformat:
+  mov eax, dword ptr [sector]
+  mov dword ptr [sbackup], eax
+  mov byte ptr [fromfat], 1             ; always use fat 1
+  mov dx, offset scanningfatmsg         ; display 'scanning fat'
+  call printbottom
+  mov eax, 2                            ; start at cluster 2
+    continuefatscan:
+      call checkabort
+      je abortUnformat
+      push eax
+        call getfatentry                ; get fat data for this cluster
+        mov edx, eax
+      pop eax
+      cmp byte ptr [status], ERROR
+      je abortunformat
+      test edx, edx                   ; blank fat entry?
+      jz entryisok                    ; yes, acceptable.
+      cmp edx, 0FFFFFF7h              ; bad cluster?
+      mov dx, offset dnfmsg
+      jne unformatError               ; no, not acceptable
+
+    entryisok:
+      inc eax                           ; cluster++
+
+      cmp eax, dword ptr [lastcluster]
+      jbe continuefatscan
+
+  unffatok:
+    mov eax, dword ptr [root]           ; jump to the root directory
+    mov dword ptr [sector], eax
+    call rwsect
+    cmp byte ptr [status], ERROR
+    je abortUnformat
+    mov dx, offset rnbmsg               ; root not blank
+    cmp byte ptr [readbuffer], 0        ; check if first root entry is blank
+    jne unformatError
+
+;---------------------------------------------------------
+;----------------------------------- scan for directories
+;---------------------------------------------------------
+  mov dx, offset fdirsmsg
+  call printbottom
+
+  mov dword ptr [cluster], 1            ; start at cluster 1
+  mov word ptr [dirs], 0                ; zero directory count
+
+  nextCluster:
+    inc dword ptr [cluster]             ; cluster++
+
+    mov eax, dword ptr [cluster]
+    cmp eax, dword ptr [rootc]          ; matches root cluster?
+    je nextCluster                      ; next cluster.
+
+    call cluster2sector                 ; read first sector in cluster
+
+    mov cl, byte ptr [spc]
+
+    nextSectorOfCluster:
+    call checkabort
+    je abortUnformat
+
+    cmp eax, dword ptr [dataend]
+    ja doneFindDirs
+    mov dword ptr [sector], eax
+    call printcounts
+    call rwsect                         ; need error checking b4 & after
+
+    mov si, offset readbuffer
+    xor bx, bx
+    call finddirectory
+    jnc isDirectory
+      cmp cl, byte ptr [spc]            ; if the first sector in a cluster
+      je nextCluster                    ; is not a directory...scan next
+                                        ; cluster
+      mov bx, word ptr [bps]
+      verifySectorNull:                 ; if the first sector of the cluster
+        lodsb                           ; was a directory then check the
+        test al, al                     ; remaining sectors if they're null
+        jnz nextCluster                 ; (unused directory entries)
+        dec bx
+      jnz verifySectorNull
+
+    isDirectory:
+
+      mov eax, dword ptr [sector]
+      inc eax                           ; increase sector # in cluster
+      dec cl                            ; if there are sectors left, loop
+      jnz nextSectorofCluster
+
+    mov bx, word ptr [dirs]             ; dirs*5 to find array position
+    shl bx, 2
+    add bx, word ptr [dirs]
+    inc word ptr [dirs]
+
+    add bx, offset dirarray
+    mov byte ptr [bx], 0                ; zero this clusters attributes
+
+    cmp cl, 0                           ; last sector in cluster?
+    jne notLastSect
+      mov si, word ptr [bps]            
+      cmp byte ptr [readbuffer-32+si], 0        ; if the first byte of the
+      je notLastSect                            ; last entry is not null, then
+      or byte ptr [bx], UNTERMINATED_DIRECTORY  ; directory is unterminated
+    notLastSect:
+
+    mov eax, dword ptr [cluster]        ; set the cluster
+    mov dword ptr [bx+1], eax
+
+    call cluster2sector
+
+    cmp dword ptr [sector], eax         ; if it's already the current sector
+    je dontReRead                       ; don't re-read it.
+
+      mov dword ptr [sector], eax       ; read first sector of cluster
+      call printcounts
+      call rwsect
+
+    dontReRead:
+
+    cmp word ptr [readbuffer], 202Eh            ; has "." entry?
+    jne unlinkeddirectory
+    cmp dword ptr [readbuffer+32], 20202E2Eh    ; has ".." entry?
+    jne unlinkeddirectory
+
+    mov ax, word ptr [readbuffer+32+DIR_CLUST_HIGH]
+    shl eax, 16
+    mov ax, word ptr [readbuffer+32+DIR_CLUST_LOW]
+    cmp eax, dword ptr [rootc]          ; check if directory was in the root
+    jne regulardirectory
+
+      or byte ptr [bx], ROOTLINKED_DIRECTORY OR PROCESSABLE_DIRECTORY
+      jmp nextCluster
+
+    regulardirectory:
+      or byte ptr [bx], REGULAR_DIRECTORY
+      jmp nextCluster
+
+    unlinkeddirectory:
+      or byte ptr [bx], UNLINKED_DIRECTORY
+      jmp nextCluster
+
+;---------------------------------------------------------
+;------------------------ processing of directories
+;---------------------------------------------------------
+doneFindDirs:
+  mov dx, offset rdirsmsg
+  call printbottom
+  xor ax, ax
+  mov word ptr [lostdirs], ax           ; zero lost directory count
+  mov word ptr [rootdirs], ax           ; zero root directory count
+  cmp word ptr [dirs], ax
+  mov dx, offset nodirsmsg              ; no directories found
+  je unformatError
+  dirsFound:
+
+  mov ah, PROCESSABLE_DIRECTORY         ; the default is to search for
+                                        ; processable directories
+  dirsFound2:
+  mov al, 0
+
+  mov cx, word ptr [dirs]
+  mov bx, offset dirarray
+
+  ; the following loop sets all 'ah' directories to "processed"
+
+  processedLoop:
+    call checkabort
+    je abortUnformat
+    test byte ptr [bx], PROCESSED_DIRECTORY
+    jnz continueProcessedLoop
+    test byte ptr [bx], ah
+    jz continueProcessedLoop
+    jmp foundProcessed
+  rejoinProcessedLoop:
+    mov al, 1                   ; at least one processable directory found
+  continueProcessedLoop:
+    dec cx
+    jz findMoreProcessables     ; out of processed directories; find more
+      add bx, 5
+      jmp processedLoop
+  findMoreProcessables:
+    test al, al
+    jnz dirsFound
+    jmp dirProcessing
+
+  foundProcessed:
+    or byte ptr [bx], PROCESSED_DIRECTORY
+
+    ; check the directory for subdirectories.
+    ; any subdirectories will have the 'SUB_DIRECTORY' bit set.
+    ; any files/subdirectories will not have their first cluster used.
+    push ax
+    mov eax, dword ptr [bx+1]
+    mov dword ptr [cluster], eax
+    mov byte ptr [commandflag], VALIDATE
+    call checkDirValidity
+
+    ; if the directory is deemed invalid, then AL=1,
+    ; so any subdirectories are invalid and cannot be set to 'processed'
+      push cx
+      push bx
+        mov cx, word ptr [dirs]
+        mov bx, offset dirarray
+
+        checkForSubdirs:
+          test byte ptr [bx], SUB_DIRECTORY
+          jz nextSubDir
+
+          and byte ptr [bx], NOT SUB_DIRECTORY
+          cmp al, 1
+          je nextSubDir
+
+            or byte ptr [bx], PROCESSABLE_DIRECTORY
+
+          nextSubDir:
+          add bx, 5
+          dec cx
+        jnz checkForSubdirs
+      pop bx
+      pop cx
+    cmp al, 1
+    pop ax
+    je rejoinProcessedLoop
+    push ax
+
+      or byte ptr [bx], VALID_DIRECTORY ; recover files from this directory
+                                        ; in the next stage, since it's valid
+      test byte ptr [bx], ROOTLINKED_DIRECTORY
+      jz notRootLinked
+        mov al, ROOT_DIRECTORY
+        call writeRootEntry
+      notRootLinked:
+
+    push bx                             ; terminate the current directory
+      mov ebx, dword ptr [cluster]      ; in the fat
+      mov eax, 0FFFFFFFh
+      call putfatentry
+    pop bx
+    mov byte ptr [commandflag], PROCESS
+    call checkDirValidity
+
+    test byte ptr [bx], UNLINKED_DIRECTORY
+    pop ax
+    jz rejoinProcessedLoop
+
+    ; Next we deal with pieces of directories that have so many files
+    ; that some of the directory data is placed further on the drive.
+    ; This is done by recursing the array searching for a directory
+    ; that is an UNTERMINATED_DIRECTORY, then connecting it to the next
+    ; unlinked directory in the fat.
+
+    ; unlinked directory will now be processed, so remove the
+    ; unlinked bit and set it as a regular directory
+    and byte ptr [bx], NOT UNLINKED_DIRECTORY
+    or byte ptr [bx], REGULAR_DIRECTORY
+
+      push ax
+      push cx
+      push bx
+        findUnterminated:
+          cmp cx, word ptr [dirs]       ; couldn't find an unterminated dir?
+          je writeLDEntry               ; write "LOST0001" in the root
+
+          inc cx
+          sub bx, 5                     ; check previous item in the array
+
+        test byte ptr [bx], UNTERMINATED_DIRECTORY
+        jz findUnterminated
+
+        ; found an unterminated directory, so remove unterminated bit
+        and byte ptr [bx], NOT UNTERMINATED_DIRECTORY
+                                      
+          mov eax, dword ptr [cluster]  ; link the unlinked directory
+          mov ebx, dword ptr [bx+1]     ; with the unterminated directory
+          call putfatentry
+
+        jmp foundUnterminated
+
+      writeLDEntry:
+        mov al, LOST_DIRECTORY
+        call writeRootEntry
+      foundUnterminated:
+      pop bx
+      pop cx
+      pop ax
+
+    jmp rejoinProcessedLoop
+
+  dirProcessing:
+
+  cmp ah, UNLINKED_DIRECTORY  ; did we already search for unlinked dirs?
+  je recoverFiles             ; yes, done.
+  mov ah, UNLINKED_DIRECTORY  ; search for unlinked directories
+  jmp dirsFound2
+
+;---------------------------------------------------------
+;- all files/subdirs of this directory must be in free space
+;---------------------------------------------------------
+checkDirValidity:
+  push bx
+  push cx
+  mov eax, dword ptr [cluster]  ; get cluster number for this directory
+  call cluster2sector
+  mov dword ptr [sector], eax   ; get matching sector number
+
+  mov dh, byte ptr [spc]        ; number of sectors per cluster
+            
+  checkNextSector:
+
+    ;
+    ; Error checking?
+    ;
+
+    call printcounts
+    call rwsect                 ; read the data in
+    mov dl, 16                  ; 16 32-byte entries per directory sector
+    xor si, si                  ; pointer to the entry being worked with
+
+  processNextEntry:
+    cmp byte ptr [readbuffer+si], 00            ; no entries left
+    je validDir
+    cmp word ptr [readbuffer+si], 202Eh         ; skip "." entry
+    je skipThisEntry
+    cmp dword ptr [readbuffer+si], 20202E2Eh    ; skip ".." entry
+    je skipThisEntry
+
+    cmp byte ptr [readbuffer+si+DIR_ATTRIBUTES], 0Fh
+    je skipThisEntry            ; skip long filenames.
+
+  ; acquire the cluster number of the file/directory entry
+    mov ax, word ptr [readbuffer+si+DIR_CLUST_HIGH]
+    shl eax, 16
+    mov ax, word ptr [readbuffer+si+DIR_CLUST_LOW]
+    ;
+    ; error checking for cluster # needed here
+    ;
+
+    cmp byte ptr [commandflag], FILE_RECOVERY
+    je doRecoverFiles
+    cmp byte ptr [commandflag], PROCESS
+    je doSetEntryFatData
+
+    cmp eax, dword ptr [cluster]  ; cluster # of any entries within the
+    je invalidDir                 ; directory cannot match parent #
+    push eax
+      call getfatentry          ; get the matching fat entry
+      test eax, eax             ; test to see if it's 0
+    pop eax
+    jnz invalidDir              ; if not, skip.
+
+    test byte ptr [readbuffer+si+DIR_ATTRIBUTES], DIRECTORY
+    jz skipThisEntry            ; jump if not a directory
+
+    cmp byte ptr [readbuffer+si], 0E5h
+    je skipThisEntry            ; jump if directory is deleted
+
+    mov cx, word ptr [dirs]
+    mov bx, offset dirarray
+
+    findClusterMatch:
+      cmp dword ptr [bx+1], eax ; compare the starting cluster number of 
+      je foundClusterMatch      ; the subdirectory with the list of detected
+      add bx, 5                 ; directories.
+    loop findClusterMatch
+
+  ; If the subdirectories in the directory being checked for validity
+  ; were not found scanning the entire hard drive, then the directory
+  ; must be invalid --- it could be a false positive or directory information
+  ; stored on a disk image saved on this drive (or something similar).
+
+  invalidDir:
+    mov al, 1                   ; invalid directory
+  jmp doneValidation
+
+  foundClusterMatch:
+    or byte ptr [bx], SUB_DIRECTORY ; specify it's a located subdirectory
+  skipThisEntry:
+
+    add si, 32                  ; check next entry
+    dec dl
+    jnz processNextEntry
+
+    dec dh                      ; check next sector
+    jz validDir                 ; finished if out of sectors
+
+    inc dword ptr [sector]
+  jmp checkNextSector
+
+  doRecoverFiles:
+    mov dword ptr [cluster], eax        ; file cluster #
+    mov ebx, dword ptr [readbuffer+si+DIR_FILESIZE]
+    mov dword ptr [filesize], ebx
+
+    mov eax, dword ptr [maxsize]
+    cmp ebx, eax                        ; filesize smaller then maxsize?
+    jbe skipSetNextSize                 ; too small.
+    cmp dword ptr [nextsize], eax       ; nextsize is smaller than maxsize?
+    jb setNextSize                      ; set filesize as nextsize.
+    cmp ebx, dword ptr [nextsize]       ; filesize bigger than nextsize?
+    jae skipSetNextSize                 ; abort.
+      setNextSize:
+      mov dword ptr [nextsize], ebx
+    skipSetNextSize:
+
+    cmp ebx, dword ptr [minsize]        ; file must be bigger than minsize
+    jbe skipThisEntry
+    cmp ebx, dword ptr [maxsize]        ; file must be smaller/equal maxsize
+    ja skipThisEntry
+
+    call undeleteCore
+
+    jmp skipThisEntry
+
+  doSetEntryFatData:
+    mov ebx, eax
+    mov eax, 0FFFFFFFh
+    call putfatentry
+    jmp skipThisEntry
+
+  validDir:
+    mov al, 0
+
+  doneValidation:
+  pop cx
+  pop bx
+  ret
+
+;---------------------------------------------------------
+;------------------------ root directory entry re-writing
+;---------------------------------------------------------
+writeRootEntry:                         ; IN: si = offset readbuffer
+  push bx
+  push cx
+
+  mov ebx, dword ptr [root]
+
+  mov ch, byte ptr [spc]                ; start at the first root sector
+  xor dx, dx                            ; zero the checked root entry count
+
+  checkNextRootSect:
+    mov dword ptr [sector], ebx         ; error checking needed
+
+    call printcounts
+    call rwsect
+    mov cl, 16                          ; 16 entries per sector
+    mov si, offset readbuffer           ; start with entry at offset 0
+
+    checkNextEntry:
+      cmp byte ptr [si], 0              ; first byte of the entry is 0?
+      je writeEntry
+    add si, 32                          ; next entry
+    dec cl
+    jnz checkNextEntry
+
+    add dx, 16                          ; add to total number of processed
+                                        ; directory entries (dx)
+    inc ebx                             ; increase sector #
+
+    cmp byte ptr [fattype], FAT32
+    jne maxEntryCheck
+      dec ch                            ; spc processed < spc?
+      jnz checkNextRootSect
+
+      ;
+      ; needs to find an empty cluster
+      ;
+
+    maxEntryCheck:
+      cmp dx, word ptr [rootentries]    ; reached maximum # of root entries?
+      jb checkNextRootSect
+
+      ;
+      ; out of entries error handling
+      ;
+
+  writeEntry:
+    cmp al, LOST_DIRECTORY
+    je writeLostDir
+      mov dword ptr [si], 'RIDW'                ; "WDIR"
+      inc word ptr [rootdirs]
+      mov ax, word ptr [rootdirs]
+      jmp writtenDirType
+    writeLostDir:
+      mov dword ptr [si], 'TSOL'                ; "LOST"
+      inc word ptr [lostdirs]
+      mov ax, word ptr [lostdirs]
+    writtenDirType:
+    and eax, 0000FFFFh
+
+    call printcount                             ; decimal representation
+    mov eax, dword ptr [valuebuffer+6]          ; of the lost/root dir count
+    mov dword ptr [si+04h], eax                 ; ("WDIR0001" etc)
+
+    mov ax, word ptr [cluster+2]                ; high word of cluster #
+    mov word ptr [si+DIR_CLUST_HIGH], ax
+    mov ax, word ptr [cluster]                  ; low word of cluster #
+    mov word ptr [si+DIR_CLUST_LOW], ax
+
+    mov dword ptr [si+08h], 10202020h           ; extension+attribs
+
+    call copybuffer
+    call printcounts
+    mov byte ptr [rw], WRITE
+    call rwsect
+    ;
+    ; error checking
+    ;
+  pop cx
+  pop bx
+  ret
+
+;---------------------------------------------------------
+;------------------------ file recovery
+;---------------------------------------------------------
+recoverFiles:
+  mov dx, offset rfilesmsg
+  call printbottom
+
+  mov dword ptr [minsize], eax
+
+  mov eax, dword ptr [bpc]      ; all single cluster files were recovered,
+  mov dword ptr [maxsize], eax  ; so set the minimum file recovery size
+  add dword ptr [maxsize], eax  ; to the minimum number of bytes required
+                                ; to consume 2 clusters, and the maximum
+  mov dword ptr [minsize], eax  ; to the maximum required to fill 2 clusters.
+  ; the file must be bigger than minsize and smaller or equal to maxsize
+
+  restartRecoveryLoop:
+
+  mov bx, offset dirarray
+  mov cx, word ptr [dirs]
+
+  RecoveryLoop:
+  call checkabort
+  je abortUnformat
+    test byte ptr [bx], VALID_DIRECTORY
+    jnz recoverValidFiles
+  continueRecoveryLoop:
+  dec cx
+  jz adjustMinMax
+    add bx, 5
+    jmp RecoveryLoop
+
+ recoverValidFiles:
+
+    mov eax, dword ptr [bx+1]
+    mov dword ptr [cluster], eax
+    mov byte ptr [commandflag], FILE_RECOVERY
+    call checkDirValidity
+  jmp continueRecoveryLoop
+
+  adjustMinMax:
+    mov eax, dword ptr [nextsize]
+    cmp dword ptr [maxsize], eax   ; nextsize is smaller or equal to maxsize,
+    jae finishedUnformat           ; so no bigger files were found.
+
+  mov edx, dword ptr [bpc]
+  continueAdjustMinMax:
+    add dword ptr [minsize], edx
+    add dword ptr [maxsize], edx
+  cmp dword ptr [maxsize], eax
+  jb continueAdjustMinMax
+  jmp restartRecoveryLoop
+
+finishedUnformat:
+  cmp byte ptr [fats], 2
+  jb noCopyF1toF2
+    mov dx, offset fat1to2msg
+    call printbottom
+    mov eax, dword ptr [reserved]
+    mov ecx, dword ptr [spf]
+    mov edx, dword ptr [fatend]
+
+    f1tof2loop:
+      mov dword ptr [sector], eax
+      call rwsect
+      call copybuffer
+      mov dword ptr [sector], edx
+      mov byte ptr [rw], WRITE
+      call rwsect
+      inc eax
+      inc edx
+      dec ecx
+      jnz f1tof2loop
+    noCopyF1toF2:
+
+  mov eax, dword ptr [sbackup]
+  mov dword ptr [sector], eax
+  call rwsect
+  mov dx, offset doneufmsg
+unformatError:
+  call printerror
+  jmp mainmenu
+
+abortUnformat:
+  call updateScreen
+  jmp mainmenu
+;---------------------------------------------------------

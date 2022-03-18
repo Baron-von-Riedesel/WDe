@@ -518,18 +518,13 @@ setdrive:                       ; sets the drive being edited
   cmp byte ptr [mode], EDIT
   je dontwipescreen
   redraw:
-;    push 0B800h                 ; clear display area
-;    pop es
-    mov es,[vidseg]
+    mov es,[vidseg]             ; clear display area
 if 0
     mov di, 178
 else
-	push ds
-	push 0
-	pop ds
-	mov bx,ds:[44ah]
+	mov bl,[vidcols]
+	mov bh,0
 	add bx,bx
-	pop ds
 	mov di,bx
 	shl di,1  ;2 lines
 	add di,2*9
@@ -3279,8 +3274,18 @@ colorize:                               ; in: cl=number of chars to color
 ;-------------------------------------------------------
 bshighlight:
   pusha
-  mov al, DEFAULTCOLOR
   mov cl, 0Ah
+
+;--- make sure not to modify attribs beyond col 80
+  mov al, 80
+  sub al, byte ptr [xy]
+  jc @F
+  cmp al, cl
+  jnc @F
+  mov cl, al
+@@:
+
+  mov al, DEFAULTCOLOR
   call colorize
   mov cl, byte ptr [highlight+3]
 
@@ -4511,16 +4516,14 @@ init:
   push ds
   push 0
   pop ds
-  mov al,ds:[44Ah]
-  mov cl,ds:[484h] ;rows
-  inc cl
+  mov cl,ds:[44Ah]
+  mov bx,ds:[44Eh]
+  mov ch,ds:[484h] ;rows
+  mov dl,ds:[462h] ;video page
+  inc ch
   pop ds
-  cmp cl,43
-  jb @F
-  mul cl
-  mov cx,ax
-  jmp clrscn
-@@:
+  cmp ch,43
+  jae clrscn
   mov ax, 1200h                         ; EGA or better present?
   mov bl, 10h
   xor cx, cx
@@ -4541,13 +4544,34 @@ skipacd:
   mov bl, 0
   int 10h                               ; select font 8x8 ROM
 fth:
-  mov cx, 43*80 ;3999
+  mov cl, 80
+  mov ch, 43
+  xor bx, bx
+  mov dl,0
 clrscn:
+  mov [vidcols],cl
+  mov [vidrows],ch
+  mov [vidpg],dl
+  mov ch,43
+  shr bx,4
+  add di,bx
   mov [vidseg],di
   mov es,di
   xor di,di
+@@:
+  push cx
+  push di
+  mov cx,80
   mov ax, DEFAULTCOLOR*100h+SPACE
   rep stosw
+  pop di
+  pop cx
+  mov al,[vidcols]
+  mov ah,0
+  shl ax,1
+  add di,ax
+  dec ch
+  jnz @B
 
   mov word ptr [xy], 1423h              ; print out copyright info
   mov dx, offset introtext
@@ -4582,7 +4606,7 @@ clrscn:
 ;-------------------------------------------------------
 setxy:                          ; set the current x/y coordinate
   pusha                         ; of the cursor this is mainly for
-  xor bh, bh                    ; the cursor when receiving input
+  mov bh, [vidpg]               ; the cursor when receiving input
   mov dx, word ptr [xy]         ; since we use direct text output
   mov ah, 02h
   int 10h
@@ -5084,11 +5108,8 @@ cbuffer_offset:                 ; take what's in [xy] and set di to offset
 ;   pop es
     mov es,[vidseg]
     mov al, byte ptr [xy+1]
-	push ds
-	push 0
-	pop ds
-	mov bx,ds:[044ah]
-	pop ds
+	mov bl,[vidcols]
+	mov bh,0
 ;    mov bx, 80
     mul bl
     mov bl, byte ptr [xy]
@@ -5312,12 +5333,10 @@ else
   mov ah, 01h
   mov cx, 0808h
   int 10h
-  push ds
-  push 0
-  pop ds
-  mov cx,ds:[44ah]
-  mov bl,ds:[484h]
-  pop ds
+  mov cl,[vidcols]
+  mov ch,0
+  mov bl,[vidrows]
+  dec bl
   mov al,bl
   mul cl
   shl ax,1
@@ -5326,7 +5345,7 @@ else
   mov ax,07*100h+SPACE
   rep stosw
   mov ah,2	;set cursor pos
-  mov bh,0
+  mov bh,[vidpg]
   mov dh,bl
   mov dl,0
   int 10h
@@ -5562,28 +5581,24 @@ checksetview:
 ; push 0b800h                                   ; clear the view area to
 ; pop es                                        ; prepare for new view
   mov es,[vidseg]
-  mov ax, DEFAULTCOLOR*100h + SPACE
-if 0
-  mov di, 1542h                                 ; start of view area (line 34)
-  mov cx, 558                                   ; number of bytes in area
-else
-  push ds
-  push 0
-  pop ds
-  mov di,ds:[44ah]
-  mov cx,di
-  shl cx,4  ;8 lines
-  shl di,1
-  push ax
-  push dx
+  mov cl,[vidcols]
+  mov ch,0
   mov ax,34
-  mul di
+  shl cx,1
+  mul cx
   mov di,ax
-  pop dx
-  pop ax
-  pop ds
-endif
+  mov dl,8
+@@:
+  push di
+  push cx
+  mov ax, DEFAULTCOLOR*100h + SPACE
+  mov cx,80
   rep stosw
+  pop cx
+  pop di
+  add di,cx
+  dec dl
+  jnz @B
 
   abortviewmode0:
   ret
@@ -6194,7 +6209,7 @@ funcmenu        db 4
                 db 44,43
         endif
 
-introtext       db 'WDe V0.32',0
+introtext       db 'WDe V0.33',0
 copyright       db 'Copyright(C)2005 Ben Cadieux',0
 
 owmsg           db 'File Exists - Append/Overwrite/Cancel [A/O/C]? ',0
@@ -6405,6 +6420,9 @@ drivepacket     dd ? ; sector number to start reading at read/write
                 dw ? ; +8 = segment of sector memory
 
 vidseg          dw ? ; video buffer segment
+vidcols         db ?
+vidrows         db ?
+vidpg           db ?,?
 cxy             dw ? ; cursor xy position
 
 mode            db ? ; what mode WDe is in; preparation for future features

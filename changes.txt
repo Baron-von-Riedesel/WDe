@@ -1,5 +1,10 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
+WDe V0.33
+  - set video attributes only in the 80x43 area in case current
+    video mode has more rows/cols.
+  - ensure that displays are done in current video page.
+
 WDe V0.32
   - don't change video mode if current mode has at least 43 lines.
 

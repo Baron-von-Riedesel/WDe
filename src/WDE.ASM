@@ -522,21 +522,20 @@ setdrive:                       ; sets the drive being edited
 if 0
     mov di, 178
 else
-	mov bl,[vidcols]
-	mov bh,0
-	add bx,bx
-	mov di,bx
-	shl di,1  ;2 lines
-	add di,2*9
+    mov bl,[vidcols]
+    mov bh,0
+    add bx,bx
+    mov di,bx
+    add di,2*9
 endif
-    mov ax, DEFAULTCOLOR*100h
+    mov ax, DEFAULTCOLOR*100h+SPACE
     mov dl, 32
     continuewipescreen:
     mov cx, 52
-	push di
+    push di
     rep stosw
-	pop di
-	add di,bx
+    pop di
+    add di,bx
     dec dl
     jnz continuewipescreen
 

@@ -6,12 +6,55 @@ WDe V0.33
   - ensure that displays are done in current video page.
   - fixed: switching between hex and binary mode didn't clear the first data
     line.
+  - added SETM43 tool. If it works with the graphics card, WDE's look
+    might improve since a 8x14 font (instead of 8x8) is used then.
 
 WDe V0.32
   - don't change video mode if current mode has at least 43 lines.
 
 WDe V0.31
   - added WDEVDD to allow WDE running in Windows XP.
+
+WDe V0.30b:
+  - fixed a small bug in the hex printing code
+  - separated int 13h buffers for getting drive info and reading/writing,
+  - reversed display of attribute bits in directory view to match binary
+  - fixed root cluster number display bug
+  - enhanced finding MBR; less chance of a false positive
+  - sector saving/restoring can no longer read/write outside drive parameters
+  - fixed bug in fat functions allowing them to read/write past fat tables
+  - added workaround to Win9x bug for theoretical writes to CD-Roms
+  - fixed bootsector display bug that occurred under certain conditions
+  - read functions fixed and reversed back to oldest to newest
+  - fixed bug switching to drives that were unable to be edited
+  - optimized code that converts values to hex strings
+  - modified menu system to be more versatile
+  - fixed bug getting fat entry data for last few allowable clusters
+    on maximally sized Fat12 and Fat16 partitions
+  - enhanced/corrected directory detection; less false negatives/positives
+  - updated file/path character checking; this further improves directory
+    finding and accepts more characters as valid input when undeleting
+  - unformat function has been re-designed, re-written and implemented
+  - bytes per sector returned by int 13h/48h now used for hard disks
+  - hitting enter in the fat area now works regardless of the view set
+  - fixed bug causing restore chain to default to second fat in directories
+  - fixed rare bug causing Fat16 partitions to be shown as Fat32
+  - file sharing violation crashes under windows fixed by having int 24h
+    return "fail" instruction to the calling code
+  - running out of disk space while writing a file now aborts with an error
+  - last sector bound now kept for non-physical drives restricted as physical
+  - restricting above as physical now always correctly sets last sector
+  - defaults to Fat1 if saving/restoring Fat2 when none exists
+  - fixed major partition saving bug (saving was starting at MBR)
+  - fixed partition saving/restoring bug causing it to miss last sector
+  - fixed CHS display code for high sector numbers
+  - CHS no longer displayed when switching from physical to non-physical
+  - workarounds added for CHS reading with poorly written BIOSes
+  - searching for String/Hex on CDs no longer randomly stops
+  - excessive amounts of code clean-up & optimization for speed and size
+  - much better system implemented to generate random values
+  - fixed some fat type detection problems
+  - MBR view now shows Linux, FreeBSD and NTFS as partition types
 
 WDe V0.21b [04/17/04]
   - read functions now attempted from newest to oldest (DrDOS fat32 fix)

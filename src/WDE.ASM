@@ -4532,6 +4532,7 @@ init:
   mov bl, 30h
   mov ax, 1201h                         ; 350 scan lines in next mode set
   int 10h
+
   mov ax, 3
   or bh, bh
   jz skipacd
@@ -5329,11 +5330,10 @@ if 0
 label2:
   int 10h
 else
-  mov ah, 01h
+  mov ah, 01h         ;set cursor shape
   mov cx, 0808h
   int 10h
-  mov cl,[vidcols]
-  mov ch,0
+  mov cl,[vidcols]    ;clear bottom line on screen (just 80 rows)
   mov bl,[vidrows]
   dec bl
   mov al,bl
@@ -5341,9 +5341,10 @@ else
   shl ax,1
   mov di,ax
   mov es,[vidseg]
-  mov ax,07*100h+SPACE
+  mov ax,07*100h+SPACE;07=white on black
+  mov cx,80
   rep stosw
-  mov ah,2	;set cursor pos
+  mov ah,2            ;set cursor pos to bottom line
   mov bh,[vidpg]
   mov dh,bl
   mov dl,0
@@ -5649,15 +5650,8 @@ printbottom:
       ;-------------------------------------------------------
 clearbottom:
   pusha
-;    mov cl, 4fh
-    push ds
-	push 0
-	pop ds
-	mov cl,ds:[44ah]
-	dec cl
-	pop ds
+    mov cl, 80
     sub cl, byte ptr [xy]
-    inc cl
     mov al, SPACE
     call printchar2
   popa

@@ -15,8 +15,8 @@
 
   2. User Interface
 
-  WDe has a text mode interface. It needs at least 43 row and 80 columns.
-  If the current text mode doesn't have 43 lines, WDE will switch to the
+  WDe has a text mode interface. It needs at least 43 rows and 80 columns.
+  If the current text mode has less than 43 rows, WDE will switch to the
   standard text mode, but loads the 8x8 font instead of the usual 8x16 one
   and restricts the scan lines to 350, thus achieving the needed 43 rows.
 

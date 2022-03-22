@@ -132,15 +132,8 @@
 ;      14:      insufficient disk space
 ;
 
-;locals
-assume ds:WDE, cs:WDE
-;WDE segment public word 'CODE'
-WDE segment public dword 'CODE'
-org 100h
-.386p
-
-;        DEBUG            EQU 1 ; uncomment to assemble in debug mode
-;        BASIC            EQU 1 ; uncomment to enable extended functionality
+;        _DEBUG           EQU 1 ; uncomment to assemble in debug mode
+;        ?BASIC           EQU 1 ; uncomment to enable extended functionality
         UNDEFINED        EQU 0
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
@@ -347,6 +340,7 @@ org 100h
         GET_VALUE        EQU 0
         GET_STRING       EQU 1
 
+
 ;--- display string on the windows debug terminal
 @DbgOut macro text
 local xxx
@@ -356,8 +350,435 @@ ifdef _DEBUG
 	db text,0
 xxx:
 endif
-	endm
+endm
 
+	.model tiny
+	.dosseg
+	.386
+
+;--- since the standard 16-bit segments are word aligned, we need one
+;--- that allows dword alignment
+_BSS? segment dword public 'DATA'
+_BSS? ends
+DGROUP group _BSS?
+
+	.data
+
+initialmenu     db 7                    ; 7 items in this menu
+                db 3                    ; 3 spaces between each
+                db 0,1,2,3,4,5,6        ; items to display
+
+jumpmenu        db 7
+                db 2
+                db 7,8,9,10,11,12,13
+
+cdjumpmenu      db 1
+                db 0
+                db 7
+
+viewmenu        db 7
+                db 2
+                db 25,17,9,39,40,41,26
+
+searchmenu      db 6
+                db 3
+                db 27,28,17,9,31,26
+
+fillmenu        db 6
+                db 3
+                db 28,27,32,33,42,34
+
+idmenu          db 4
+                db 3
+                db 35,36,37,38
+
+filemenu        db 2
+                db 3
+                db 14,15
+
+cdfilemenu      db 2
+                db 3
+                db 14,24
+
+
+pdfilemenu      db 6
+                db 2
+                db 16,17,18,19,20,21
+
+ldfilemenu      db 6
+                db 3
+                db 16,9,10,11,12,22
+
+chainmenu       db 7
+                db 2
+                db 16,9,10,11,12,22,23
+
+funcmenu        db 4
+                db 3
+                db 30,29
+        ifndef ?BASIC
+                db 44,43
+        endif
+
+introtext       db 'WDe V0.33',0
+copyright       db 'Copyright(C)2005 Ben Cadieux',0
+
+owmsg           db 'File Exists - Append/Overwrite/Cancel [A/O/C]? ',0
+fhdmsg          db 'Floppy/Hard Disk [F/H]? ',0
+cdrcmsg         db 'Raw/Cooked Mode [R/C]? ',0
+plmsg           db 'Physical/Fat [P/F]? ',0
+abmsg           db 'Above/Below [A/B]? ',0
+;fomsg           db 'New File/Abort [F/A]? ',0
+truncatemsg     db 'Truncate To Filesize',0
+diskfullmsg     db 'Disk Full',0
+quitmsg         db 'Quit',0
+ynmsg           db ' [Y/N]? ',0
+
+unknownmsg      db 'Unknown',0
+active          db 'Active',0
+
+part00          db 'Unused',0
+part050F        db 'Ext Fat',0
+part07          db 'NTFS',0
+part83          db 'Linux',0
+partA5          db 'FreeBSD',0
+;partA8          db 'OS-X',0
+;partA6          db 'OpenBSD',0
+;partA9          db 'NetBSD',0
+;partEB          db 'BeOS',0
+
+parthid         db 'Hid Fat',0 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B
+
+menuitems       db 'Save',0                             ; 0
+                db 'File Ops',0                         ; 1
+                db 'Goto',0                             ; 2
+                db 'View',0                             ; 3
+                db 'Find',0                             ; 4
+                db 'Functions',0                        ; 5
+                db 'Disk',0                             ; 6
+                db 'Sector',0                           ; 7
+                db 'Cluster',0                          ; 8
+                db 'Boot Sector',0                      ; 9
+                db 'Fat1',0                             ; 10
+                db 'Fat2',0                             ; 11
+                db 'Root',0                             ; 12
+                db 'Data Area',0                        ; 13
+                db 'Save Sectors',0                     ; 14
+                db 'Restore Sectors',0                  ; 15
+                db 'Input',0                            ; 16
+                db 'MBR',0                              ; 17
+                db 'Partition1',0                       ; 18
+                db 'Partition2',0                       ; 19
+                db 'Partition3',0                       ; 20
+                db 'Partition4',0                       ; 21
+partition       db 'Partition',0                        ; 22
+                db 'Chain',0                            ; 23
+                db 'Dump CD As ISO',0                   ; 24
+                db 'Default',0                          ; 25
+                db 'Directory',0                        ; 26
+                db 'String',0                           ; 27
+                db 'Hex',0                              ; 28
+                db 'Fill',0                             ; 29
+                db 'Restrict',0                         ; 30
+                db 'Fat',0                              ; 31
+                db 'Incremental',0                      ; 32
+                db 'Decremental',0                      ; 33
+                db 'Random',0                           ; 34
+                db '8Bit',0                             ; 35
+                db '12Bit',0                            ; 36
+                db '16Bit',0                            ; 37
+                db '32Bit',0                            ; 38
+part01          db 'Fat12',0                            ; 39
+part04060E      db 'Fat16',0                            ; 40
+part0B0C        db 'Fat32',0                            ; 41
+                db 'Inverse',0                          ; 42
+        ifndef ?BASIC
+                db 'UnDelete',0                         ; 43
+                db 'UnFormat',0                         ; 44
+        endif
+
+mbps            db 'Bytes Per Sector',0
+mspc            db 'Sectors Per Cluster',0
+mreserved       db 'Reserved Sectors',0
+mfats           db 'Number Of Fats',0
+mrootentries    db 'Maximum Root Entries',0      ; FAT1x only
+msip            db 'Sectors In Partition',0      ; bootsector & mbr
+mspf            db 'Sectors Per Fat',0
+mhs             db 'Partition Start',0
+mrootc          db 'Root Start Cluster',0        ; FAT32 only
+mfsis           db 'FSInfo Sector Number',0      ; FAT32 only
+mbackup         db 'Backup B.S. Location',0
+mldn            db 'Hard Disk Number',0
+mdb             db 'Media Descriptor',0
+
+fcs             db 'Total Free Clusters: ',0
+sfc             db 'First Free Cluster:  ',0
+
+mfixed          db ' (HD)',0
+mremovable      db ' (FD)',0
+
+startchs        db 'S-CHS',0
+endchs          db 'E-CHS',0
+startlba        db 'S-LBA',0
+mboot           db 'Boot  ',0
+mtype           db 'Type  ',0
+psize           db 'Sects ',0
+
+searchingmsg    db 'Searching...',0
+writingmsg      db 'Writing File...',0
+readingdrive    db 'Reading Drive...',0
+readingmsg      db 'Writing To Disk...',0
+recursemsg      db 'Recursing Chain...',0
+
+ifndef ?BASIC
+        undeletingmsg   db 'UnDeleting...',0
+        scanningfatmsg  db 'Scanning Fat...',0
+        rfilesmsg       db 'Recovering Files...',0
+        fdirsmsg        db 'Finding Directories...',0
+        rdirsmsg        db 'Recovering Directories...',0
+        fat1to2msg      db 'Copying Fat-1 to Fat-2...',0
+
+        doneufmsg       db 'Finished UnFormatting',0
+        doneudmsg       db 'Finished UnDeleting File',0
+
+        fileexceeded    db 'File Chain Exceeds FAT',0
+
+        dnfmsg          db 'Fat Table Not Blank',0
+        rnbmsg          db 'Root Not Blank',0
+        nodirsmsg       db 'No Directories Found',0
+
+        firstcharmsg    db 'New First Character: ',0
+endif
+
+stringerror     db 'No Matches Found',0
+abortfmsg       db 'Aborted Writing File',0
+abortdmsg       db 'Aborted Writing to Disk',0
+
+donemsg         db 'Finished Writing File',0
+donermsg        db 'Finished Writing to Disk',0
+
+toosmall        db 'File Too Small',0
+filenotfound    db 'File Not Found',0
+nofirstcluster  db 'File Too Corrupt',0
+filetoobig      db 'File Size Cannot Exceed 2GB',0
+
+errorread       db 'Error Reading File',0
+filewerror      db 'Error Writing File',0
+fileerror       db 'Error Creating File',0
+
+invalidpmsg     db 'Invalid Sector Range',0
+
+sectorrerror    db 'Error Reading Sector',0
+sectorrerror2   db ' - Abort/Zero-Fill [A/Z]? ',0
+sectorrerror3   db ' - Abort/Skip/Ignore All [A/S/I]? ',0
+sectorwerror    db 'Error Writing Sector',0
+greatmsg        db 'Invalid Start Cluster',0
+nochainmsg      db 'Recursive Link Not Found',0
+errormsg        db ' - Press Any Key',0
+
+inmbrmsg        db '[MBR]',0
+infatmsg        db '[Fat-',0
+inrootmsg       db '[Root]',0
+indatamsg       db '[Data]',0
+inreservedmsg   db '[Boot/Reserved]',0
+
+hexmsg          db 'Hex: ',0
+chsmsg          db 'CHS: ',0
+partmsg         db 'Part: ',0
+sizemsg         db 'Size: ',0
+entrymsg        db 'Entry:',0
+drivemsg        db 'Drive: ',0
+offsetmsg       db 'Offset: ',0
+stringmsg       db 'String: ',0
+sectormsg       db 'Sector: ',0
+clustermsg      db 'Cluster: ',0
+createdmsg      db 'Created: ',0
+accessedmsg     db 'Accessed: ',0
+modifiedmsg     db 'Modified: ',0
+filenamemsg     db 'Filename: ',0
+attributesmsg   db 'Attributes: ',0
+sectorsmsg      db 'Number Of Sectors: ',0
+
+	.data
+
+ifdef _DEBUG
+  eaxmsg        db 'EAX: ',00h
+  ebxmsg        db 'EBX: ',00h
+  ecxmsg        db 'ECX: ',00h
+  edxmsg        db 'EDX: ',00h
+  simsg         db 'SI:  ',00h
+  dimsg         db 'DI:  ',00h
+  spmsg         db 'SP:  ',00h
+  storedeaxmsg  db 'Stored EAX: ',00h
+  storedebxmsg  db 'Stored EBX: ',00h
+  storedecxmsg  db 'Stored ECX: ',00h
+  storededxmsg  db 'Stored EDX: ',00h
+  storedsimsg   db 'Stored SI:  ',00h
+  storeddimsg   db 'Stored DI:  ',00h
+  storedeax     dd ?
+  storedebx     dd ?
+  storedecx     dd ?
+  storededx     dd ?
+  storedsi      dd ?
+  storeddi      dd ?
+endif
+
+_BSS? segment
+
+old24h          dd ?
+
+; drivepacket is for use with int 25h/26h and int 21h/ax=7305h
+drivepacket     dd ? ; sector number to start reading at read/write
+                dw ? ; +4 = number of sectors to read/write
+                dw ? ; +6 = offset of sector memory
+                dw ? ; +8 = segment of sector memory
+
+vidseg          dw ? ; video buffer segment
+vidcols         db ?
+vidrows         db ?
+vidpg           db ?,?
+cxy             dw ? ; cursor xy position
+
+mode            db ? ; what mode WDe is in; preparation for future features
+rw              db ? ; distinguish between read/write
+drive           db ? ; drive number
+subsector       db ? ; because [spot] goes from 0-511, if we have sectors
+                     ; that are >512 bytes, subsector keeps track of what
+                     ; 512-byte piece we're working with
+hl              db ? ; keeps track of whether we're editing high or low nibble
+spot            dw ? ; keeps count of what byte we're editing 0-511
+fattype         db ? ; type of fat
+spf             dd ? ; sectors per fat
+fatend          dd ? ; end of fat
+spc             db ? ; sectors per cluster
+reserved        dd ? ; reserved sectors (start of fat)
+fats            db ? ; number of fats
+rootentries     dw ? ; number of root entries
+hdnumber        db ? ; hard drive number partition belongs to
+sector          dd ? ; sector for read/writes
+sector2         dd ? ; high sector dword for int13h
+backupbs        dd ? ; backup boot sector location
+rootsectors     dw ? ; number of root sectors
+dataend         dd ? ; end of data
+; dataend2        dd ? ; high dword for int13h HUGE hds
+datastart       dd ? ; start of data
+spcmd           db ? ; sectors per cluster for doing bitshifts
+lastcluster     dd ? ; total # of clusters on the drive
+root            dd ? ; root directory
+rootc           dd ? ; root cluster
+fsinfo          dw ? ; fsinfo sector
+rwfunction      db ? ; what read/write function to use
+drivetype       db ? ; logical/physical/etc
+xy              dw ? ; xy position on screen
+fromfat         db ? ; fat to use for getfatentry/putfatentry
+region          db ? ; what part of the disk we're in
+value           dd ?
+maxvalue        dd ?
+status          db ? ; error in called function?
+maxleft         db ?
+filesize        dd ?
+lastbottomtext  dw ? ; printbottom backs up string pointer for rwsect
+                     ; to reprint it when there's a sector error
+
+; "viewmode" defines what the section at the bottom of the screen just above
+; the menu is used to display (for additional information)
+;          0: unset
+;          1: bootsector
+;          2: fat12
+;          3: fat16
+;          4: fat32
+;          5: root
+;          6: data (scan for directory)
+;          7: mbr
+;          9: fsinfo
+
+; viewmode+1:            0 = dynamically choose view mode
+;                        1 = force current view
+viewmode        dw ?
+displaymode     db ? ; hex or binary
+
+highlight       dd ? ; area to highlight with viewmode
+
+oldfunction     dw ? ; when changing drives to edit, we need to keep
+olddrive        db ? ; track of these variables in case the drive can't
+oldbps          dw ? ; be accessed (has to default to previous drive)
+
+editmode        db ? ; what mode being edited in (ascii/default)
+cluster         dd ?
+; ldcluster       dd ? ; don't remember
+bpc             dd ? ; bytes per cluster
+bps             dw ? ; bytes per sector
+spcc            db ? ; sectors per cluster counter
+sbackup         dd ? ; sector backup
+handling        db ? ; how to handle errors:
+                     ;  3: ignore errors
+                     ;  2: query user with "skip"
+                     ;  1: query user with "fill with zero"
+                     ;  0: abort by default
+
+seed1 dw ?
+seed2 dw ?
+seed3 dw ?
+seed4 dw ?
+
+p1 dd ?
+p2 dd ?
+p3 dd ?
+p4 dd ?
+
+filename        db 69 dup(?)
+stringbuffer    db 76 dup(?)
+diskinfobuffer  db 1Ah dup(?)       ; buffer for int13h "get drive info"
+diskrwbuffer    db 10h dup(?)       ; buffer for int13h extended read/write
+fat12fix        db 5 dup(?)         ; stores first borrowed byte for fat12
+	align 4
+readbuffer      db 2352 dup(?)      ; read buffer for sector reading
+fat12fix2       db ?                ; stores last borrowed byte for fat12/CD
+	align 4
+writebuffer     db 2352 dup(?)      ; write buffer for sector writing
+cdheader        db 27 dup(?)        ; cd device request header
+; cblock          db 5 dup(?)         ; not sure if this is necessary
+
+drivestart      dd ?                ; used for sector restriction
+fat12start      dd ?                ; stores the sector number when fat12
+                                    ; view mode was selected
+cylinders       dw ?
+heads           db ?
+sectors         db ?
+
+valuebuffer     db 11 dup(?)
+rembytes        dw ?                ; remaining bytes when dealing with
+                                    ; non-standard sized sectors
+
+area            db ?            ; specifies where on a drive we are
+
+rwhandle        dw ?            ; read/write file handle
+rwfilesize      dd ?            ; read/write filesize
+filehandle      dw ?
+calladdress     dw ?
+fillflag        dw ?
+srflag          db ?
+undelflag       db ?            ; 
+driveflag       db ?            ; setdrive gets File or Drive? 0/1 respective
+commandflag     db ?            ; used by unformat & gethex
+chainflag       db ?            ; dictates what type of chain to save
+                                ; fat links/file
+
+; unformat
+lostdirs        dw ?            ; total lost directories found
+rootdirs        dw ?            ; total root directories found
+dirs            dw ?            ; total dirs found
+maxsize         dd ?            ; maximum filesize to recover
+minsize         dd ?            ; minimum filesize to recover
+nextsize        dd ?            ; next smallest filesize to recover
+
+dirarray        db ?
+
+_BSS? ends
+
+	.code
+
+	org 100h
 
 Start:
 
@@ -780,7 +1201,7 @@ restrictsectors:
 functions:
   mov byte ptr [funcmenu], 2
 
-  ifndef BASIC
+  ifndef ?BASIC
     cmp byte ptr [drivetype], FAT
     jne nlfdf
         
@@ -816,7 +1237,7 @@ functions:
   cmp ah, F2_KEY
   je fillfunctions
 
-  ifndef BASIC
+  ifndef ?BASIC
     cmp byte ptr [funcmenu], 2
     je getkeyagain13
 
@@ -1373,7 +1794,7 @@ viewoptions:
 mov al, ah
 sub al, 59
 
-ifdef DEBUG                             ; extra view for registers
+ifdef _DEBUG                             ; extra view for registers
   cmp ah, F8_KEY        ; (debug)
   je setview
 endif
@@ -2418,7 +2839,7 @@ printview:
   cmp byte ptr [bx], FSINFOVIEW
   je fsinfoviewmode
 
-ifdef DEBUG
+ifdef _DEBUG
   cmp byte ptr [bx], DEBUGVIEW
   je debugviewmode
 endif
@@ -4930,7 +5351,7 @@ rwsect:
       jmp itsS
       sectorerror2:
 
-        ifdef DEBUG
+        ifdef _DEBUG
           push eax
             mov eax, dword ptr [sector]
             call printcount
@@ -6048,7 +6469,7 @@ rand:
 
 ;-------------------------------------------------------
 ;-------------------------------------------------------
-ifdef DEBUG
+ifdef _DEBUG
 
 debugviewmode:
   push edx
@@ -6162,420 +6583,10 @@ endif
 ;-------------------------------------------------------
 ;-------------------------------------------------------
 
-
-
 ;-------------------------------------------------------
 int24h:         ; this is the new int 24h to catch any critical errors
   mov al, 3     ; abort operation code
   iret          ; int 24h would otherwise crash WDe with Abort/Retry/Fail
 ;-----------------------------------------------------------------
 
-initialmenu     db 7                    ; 7 items in this menu
-                db 3                    ; 3 spaces between each
-                db 0,1,2,3,4,5,6        ; items to display
-
-jumpmenu        db 7
-                db 2
-                db 7,8,9,10,11,12,13
-
-cdjumpmenu      db 1
-                db 0
-                db 7
-
-viewmenu        db 7
-                db 2
-                db 25,17,9,39,40,41,26
-
-searchmenu      db 6
-                db 3
-                db 27,28,17,9,31,26
-
-fillmenu        db 6
-                db 3
-                db 28,27,32,33,42,34
-
-idmenu          db 4
-                db 3
-                db 35,36,37,38
-
-filemenu        db 2
-                db 3
-                db 14,15
-
-cdfilemenu      db 2
-                db 3
-                db 14,24
-
-
-pdfilemenu      db 6
-                db 2
-                db 16,17,18,19,20,21
-
-ldfilemenu      db 6
-                db 3
-                db 16,9,10,11,12,22
-
-chainmenu       db 7
-                db 2
-                db 16,9,10,11,12,22,23
-
-funcmenu        db 4
-                db 3
-                db 30,29
-        ifndef BASIC
-                db 44,43
-        endif
-
-introtext       db 'WDe V0.33',0
-copyright       db 'Copyright(C)2005 Ben Cadieux',0
-
-owmsg           db 'File Exists - Append/Overwrite/Cancel [A/O/C]? ',0
-fhdmsg          db 'Floppy/Hard Disk [F/H]? ',0
-cdrcmsg         db 'Raw/Cooked Mode [R/C]? ',0
-plmsg           db 'Physical/Fat [P/F]? ',0
-abmsg           db 'Above/Below [A/B]? ',0
-;fomsg           db 'New File/Abort [F/A]? ',0
-truncatemsg     db 'Truncate To Filesize',0
-diskfullmsg     db 'Disk Full',0
-quitmsg         db 'Quit',0
-ynmsg           db ' [Y/N]? ',0
-
-unknownmsg      db 'Unknown',0
-active          db 'Active',0
-
-part00          db 'Unused',0
-part050F        db 'Ext Fat',0
-part07          db 'NTFS',0
-part83          db 'Linux',0
-partA5          db 'FreeBSD',0
-;partA8          db 'OS-X',0
-;partA6          db 'OpenBSD',0
-;partA9          db 'NetBSD',0
-;partEB          db 'BeOS',0
-
-parthid         db 'Hid Fat',0 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B
-
-menuitems       db 'Save',0                             ; 0
-                db 'File Ops',0                         ; 1
-                db 'Goto',0                             ; 2
-                db 'View',0                             ; 3
-                db 'Find',0                             ; 4
-                db 'Functions',0                        ; 5
-                db 'Disk',0                             ; 6
-                db 'Sector',0                           ; 7
-                db 'Cluster',0                          ; 8
-                db 'Boot Sector',0                      ; 9
-                db 'Fat1',0                             ; 10
-                db 'Fat2',0                             ; 11
-                db 'Root',0                             ; 12
-                db 'Data Area',0                        ; 13
-                db 'Save Sectors',0                     ; 14
-                db 'Restore Sectors',0                  ; 15
-                db 'Input',0                            ; 16
-                db 'MBR',0                              ; 17
-                db 'Partition1',0                       ; 18
-                db 'Partition2',0                       ; 19
-                db 'Partition3',0                       ; 20
-                db 'Partition4',0                       ; 21
-partition       db 'Partition',0                        ; 22
-                db 'Chain',0                            ; 23
-                db 'Dump CD As ISO',0                   ; 24
-                db 'Default',0                          ; 25
-                db 'Directory',0                        ; 26
-                db 'String',0                           ; 27
-                db 'Hex',0                              ; 28
-                db 'Fill',0                             ; 29
-                db 'Restrict',0                         ; 30
-                db 'Fat',0                              ; 31
-                db 'Incremental',0                      ; 32
-                db 'Decremental',0                      ; 33
-                db 'Random',0                           ; 34
-                db '8Bit',0                             ; 35
-                db '12Bit',0                            ; 36
-                db '16Bit',0                            ; 37
-                db '32Bit',0                            ; 38
-part01          db 'Fat12',0                            ; 39
-part04060E      db 'Fat16',0                            ; 40
-part0B0C        db 'Fat32',0                            ; 41
-                db 'Inverse',0                          ; 42
-        ifndef BASIC
-                db 'UnDelete',0                         ; 43
-                db 'UnFormat',0                         ; 44
-        endif
-
-mbps            db 'Bytes Per Sector',0
-mspc            db 'Sectors Per Cluster',0
-mreserved       db 'Reserved Sectors',0
-mfats           db 'Number Of Fats',0
-mrootentries    db 'Maximum Root Entries',0      ; FAT1x only
-msip            db 'Sectors In Partition',0      ; bootsector & mbr
-mspf            db 'Sectors Per Fat',0
-mhs             db 'Partition Start',0
-mrootc          db 'Root Start Cluster',0        ; FAT32 only
-mfsis           db 'FSInfo Sector Number',0      ; FAT32 only
-mbackup         db 'Backup B.S. Location',0
-mldn            db 'Hard Disk Number',0
-mdb             db 'Media Descriptor',0
-
-fcs             db 'Total Free Clusters: ',0
-sfc             db 'First Free Cluster:  ',0
-
-mfixed          db ' (HD)',0
-mremovable      db ' (FD)',0
-
-startchs        db 'S-CHS',0
-endchs          db 'E-CHS',0
-startlba        db 'S-LBA',0
-mboot           db 'Boot  ',0
-mtype           db 'Type  ',0
-psize           db 'Sects ',0
-
-searchingmsg    db 'Searching...',0
-writingmsg      db 'Writing File...',0
-readingdrive    db 'Reading Drive...',0
-readingmsg      db 'Writing To Disk...',0
-recursemsg      db 'Recursing Chain...',0
-
-ifndef BASIC
-        undeletingmsg   db 'UnDeleting...',0
-        scanningfatmsg  db 'Scanning Fat...',0
-        rfilesmsg       db 'Recovering Files...',0
-        fdirsmsg        db 'Finding Directories...',0
-        rdirsmsg        db 'Recovering Directories...',0
-        fat1to2msg      db 'Copying Fat-1 to Fat-2...',0
-
-        doneufmsg       db 'Finished UnFormatting',0
-        doneudmsg       db 'Finished UnDeleting File',0
-
-        fileexceeded    db 'File Chain Exceeds FAT',0
-
-        dnfmsg          db 'Fat Table Not Blank',0
-        rnbmsg          db 'Root Not Blank',0
-        nodirsmsg       db 'No Directories Found',0
-
-        firstcharmsg    db 'New First Character: ',0
-endif
-
-stringerror     db 'No Matches Found',0
-abortfmsg       db 'Aborted Writing File',0
-abortdmsg       db 'Aborted Writing to Disk',0
-
-donemsg         db 'Finished Writing File',0
-donermsg        db 'Finished Writing to Disk',0
-
-toosmall        db 'File Too Small',0
-filenotfound    db 'File Not Found',0
-nofirstcluster  db 'File Too Corrupt',0
-filetoobig      db 'File Size Cannot Exceed 2GB',0
-
-errorread       db 'Error Reading File',0
-filewerror      db 'Error Writing File',0
-fileerror       db 'Error Creating File',0
-
-invalidpmsg     db 'Invalid Sector Range',0
-
-sectorrerror    db 'Error Reading Sector',0
-sectorrerror2   db ' - Abort/Zero-Fill [A/Z]? ',0
-sectorrerror3   db ' - Abort/Skip/Ignore All [A/S/I]? ',0
-sectorwerror    db 'Error Writing Sector',0
-greatmsg        db 'Invalid Start Cluster',0
-nochainmsg      db 'Recursive Link Not Found',0
-errormsg        db ' - Press Any Key',0
-
-inmbrmsg        db '[MBR]',0
-infatmsg        db '[Fat-',0
-inrootmsg       db '[Root]',0
-indatamsg       db '[Data]',0
-inreservedmsg   db '[Boot/Reserved]',0
-
-hexmsg          db 'Hex: ',0
-chsmsg          db 'CHS: ',0
-partmsg         db 'Part: ',0
-sizemsg         db 'Size: ',0
-entrymsg        db 'Entry:',0
-drivemsg        db 'Drive: ',0
-offsetmsg       db 'Offset: ',0
-stringmsg       db 'String: ',0
-sectormsg       db 'Sector: ',0
-clustermsg      db 'Cluster: ',0
-createdmsg      db 'Created: ',0
-accessedmsg     db 'Accessed: ',0
-modifiedmsg     db 'Modified: ',0
-filenamemsg     db 'Filename: ',0
-attributesmsg   db 'Attributes: ',0
-sectorsmsg      db 'Number Of Sectors: ',0
-
-ifdef DEBUG
-  eaxmsg        db 'EAX: ',00h
-  ebxmsg        db 'EBX: ',00h
-  ecxmsg        db 'ECX: ',00h
-  edxmsg        db 'EDX: ',00h
-  simsg         db 'SI:  ',00h
-  dimsg         db 'DI:  ',00h
-  spmsg         db 'SP:  ',00h
-  storedeaxmsg  db 'Stored EAX: ',00h
-  storedebxmsg  db 'Stored EBX: ',00h
-  storedecxmsg  db 'Stored ECX: ',00h
-  storededxmsg  db 'Stored EDX: ',00h
-  storedsimsg   db 'Stored SI:  ',00h
-  storeddimsg   db 'Stored DI:  ',00h
-  storedeax     dd ?
-  storedebx     dd ?
-  storedecx     dd ?
-  storededx     dd ?
-  storedsi      dd ?
-  storeddi      dd ?
-endif
-
-
-old24h          dd ?
-
-; drivepacket is for use with int 25h/26h and int 21h/ax=7305h
-drivepacket     dd ? ; sector number to start reading at read/write
-                dw ? ; +4 = number of sectors to read/write
-                dw ? ; +6 = offset of sector memory
-                dw ? ; +8 = segment of sector memory
-
-vidseg          dw ? ; video buffer segment
-vidcols         db ?
-vidrows         db ?
-vidpg           db ?,?
-cxy             dw ? ; cursor xy position
-
-mode            db ? ; what mode WDe is in; preparation for future features
-rw              db ? ; distinguish between read/write
-drive           db ? ; drive number
-subsector       db ? ; because [spot] goes from 0-511, if we have sectors
-                     ; that are >512 bytes, subsector keeps track of what
-                     ; 512-byte piece we're working with
-hl              db ? ; keeps track of whether we're editing high or low nibble
-spot            dw ? ; keeps count of what byte we're editing 0-511
-fattype         db ? ; type of fat
-spf             dd ? ; sectors per fat
-fatend          dd ? ; end of fat
-spc             db ? ; sectors per cluster
-reserved        dd ? ; reserved sectors (start of fat)
-fats            db ? ; number of fats
-rootentries     dw ? ; number of root entries
-hdnumber        db ? ; hard drive number partition belongs to
-sector          dd ? ; sector for read/writes
-sector2         dd ? ; high sector dword for int13h
-backupbs        dd ? ; backup boot sector location
-rootsectors     dw ? ; number of root sectors
-dataend         dd ? ; end of data
-; dataend2        dd ? ; high dword for int13h HUGE hds
-datastart       dd ? ; start of data
-spcmd           db ? ; sectors per cluster for doing bitshifts
-lastcluster     dd ? ; total # of clusters on the drive
-root            dd ? ; root directory
-rootc           dd ? ; root cluster
-fsinfo          dw ? ; fsinfo sector
-rwfunction      db ? ; what read/write function to use
-drivetype       db ? ; logical/physical/etc
-xy              dw ? ; xy position on screen
-fromfat         db ? ; fat to use for getfatentry/putfatentry
-region          db ? ; what part of the disk we're in
-value           dd ?
-maxvalue        dd ?
-status          db ? ; error in called function?
-maxleft         db ?
-filesize        dd ?
-lastbottomtext  dw ? ; printbottom backs up string pointer for rwsect
-                     ; to reprint it when there's a sector error
-
-; "viewmode" defines what the section at the bottom of the screen just above
-; the menu is used to display (for additional information)
-;          0: unset
-;          1: bootsector
-;          2: fat12
-;          3: fat16
-;          4: fat32
-;          5: root
-;          6: data (scan for directory)
-;          7: mbr
-;          9: fsinfo
-
-; viewmode+1:            0 = dynamically choose view mode
-;                        1 = force current view
-viewmode        dw ?
-displaymode     db ? ; hex or binary
-
-highlight       dd ? ; area to highlight with viewmode
-
-oldfunction     dw ? ; when changing drives to edit, we need to keep
-olddrive        db ? ; track of these variables in case the drive can't
-oldbps          dw ? ; be accessed (has to default to previous drive)
-
-editmode        db ? ; what mode being edited in (ascii/default)
-cluster         dd ?
-; ldcluster       dd ? ; don't remember
-bpc             dd ? ; bytes per cluster
-bps             dw ? ; bytes per sector
-spcc            db ? ; sectors per cluster counter
-sbackup         dd ? ; sector backup
-handling        db ? ; how to handle errors:
-                     ;  3: ignore errors
-                     ;  2: query user with "skip"
-                     ;  1: query user with "fill with zero"
-                     ;  0: abort by default
-
-seed1 dw ?
-seed2 dw ?
-seed3 dw ?
-seed4 dw ?
-
-p1 dd ?
-p2 dd ?
-p3 dd ?
-p4 dd ?
-
-filename        db 69 dup(?)
-stringbuffer    db 76 dup(?)
-diskinfobuffer  db 1Ah dup(?)       ; buffer for int13h "get drive info"
-diskrwbuffer    db 10h dup(?)       ; buffer for int13h extended read/write
-fat12fix        db 5 dup(?)         ; stores first borrowed byte for fat12
-	align 4
-readbuffer      db 2352 dup(?)      ; read buffer for sector reading
-fat12fix2       db ?                ; stores last borrowed byte for fat12/CD
-	align 4
-writebuffer     db 2352 dup(?)      ; write buffer for sector writing
-cdheader        db 27 dup(?)        ; cd device request header
-; cblock          db 5 dup(?)         ; not sure if this is necessary
-
-drivestart      dd ?                ; used for sector restriction
-fat12start      dd ?                ; stores the sector number when fat12
-                                    ; view mode was selected
-cylinders       dw ?
-heads           db ?
-sectors         db ?
-
-valuebuffer     db 11 dup(?)
-rembytes        dw ?                ; remaining bytes when dealing with
-                                    ; non-standard sized sectors
-
-area            db ?            ; specifies where on a drive we are
-
-rwhandle        dw ?            ; read/write file handle
-rwfilesize      dd ?            ; read/write filesize
-filehandle      dw ?
-calladdress     dw ?
-fillflag        dw ?
-srflag          db ?
-undelflag       db ?            ; 
-driveflag       db ?            ; setdrive gets File or Drive? 0/1 respective
-commandflag     db ?            ; used by unformat & gethex
-chainflag       db ?            ; dictates what type of chain to save
-                                ; fat links/file
-
-; unformat
-lostdirs        dw ?            ; total lost directories found
-rootdirs        dw ?            ; total root directories found
-dirs            dw ?            ; total dirs found
-maxsize         dd ?            ; maximum filesize to recover
-minsize         dd ?            ; minimum filesize to recover
-nextsize        dd ?            ; next smallest filesize to recover
-
-dirarray        db ?
-
-WDE ends
 END Start

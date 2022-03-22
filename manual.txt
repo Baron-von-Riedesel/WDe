@@ -3,7 +3,7 @@ WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 WDe User Manual
 
   0.0 - Hot-Key Quick Reference
-  1.0 - Initial Screen
+  1.0 - Initial Screen and Commandline
   2.0 - Editing
   3.0 - Drive Support
     3.1 - Physical Disks
@@ -84,9 +84,10 @@ WDe User Manual
 
 
 
-  1.0 - Initial Screen
+  1.0 - Initial Screen and Commandline
 
-    When WDe loads, a "Drive: " prompt appears.
+    When starting, WDe accepts a drive letter, followed by a colon, as
+    a parameter. If no such argument is given, a "Drive: " prompt appears.
 
     A physical drive number can be entered (0/1/2...etc) which will
     bring up the "Floppy/Hard Disk [F/H]" prompt.  Press "F" to load

@@ -12,7 +12,8 @@
 ; hard-coded 512 bytes for sector sizes, not necessarily a bug.  Often
 ; I just need to go over the code and make sure it doesn't need to be fixed.
 ;
-; I assemble the source with tasm32 5.3 and tlink 7.1.32.2
+; the binary was originally created with tasm32 5.3 and tlink 7.1.32.2,
+; now it's done using jwasm.
 ;
 ; for lfn/undelete:
 ;  if (spot < 33), then a calculation needs to be done to check
@@ -367,6 +368,28 @@ Start:
                                 ;       - wipe variables
                                 ;       - set some defaults
                                 ;       - replace int24h
+
+  call cursoroff
+
+;--- scan command line
+  mov si,80h
+  mov cl,[si]
+  inc si
+  .while cl
+	lodsb
+	.if al != ' ' && al != 9
+		or al,20h
+		.if al >= 'a' && al <= 'z' && byte ptr [si] == ':'
+;---- drive letter followed by ':' entered in cmdline
+			sub al,'a'
+			jmp gdriveletter
+		.else
+			.break
+		.endif
+	.endif
+	dec cl
+  .endw
+
 
 initsetdrive:
   mov byte ptr [driveflag], 0   ; set to reading drive letters with tab
@@ -4300,7 +4323,8 @@ cursorgetkey:
   mov cx, 0808h
   int 10h
   popa
-call getkey
+  call getkey
+cursoroff:
   pusha
   mov ah, 01h
   mov cx, 2000h

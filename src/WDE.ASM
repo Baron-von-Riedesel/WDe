@@ -13,7 +13,7 @@
 ; I just need to go over the code and make sure it doesn't need to be fixed.
 ;
 ; the binary was originally created with tasm32 5.3 and tlink 7.1.32.2,
-; now it's done using jwasm.
+; now it's done using jwasm; alternately, Masm + MS link may be used.
 ;
 ; for lfn/undelete:
 ;  if (spot < 33), then a calculation needs to be done to check
@@ -358,9 +358,9 @@ endm
 
 ;--- since the standard 16-bit segments are word aligned, we need one
 ;--- that allows dword alignment
-_BSS? segment dword public 'DATA'
-_BSS? ends
-DGROUP group _BSS?
+_BSS segment dword public 'BSS'
+_BSS ends
+DGROUP group _BSS
 
 	.data
 
@@ -599,8 +599,6 @@ filenamemsg     db 'Filename: ',0
 attributesmsg   db 'Attributes: ',0
 sectorsmsg      db 'Number Of Sectors: ',0
 
-	.data
-
 ifdef _DEBUG
   eaxmsg        db 'EAX: ',00h
   ebxmsg        db 'EBX: ',00h
@@ -623,7 +621,10 @@ ifdef _DEBUG
   storeddi      dd ?
 endif
 
-_BSS? segment
+_BSS segment
+
+;--- note: old24h must remain first var in _BSS
+;--- since its address is used as start to clear memory.
 
 old24h          dd ?
 
@@ -634,7 +635,7 @@ drivepacket     dd ? ; sector number to start reading at read/write
                 dw ? ; +8 = segment of sector memory
 
 vidseg          dw ? ; video buffer segment
-vidcols         db ?
+vidcolsize      dw ?
 vidrows         db ?
 vidpg           db ?,?
 cxy             dw ? ; cursor xy position
@@ -774,7 +775,7 @@ nextsize        dd ?            ; next smallest filesize to recover
 
 dirarray        db ?
 
-_BSS? ends
+_BSS ends
 
 	.code
 
@@ -963,15 +964,9 @@ setdrive:                       ; sets the drive being edited
   je dontwipescreen
   redraw:
     mov es,[vidseg]             ; clear display area
-if 0
-    mov di, 178
-else
-    mov bl,[vidcols]
-    mov bh,0
-    add bx,bx
+    mov bx,[vidcolsize]
     mov di,bx
     add di,2*9
-endif
     mov ax, DEFAULTCOLOR*100h+SPACE
     mov dl, 32
     continuewipescreen:
@@ -1250,9 +1245,9 @@ functions:
     cmp ah, F4_KEY
     jne getkeyagain13
       ;------------------------------------------------------
-include UNDELETE.WDE
+include UNDELETE.INC
 ;------------------------------------------------------
-include UNFORMAT.WDE
+include UNFORMAT.INC
 ;------------------------------------------------------
   else
     jmp getkeyagain13
@@ -4110,7 +4105,7 @@ dumpiso:
 ;*******************************************************
 ; CALLS
 ;*******************************************************
-include FATFS.WDE
+include FATFS.INC
 ;-------------------------------------------------------
 printchs:
   call printstring
@@ -4953,15 +4948,24 @@ printchar:
   popa
   ret
 ;-------------------------------------------------------
-init:
-  cld                                   ; following code sets video mode
+init proc
 
+;--- cs=ds=es=ss (tiny model)
+;--- clear uninitialized vars
+  cld
+  mov di, offset old24h
+  mov cx, offset dirarray - offset mode
+  mov al, 0
+  rep stosb
+
+;--- check if video mode suits, else set 43x80 mode.
   mov di, 0B800h
   push ds
   push 0
   pop ds
-  mov cl,ds:[44Ah]
-  mov bx,ds:[44Eh]
+  mov ax,ds:[44Ah] ;cols
+  add ax,ax
+  mov bx,ds:[44Eh] ;start offset video page
   mov ch,ds:[484h] ;rows
   mov dl,ds:[462h] ;video page
   inc ch
@@ -4989,12 +4993,12 @@ skipacd:
   mov bl, 0
   int 10h                               ; select font 8x8 ROM
 fth:
-  mov cl, 80
+  mov ax, 80*2
   mov ch, 43
   xor bx, bx
   mov dl,0
 clrscn:
-  mov [vidcols],cl
+  mov [vidcolsize],ax
   mov [vidrows],ch
   mov [vidpg],dl
   mov ch,43
@@ -5011,10 +5015,7 @@ clrscn:
   rep stosw
   pop di
   pop cx
-  mov al,[vidcols]
-  mov ah,0
-  shl ax,1
-  add di,ax
+  add di,[vidcolsize]
   dec ch
   jnz @B
 
@@ -5034,7 +5035,6 @@ clrscn:
     mov dx, offset int24h               ; (al preserved from previous call)
     int 21h
 
-  call wipemem
   call setseeds1
 
   mov word ptr [drivepacket+4], 1       ; read in 1 sector at a time
@@ -5044,10 +5044,11 @@ clrscn:
   call spotcalc
   mov word ptr [cxy], dx
 
-;--- japheth: init vdd on nt platforms
-  call initvdd
+  call initvdd                          ; init vdd on nt platforms
 
   ret
+init endp
+
 ;-------------------------------------------------------
 setxy:                          ; set the current x/y coordinate
   pusha                         ; of the cursor this is mainly for
@@ -5056,7 +5057,7 @@ setxy:                          ; set the current x/y coordinate
   mov ah, 02h
   int 10h
   popa
-ret
+  ret
 ;-------------------------------------------------------
 ; IN:   eax             = value to convert to ascii
 ; OUT:  [valuebuffer]   = ascii equivalent
@@ -5549,18 +5550,16 @@ getfilename:                    ; IN:  nothing
 ;-------------------------------------------------------
 cbuffer_offset:                 ; take what's in [xy] and set di to offset
   push ax                       ; to the respective byte in the screen buffer
-;   push 0b800h
-;   pop es
-    mov es,[vidseg]
-    mov al, byte ptr [xy+1]
-	mov bl,[vidcols]
-	mov bh,0
-;    mov bx, 80
-    mul bl
-    mov bl, byte ptr [xy]
-    add ax, bx
-    shl ax, 1
-    mov di, ax
+  push dx
+  mov es,[vidseg]
+  mov al, byte ptr [xy+1]
+  mov ah, 0
+  mul [vidcolsize]
+  movzx dx, byte ptr [xy]
+  add dx, dx
+  add ax, dx
+  mov di, ax
+  pop dx
   pop ax
   ret
 ;-------------------------------------------------------
@@ -5739,20 +5738,18 @@ getyn:                          ; prints [Y/N] on the screen
   je returnn
   cmp al, ESCAPE_KEY
   jne getyn2
-  returnn:
-    clc
+returnn:
+  clc
   ret
-  returny:
-    stc
-    doret:
+returny:
+  stc
   ret
 ;-------------------------------------------------------
-quit:
+quit proc
   mov dx, offset quitmsg
   call printbottom
   call getyn
   jnc doret
-  doquit:
 
 ;--- japheth: exit vdd on nt platforms
   call exitvdd
@@ -5774,28 +5771,28 @@ if 0
   mov al, 3
 label2:
   int 10h
+doneset:
 else
   mov ah, 01h         ;set cursor shape
   mov cx, 0808h
   int 10h
-  mov cl,[vidcols]    ;clear bottom line on screen (just 80 rows)
-  mov bl,[vidrows]
-  dec bl
-  mov al,bl
-  mul cl
-  shl ax,1
+  mov cx,[vidcolsize] ;clear bottom line on screen (just 80 rows)
+  mov al,[vidrows]
+  dec al
+  mov bl,al
+  mov ah,0
+  mul cx
   mov di,ax
   mov es,[vidseg]
   mov ax,07*100h+SPACE;07=white on black
   mov cx,80
   rep stosw
   mov ah,2            ;set cursor pos to bottom line
-  mov bh,[vidpg]
   mov dh,bl
+  mov bh,[vidpg]
   mov dl,0
   int 10h
 endif
-  doneset:
 
   mov ax, 2524h
   mov dx, word ptr [old24h]
@@ -5804,8 +5801,12 @@ endif
 
   mov ax, 4c00h
   int 21h
+doret:
+  ret
+quit endp
+
 ;-------------------------------------------------------
-savedata:
+savedata proc
 ;
 ; IN:   dd:[value]      number of sectors to save
 ;       eax             starting sector
@@ -5834,9 +5835,9 @@ savedata:
   pop ax
   cmp byte ptr [status], ERROR
   jne dosavedata
-    donesavedata:
+donesavedata:
     ret
-  dosavedata:
+dosavedata:
   call writefile
   call closefile
 
@@ -5853,21 +5854,23 @@ savedata:
 ;    mov al, byte ptr [fileflag]
 ;    mov byte ptr [bx+24], al
 ;    mov dx, bx
-    mov dx, offset filetoobig
+  mov dx, offset filetoobig
   jmp printerror
 ;-------------------------------------------------------
 invalidperror:
   mov dx, offset invalidpmsg
   jmp printerror
+savedata endp
+
 ;-------------------------------------------------------
 printfilemenu:
   mov byte ptr [chainflag], NO_CHAIN
 
   cmp byte ptr [drivetype], PHYSICAL
   jne logicalrfo
-    mov dx, offset pdfilemenu
-    jmp printmenu
-  logicalrfo:
+  mov dx, offset pdfilemenu
+  jmp printmenu
+logicalrfo:
 
   mov dx, offset ldfilemenu
   mov eax, dword ptr [reserved]
@@ -5882,7 +5885,7 @@ printfilemenu:
   cmp dword ptr [sector], eax
   jb dochain
 
-  checkdir:
+checkdir:
   mov si, offset readbuffer
   xor bx, bx
   call finddirectory
@@ -5891,12 +5894,14 @@ printfilemenu:
   mov byte ptr [chainflag], FILE_CHAIN
   jmp dochain2
 
-  dochain:
+dochain:
   mov byte ptr [chainflag], FAT_CHAIN
 
-  dochain2:
-    mov dx, offset chainmenu
-      ;-------------------------------------------------------
+dochain2:
+  mov dx, offset chainmenu
+
+;--- print menu at bottom line.
+;--- dx=menu
 printmenu:
   mov word ptr [xy], 2a01h
   mov si, dx
@@ -5938,6 +5943,7 @@ printmenu:
   cmp ch, ah
   jne nextmenuitem
   jmp clearbottom
+
 ;-------------------------------------------------------
 getstring:                              ; in: nothing
   mov dx, offset stringmsg              ; out: stringbuffer filled
@@ -6023,13 +6029,9 @@ checksetview:
   je abortviewmode0                             ; is already set.
 
   mov byte ptr [viewmode], dl                   ; set new view
-; push 0b800h                                   ; clear the view area to
-; pop es                                        ; prepare for new view
   mov es,[vidseg]
-  mov cl,[vidcols]
-  mov ch,0
+  mov cx,[vidcolsize]
   mov ax,34
-  shl cx,1
   mul cx
   mov di,ax
   mov dl,8
@@ -6234,16 +6236,6 @@ createfile:
   mov dx, offset abortfmsg
   jmp printerror
 ;-------------------------------------------------------
-; IN:  nothing
-; OUT: variables are wiped
-wipemem:
-  mov al, 0
-  mov di, offset mode          ; wipe mem
-  push cs
-  pop es
-  mov cx, offset dirarray-offset mode
-  rep stosb
-  ret
 ;-----------------------------------------------------------------
 ;       IN:  nothing
 ;       OUT: seeds filled

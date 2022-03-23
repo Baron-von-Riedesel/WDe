@@ -30,7 +30,8 @@
 
   WDe is supposed to run in DOS. There's a support dll supplied (WDEVDD.DLL),
   that may allow to run WDe in Windows XP as administrator, but this is
-  unsupported and won't work with newer versions of Windows.
+  unsupported and won't work with newer versions of Windows. Also note that
+  WDe needs at least a 80386 cpu to run.
 
 
   4. License

@@ -3,7 +3,8 @@
 ; WDe Copyright(C)2005 Ben Cadieux
 ;
 ;-------------------------------------------------------
-undelete:
+undelete proc
+;undelete:
   mov byte ptr [fromfat], 1
   call spotinbx                         ; move to the beginning of the
     and bl, 11100000b                   ; file entry
@@ -16,18 +17,16 @@ undelete:
   ; bounds check
   cmp eax, 2
   jb invclust                           ; not a valid cluster if it's below 2
-  mov dword ptr [cluster], eax
+  mov [dwCluster], eax
   call getfatentry
-  cmp byte ptr [status], ERROR          ; not enough free clusters?
+  cmp [status], ERROR                   ; not enough free clusters?
   jne filenoexceed
-    mov dx, offset fileexceeded
-    call printerror
-    jmp mainmenu
-    invclust:
+  jmp undelete_err1
+invclust:
     mov dx, offset greatmsg
     call printerror
     jmp mainmenu
-  filenoexceed:
+filenoexceed:
   test eax, eax
   jz undel1good
 
@@ -35,12 +34,12 @@ undelete:
     call printerror
     jmp mainmenu
 
-  undel1good:
+undel1good:
 
-  mov dx, offset firstcharmsg
+  mov dx, CStr('New First Character: ')
   call printbottom
 
-  getkeyagain16:
+getkeyagain16:
 
   call cursorgetkey
   cmp al, ESCAPE_KEY
@@ -60,29 +59,30 @@ undelete:
 ;    add bx, offset readbuffer
     mov byte ptr [bx], al
     call copybuffer
-    mov byte ptr [rw], WRITE
+    mov [bRW], WRITE
     call rwsect
 
-    mov dx, offset undeletingmsg
+    mov dx, CStr('UnDeleting...')
     call printbottom
 
-    call undeleteCore
-    cmp byte ptr [status], ERROR
-    jne nofer
-      mov dx, offset fileexceeded
-      call printerror
-      jmp mainmenu
-    nofer:
-
-    mov dx, offset doneudmsg
+    call UndeleteCore
+    cmp [status], ERROR
+    je undelete_err1
+    mov dx, CStr('Finished UnDeleting File')
     call printerror
   jmp mainmenu
+undelete_err1:
+      mov dx, CStr('File Chain Exceeds FAT')
+      call printerror
+      jmp mainmenu
+undelete endp
 ;--------------------------------------------------------
-UndeleteCore:           ; in: [filesize] - size of file to undelete)
-  pushad                ;     [cluster]  - cluster to work from
+UndeleteCore proc
+;UndeleteCore:           ; in: [filesize] - size of file to undelete)
+  pushad                ;     [dwCluster]  - cluster to work from
   undelLoop:
-    mov eax, dword ptr [bpc]            ; bytes per cluster
-    mov ebx, dword ptr [cluster]
+    mov eax, [dwBpc]                    ; bytes per cluster
+    mov ebx, [dwCluster]
     cmp dword ptr [filesize], eax       ; less than bytes per cluster left?
     jbe writeeof                        ; yes, write end of file in
       sub dword ptr [filesize], eax     ; no, subtract bpc
@@ -90,13 +90,13 @@ UndeleteCore:           ; in: [filesize] - size of file to undelete)
       inc ebx
       mov eax, ebx
     call getfatentry
-  cmp byte ptr [status], ERROR
+  cmp [status], ERROR
   je undelCoreError
     test eax, eax
     jnz getnextentry
 
     mov eax, ebx
-    xchg ebx, dword ptr [cluster]
+    xchg ebx, [dwCluster]
     call putfatentry
     jmp undelLoop
     writeeof:
@@ -105,4 +105,5 @@ UndeleteCore:           ; in: [filesize] - size of file to undelete)
   undelCoreError:
   popad
   ret
+UndeleteCore endp
 ;-------------------------------------------------------

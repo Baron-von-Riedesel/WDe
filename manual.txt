@@ -86,8 +86,10 @@ WDe User Manual
 
   1.0 - Initial Screen and Commandline
 
-    When starting, WDe accepts a drive letter, followed by a colon, as
-    a parameter. If no such argument is given, a "Drive: " prompt appears.
+    When starting, WDe accepts an argument that may be either a drive letter,
+    followed by a colon (i.e. "c:"), or a disk number, followed by either
+    a 'h' (hard disk) or a 'f' (floppy disk) (i.e. "0h" or "0f"). If no such
+    argument is given, the user will be prompted to enter a valid drive/disk:
 
     A physical drive number can be entered (0/1/2...etc) which will
     bring up the "Floppy/Hard Disk [F/H]" prompt.  Press "F" to load

@@ -14,7 +14,7 @@ Dispatch macro
     endm
 
 CallInt macro intno
-    cmp [hvdd],-1
+    cmp [hVdd],-1
     jnz @F
     int intno
 if intno eq 25h
@@ -26,10 +26,16 @@ endif
 @@:
     push ax
     push intno
-    mov ax,[hvdd]
+    mov ax,[hVdd]
     Dispatch
     ret
-    endm
+endm
+
+	.data
+
+hVdd dw -1
+
+	.code
 
 int13:
     CallInt 13h
@@ -42,20 +48,15 @@ int26:
 int2F:
     CallInt 2Fh
 
-hvdd dw -1
 
-szWdeVdd db "wdevdd.dll",0
-szDispatch db "Dispatch",0
-szInit db "Init",0
-
-initvdd:
+initvdd proc
     mov ax,3306h
     int 21h
     cmp bx,3205h
     jnz @F
-    mov si,offset szWdeVdd      ;DS:SI->"WDEVDD.DLL"
-    mov bx,offset szDispatch    ;DS:BX->"Dispatch"
-    mov di,offset szInit        ;ES:DI->"Init"
+    mov si,CStr("wdevdd.dll")
+    mov bx,CStr("Dispatch")     ;DS:BX->"Dispatch"
+    mov di,CStr("Init")         ;ES:DI->"Init"
     push ds
     pop es
     RegisterModule
@@ -69,21 +70,25 @@ ifdef _DEBUG
 @@:
 endif
     ret
-exitvdd:
-    mov ax,[hVdd]
+initvdd endp
+
+exitvdd proc
+    mov ax,-1
+    xchg ax,[hVdd]
     cmp ax,-1
     jz @F
     UnRegisterModule
-    mov [hVdd],-1
 @@:
     ret
+exitvdd endp
 
 ifdef _DEBUG
-dbgout:
+dbgout proc
     push ax		;location will be patched if VDD not found
     push 41h
-    mov ax,[hvdd]
+    mov ax,[hVdd]
     Dispatch
     ret
+dbgout endp
 endif
 

@@ -141,6 +141,7 @@
 ;        _DEBUG           EQU 1 ; uncomment to assemble in debug mode
 ;        ?BASIC           EQU 1 ; uncomment to disable extended functionality
         UNDEFINED        EQU 0
+        ?VDD             EQU 1  ; 1=winXP VDD supported
         ?LFN             EQU 0  ; try to use LFN functions
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
@@ -154,7 +155,7 @@
         FAT16            EQU 2
         FAT12            EQU 1
 
-; "region" variable for figuring out what section we're on in the drive
+; "bRegion" variable for figuring out what section we're on in the drive
         RESERVED_AREA    EQU 00010000b
         FAT_AREA         EQU 00100000b
         ROOT_AREA        EQU 01000000b
@@ -186,12 +187,12 @@
         HIGHLIGHTCOLOR   EQU 30h         ; black on dark cyan
 
 ; "editmode" variable
-        DEFAULTEDIT      EQU 0
-        ASCIIEDIT        EQU 1
+        EM_DEFAULT       EQU 0
+        EM_ASCII         EQU 1
 
 ; "displaymode" variable
-        HEX              EQU 0
-        BINARY           EQU 1
+        DM_HEX           EQU 0
+        DM_BINARY        EQU 1
 
 ; "drivetype" variable
         PHYSICAL         EQU 00000001b
@@ -331,12 +332,8 @@
 
 
 ; "srflag" variable
-        SAVE             EQU 0
-        RESTORE          EQU 1
-
-; "mode" variable; dictates what mode WDe is in
-        MODE_INITIAL     EQU 0
-        MODE_EDIT        EQU 1
+        SR_SAVE          EQU 0
+        SR_RESTORE       EQU 1
 
 ; "chainflag" variable
         NO_CHAIN         EQU 0
@@ -351,10 +348,10 @@
 ;--- define a string in .const
 CStr macro text:vararg
 local sym
-	.const
+    .const
 sym db text,0
-	.code
-	exitm <offset sym>
+    .code
+    exitm <offset sym>
 endm
 
 ;--- display string on the windows debug terminal.
@@ -362,9 +359,9 @@ endm
 @DbgOut macro text
 local xxx
 ifdef _DEBUG
-	call dbgout
-	jmp xxx
-	db text,0
+    call dbgout
+    jmp xxx
+    db text,0
 xxx:
 endif
 endm
@@ -372,70 +369,70 @@ endm
 ;--- struct BPB, located in boot sector
 
 BPB struct
-	db 11 dup (?)
-bytes_sector     dw ?	;+0
+    db 11 dup (?)
+bytes_sector     dw ?   ;+0
 sectors_cluster  db ?
-reserved_sectors dw ?	;+3
+reserved_sectors dw ?   ;+3
 num_fats         db ?
-root_entries     dw ?	;+6
+root_entries     dw ?   ;+6
 sectors_fat12    dw ?   ;(sectors total FAT12)
 media_byte       db ?
-sectors_fat      dw ?	;+11 (sectors/fat for fat12/fat16)
+sectors_fat      dw ?   ;+11 (sectors/fat for fat12/fat16)
 sectors_track    dw ?
 no_of_tracks     dw ?
-hidden_sectors   dd ?	;+17
-sectors_fat16    dd ?	;+21 (sectors total FAT16/32)
+hidden_sectors   dd ?   ;+17
+sectors_fat16    dd ?   ;+21 (sectors total FAT16/32)
 BPB ends
 
 ;--- FAT12/FAT16 extended BIOS parameter block
 EBPB struct
-	BPB <>
-phys_drive		db ?	;+0x19
-				db ?
-ext_boot_sig	db ?	;=0x29
-volume_id		dd ?
-volume_label	db 11 dup (?)
-fs_type			db 8 dup (?)
+    BPB <>
+phys_drive      db ?    ;+0x19
+                db ?
+ext_boot_sig    db ?    ;=0x29
+volume_id       dd ?
+volume_label    db 11 dup (?)
+fs_type         db 8 dup (?)
 EBPB ends
 
 EBPB_FAT32 struct
-	BPB <>
-sectors_fat32	dd ?	;+0x19 (sectors/fat for fat32)
-flags			dw ?
-version			dw ?
-root_startcl	dd ?	;+0x21
-fs_info_start	dw ?	;+0x25 start sector of FS information sector
-bs_copy_start	dw ?
-	db 12 dup (?)
-phys_drive		db ?	;+0x35
-				db ?
-ext_boot_sig	db ?	;+0x37
-volume_id		dd ?
-volume_label	db 11 dup (?)	;if boot_sig is != 0x28
-fs_type			db 8 dup (?)	;"FAT32   "
+    BPB <>
+sectors_fat32   dd ?    ;+0x19 (sectors/fat for fat32)
+flags           dw ?
+version         dw ?
+root_startcl    dd ?    ;+0x21
+fs_info_start   dw ?    ;+0x25 start sector of FS information sector
+bs_copy_start   dw ?
+    db 12 dup (?)
+phys_drive      db ?    ;+0x35
+                db ?
+ext_boot_sig    db ?    ;+0x37
+volume_id       dd ?
+volume_label    db 11 dup (?)   ;if boot_sig is != 0x28
+fs_type         db 8 dup (?)    ;"FAT32   "
 EBPB_FAT32 ends
 
 ;--- HD access for int 13h, ah=42h/43h
 
 DAP struct
-bSize		db ?	;+0 size of structure
-bRes		db ?	;+1 reserved
-wNumSec		dw ?	;+2 sectors to transfer
+bSize       db ?    ;+0 size of structure
+bRes        db ?    ;+1 reserved
+wNumSec     dw ?    ;+2 sectors to transfer
 union
-dwBuffer	dd ?	;+4 transfer buffer SSSS:OOOO
+dwBuffer    dd ?    ;+4 transfer buffer SSSS:OOOO
 struct
-wBufferOfs	dw ?
-wBufferSeg	dw ?
+wBufferOfs  dw ?
+wBufferSeg  dw ?
 ends
 ends
 union
 dqStartSector dq ?  ;+8
 struct
-dwStartLow	dd ?	;+8  start sector low
-dwStartHigh	dd ?	;+12 start sector high
+dwStartLow  dd ?    ;+8  start sector low
+dwStartHigh dd ?    ;+12 start sector high
 ends
 ends
-;dqAddr		dq ?	;EDD 3.0: 64bit flat transfer buffer address if dwBuffer is FFFF:FFFF
+;dqAddr     dq ?    ;EDD 3.0: 64bit flat transfer buffer address if dwBuffer is FFFF:FFFF
 DAP ends
 
 ;--- extended disk io structure for int 25h/26h, int 21h ax=7305h
@@ -546,7 +543,7 @@ menustrings     db 'Save',0                             ; 0
                 db 'Partition2',0                       ; 19
                 db 'Partition3',0                       ; 20
                 db 'Partition4',0                       ; 21
-partition       db 'Partition',0                        ; 22
+szPartition     db 'Partition',0                        ; 22
                 db 'Chain',0                            ; 23
                 db 'Dump CD As ISO',0                   ; 24
                 db 'Default',0                          ; 25
@@ -635,7 +632,7 @@ filenamemsg     db 'Filename: ',0
 attributesmsg   db 'Attributes: ',0
 sectorsmsg      db 'Number Of Sectors: ',0
 
-;--- we need a _BSS segment that allows dword alignment
+;--- a dword-aligned _BSS segment is needed,
 ;--- hence simplified segment directive .data? cannot be used.
 _BSS segment dword public 'BSS'
 startbss label byte
@@ -644,6 +641,7 @@ DGROUP group _BSS
 
 _BSS segment
 
+old24h          dd ?
 stackbot        dw ? ; stack bottom
 vidseg          dw ? ; video buffer segment
 vidcolsize      dw ?
@@ -654,35 +652,41 @@ scrn_col        db ?
 scrn_row        db ?
 crsr_xy         dw ? ; cursor xy position
 maxleft         db ?
-old24h          dd ?
-
-
-bMode           db ? ; what mode WDe is in; preparation for future features
 bRW             db ? ; distinguish between read/write
-bDrive          db ? ; drive number
 subsector       db ? ; because [spot] goes from 0-511, if we have sectors
                      ; that are >512 bytes, subsector keeps track of what
                      ; 512-byte piece we're working with
-hl              db ? ; keeps track of whether we're editing high or low nibble
+bHL             db ? ; keeps track of whether we're editing high or low nibble
 spot            dw ? ; keeps count of what byte we're editing 0-511
+
+	align dword
+bDrive          db ? ; drive number
 fattype         db ? ; type of fat
+bSpc            db ? ; sectors per cluster
+bFats           db ? ; number of fats
 dwSpf           dd ? ; sectors per fat
 dwFatend        dd ? ; end of fat
-spc             db ? ; sectors per cluster
 dwReserved      dd ? ; reserved sectors (start of fat)
-bFats           db ? ; number of fats
 rootentries     dw ? ; number of root entries
-hdnumber        db ? ; hard drive number partition belongs to
-dwSector        dd ? ; sector for read/writes
-sector2         dd ? ; high sector dword for int13h
 wRootsectors    dw ? ; number of root sectors
+dwSector        dd ? ; sector for read/writes
+;dwSectorHigh    dd ? ; high sector dword for int13h
 dwDataend       dd ? ; end of data
-; dataend2        dd ? ; high dword for int13h HUGE hds
+; dwDataendHigh   dd ? ; high dword for int13h HUGE hds
 dwDatastart     dd ? ; start of data
-spcmd           db ? ; sectors per cluster for doing bitshifts
-lastcluster     dd ? ; total # of clusters on the drive
+dwLastcluster   dd ? ; total # of clusters on the drive
 dwRoot          dd ? ; root directory
 dwRootcluster   dd ? ; root cluster (FAT32)
+dwValue         dd ?
+dwMaxvalue      dd ?
+dwFilesize      dd ?
+dwCluster       dd ?
+dwBpc           dd ? ; bytes per cluster
+dwSecBackup     dd ? ; sector backup
+partitions      dd ?,?,?,? ; partition start sectors
+
+hdnumber        db ? ; hard drive number partition belongs to
+spcmd           db ? ; sectors per cluster for doing bitshifts
 backupbs        dw ? ; backup boot sector location (FAT32)
 fsinfo          dw ? ; fsinfo sector (FAT32)
 
@@ -691,11 +695,8 @@ rwfunction      db ? ; what read/write function to use
 drivetype       db ? ; logical/physical/etc
 
 fromfat         db ? ; fat to use for getfatentry/putfatentry
-region          db ? ; what part of the disk we're in
-value           dd ?
-maxvalue        dd ?
+bRegion         db ? ; what part of the disk we're in
 status          db ?,? ; error in called function? (2 bytes defined, since this var is pushed/poped)
-filesize        dd ?
 lastbottomtext  dw ? ; printbottom backs up string pointer for rwsect
                      ; to reprint it when there's a sector error
 
@@ -715,71 +716,59 @@ lastbottomtext  dw ? ; printbottom backs up string pointer for rwsect
 ;                        1 = force current view
 viewmode        db ?,?
 displaymode     db ? ; hex or binary
+editmode        db ? ; what mode being edited in (ascii/default)
+
+; [highlight]: 11223333h
+;        11: Number of bytes to highlight on screen
+;        22: Number of bytes deviating from [spot] to highlight for
+;        3333: Starting [spot] to highlight from
 
 highlight       label dword ; area to highlight with viewmode
 highlight_ofs   dw ? ;starting spot (offset)
 highlight_size  db ? ;size of spot
 highlight_scsiz db ? ;num of cells to highlight on screen
 
-editmode        db ? ; what mode being edited in (ascii/default)
-dwCluster       dd ?
-; ldcluster       dd ? ; don't remember
-dwBpc           dd ? ; bytes per cluster
 wBps            dw ? ; bytes per sector
 spcc            db ? ; sectors per cluster counter
-dwSecBackup     dd ? ; sector backup
 handling        db ? ; how to handle errors:
                      ;  3: ignore errors
                      ;  2: query user with "skip"
                      ;  1: query user with "fill with zero"
                      ;  0: abort by default
 
-seed1 dw ?
-seed2 dw ?
-seed3 dw ?
-seed4 dw ?
-
-p1 dd ?
-p2 dd ?
-p3 dd ?
-p4 dd ?
-
-filename        db 69 dup(?)
-stringbuffer    db 76 dup(?)
-diskinfobuffer  db 1Ah dup(?)       ; buffer for int13h "get drive info"
-fat12fix        db 5 dup(?)         ; stores first borrowed byte for fat12
-	align 4
-readbuffer      db 2352 dup(?)      ; read buffer for sector reading
-fat12fix2       db ?                ; stores last borrowed byte for fat12/CD
-	align 4
-writebuffer     db 2352 dup(?)      ; write buffer for sector writing
-cdheader        db 27 dup(?)        ; cd device request header
-; cblock          db 5 dup(?)         ; not sure if this is necessary
-
-dwDrivestart    dd ?                ; used for sector restriction
-fat12start      dd ?                ; stores the sector number when fat12
-                                    ; view mode was selected
-cylinders       dw ?
-heads           db ?
-sectors         db ?
-
-valuebuffer     db 11 dup(?)
-rembytes        dw ?                ; remaining bytes when dealing with
-                                    ; non-standard sized sectors
-
-area            db ?            ; specifies where on a drive we are
+seed12          label dword
+seed1           dw ?
+seed2           dw ?
+seed34          label dword
+seed3           dw ?
+seed4           dw ?
 
 rwhandle        dw ?            ; read/write file handle
 dwRwfilesize    dd ?            ; read/write filesize
-filehandle      dw ?
-calladdress     dw ?
-fillflag        dw ?
-srflag          db ?
+wFilehandle     dw ?
+wCalladdress    dw ?
+fillflag        db ?,?
+area            db ?            ; specifies where on a drive we are
+srflag          db ?            ; "file ops" menu flag
 undelflag       db ?            ; 
 driveflag       db ?            ; setdrive gets File or Drive? 0/1 respective
 commandflag     db ?            ; used by unformat & gethex
 chainflag       db ?            ; dictates what type of chain to save
                                 ; fat links/file
+dwDrivestart    dd ?            ; used for sector restriction
+dwFat12start    dd ?            ; stores the sector number when fat12
+                                ; view mode was selected
+cylinders       dw ?
+heads           db ?
+sectors         db ?
+
+; unformat
+maxsize         dd ?            ; maximum filesize to recover
+minsize         dd ?            ; minimum filesize to recover
+dwNextsize      dd ?            ; next smallest filesize to recover
+lostdirs        dw ?            ; total lost directories found
+rootdirs        dw ?            ; total root directories found
+dirs            dw ?            ; total dirs found
 
 ifdef _DEBUG
   storedeax     dd ?
@@ -790,13 +779,21 @@ ifdef _DEBUG
   storeddi      dd ?
 endif
 
-; unformat
-lostdirs        dw ?            ; total lost directories found
-rootdirs        dw ?            ; total root directories found
-dirs            dw ?            ; total dirs found
-maxsize         dd ?            ; maximum filesize to recover
-minsize         dd ?            ; minimum filesize to recover
-nextsize        dd ?            ; next smallest filesize to recover
+rembytes        dw ?            ; remaining bytes when dealing with
+                                ; non-standard sized sectors
+filename        db 69 dup(?)
+stringbuffer    db 76 dup(?)
+diskinfobuffer  db 1Ah dup(?)   ; buffer for int13h "get drive info"
+fat12fix        db 5 dup(?)     ; stores first borrowed byte for fat12
+	align 4
+readbuffer      db 2352 dup(?)  ; read buffer for sector reading
+fat12fix2       db ?            ; stores last borrowed byte for fat12/CD
+	align 4
+writebuffer     db 2352 dup(?)  ; write buffer for sector writing
+cdheader        db 27 dup(?)    ; cd device request header
+; cblock          db 5 dup(?)   ; not sure if this is necessary
+
+valuebuffer     db 11 dup(?)
 
 ;--- used by unformat. expected to be the last item
 ;--- in _BSS, since it will modify the region behind this var!
@@ -810,7 +807,7 @@ _BSS ends
 
 Start:
 
-	call init
+	call init            ;clear .data?, check video mode, init screen
 	mov [stackbot],sp
 
 ;--- scan command line
@@ -828,6 +825,7 @@ Start:
 	jb donecmdline
 	cmp al,'9'
 	jbe maybedrive
+	mov bx, FAT*100h + OLDINT25
 	or al,20h
 	cmp al,'a'
 	jb donecmdline
@@ -835,207 +833,54 @@ Start:
 	ja donecmdline
 	sub al,'a'
 	cmp ah,':'
-	jz gdriveletter
+	jz drive_entered
 	jmp donecmdline
 maybedrive:
+	mov bx, PHYSICAL*100h + NEWINT13
 	sub al,'0'
-	mov cl,al
+	or al,80h
 	cmp ah,13
-	jz readashd
+	jz drive_entered
 	or ah,20h
 	cmp ah,'h'
-	jz readashd
+	jz drive_entered
+	and al,7fh
 	cmp ah,'f'
-	jz readasfloppy
+	jz drive_entered
+
 donecmdline:
+	call setdrive
+	jnc drive_entered
+	call quit
+	jmp donecmdline
+drive_entered:
+	call trydevice
+	jc donecmdline
+	call clearsecarea           ; clear sector rectangle (contains copyright msg)
 
-initsetdrive:
-  mov [driveflag], 0            ; set to reading drive letters with tab
-setdrive:                       ; sets the drive being edited
-  cmp [driveflag], 0
-  jne displayfnreq
-  mov dx, offset drivemsg       ; "Drive:"
-  call printbottom              ; print on the bottom of the screen
-getkeyagain3:
-  call cursorgetkey             ; cursorgetkey turns the cursor on, gets
-                                ; a key and then shuts the cursor back off
-                                ; again (for normal editing)
-abortsetdrive:
-  cmp [bMode], MODE_INITIAL     ; if the editor is in initial mode,
-  jne notfirstset               ; the program can't return to the menu
-    cmp al, ESCAPE_KEY
-    jne notfirstset             ; if it's not been run then we're
-    call quit                   ; in the initial screen, so hitting
-    jmp setdrive                ; escape should start the quit sequence
-displayfnreq:
-    call getfilename
-    cmp ah, TAB_KEY
-    je initsetdrive
+drive_ok:
+	call setvariables           ; set all obtainable parameter variables
+	call printoffset            ; print current offset
 
-    mov al, ESCAPE_KEY
-    jcxz abortsetdrive
-    call findfile
-    jnc filefound
-      mov dx, offset filenotfound
-      call printerror
-      jmp setdrive
-filefound:
+mainmenu proc
 
-    call getfilesize
-;    mov eax, dword ptr [filesize]       ; file must be 1+ sectors in size
-    cmp eax, 512
-    jb toosmalltomount
-    mov [dwRwfilesize], eax
-
-    call openfile
-
-    mov ax, word ptr [filehandle]
-    mov [rwhandle], ax
-    mov bx, PHYSICAL*100h + FILEFUNC     ; bh = physical, bl=filefunc
-    mov al, 0FFh
-    jmp doreaddevice
-toosmalltomount:
-    mov dx, offset toosmall
-    call printerror
-    jmp setdrive
-notfirstset:                  ; otherwise it should go back to the menu
-
-  cmp al, ESCAPE_KEY
-  je mainmenu
-
-  cmp ah, TAB_KEY
-  jne noswitch2f
-  mov [driveflag], 1
-  jmp setdrive
-noswitch2f:
-
-  sub al, '0'                   ; subtract 48, so '0' becomes 0, '1' = 1, etc
-  cmp al, 9                     ; if the value is <= 9, the key pressed was
-  jbe hdphysical                ; a drive number, 0-9
-
-  sub al, 17                    ; 17 is the 65-48, so 'A' = 0, 'B' = 1, etc
-  cmp al, 26                    ; if the value is > 26, a non-letter
-  jbe gdriveletter              ; was pressed (non-valid drive letter)
-
-  sub al, 32                    ; 32 is 'a'-'A', so 'a' = 0, 'b' = 2, etc
-  cmp al, 26                    ; same concept as above
-  ja getkeyagain3
-
-gdriveletter:
-  mov bh, FAT
-  mov bl, OLDINT25
-doreaddevice:
-  mov dx, offset readingdrive
-  call printbottom
-
-  push [dwSector]               ; if drive switching is unsuccessful
-  push word ptr [bDrive]        ; the original drive/sector has to
-  push word ptr [rwfunction]    ; be restored
-  push [dwDrivestart]
-
-  mov [subsector], 0            ; rwfunction is the 'read/write'
-  mov [dwSector], 0             ; function being used.  2 for CDrom,
-  mov [dwDrivestart], 0
-  mov [rwfunction], bl          ; type of read/write functions
-  mov [drivetype], bh
-  mov [bDrive], al              ; attempt to read sector 0
-  call rwsect
-  cmp [status], ERROR           ; failed?
-  je driveerror
-
-  add sp, 12                    ; if the drive could be set just fine,
-                                ; then the pushed data (last drive, etc)
-                                ; is no longer needed
-  jmp readnext
-
-hdphysical:                     ; this is for setting up the
-                                ; editing for a physical
-                                ; rather than logical drive
-
-    mov cl, al                  ; back up drive number
-    mov dx, offset fhdmsg       ; choose between floppy and HD
-    call printbottom
-      getfh:
-      call cursorgetkey
-
-      cmp al, ESCAPE_KEY
-      je setdrive
-
-      cmp ah, SCAN_F
-      je readasfloppy
-
-      cmp ah, SCAN_H
-      jne getfh
-readashd:
-      add cl, 80h                       ; physical hard drive.
-readasfloppy:
-    mov al, cl
-;    al: 80h+ = hard drive
-;    al: 00h+ = floppy
-dophysicalread:
-    mov bx, PHYSICAL*100h + NEWINT13
-    jmp doreaddevice
-
-driveerror:
-
-  pop [dwDrivestart]
-  pop word ptr [rwfunction]             ; restore original drive settings
-  pop word ptr [bDrive]                 ; if reading the new drive failed
-  pop [dwSector]
-
-  cmp [bMode], MODE_INITIAL
-  je setdrive
-
-  jmp mainmenu
-
-
-readnext:
-  call setvariables             ; set all obtainable parameter variables
-
-  cmp [bMode], MODE_EDIT
-  je dontwipescreen
-redraw:
-    mov es,[vidseg]             ; clear display area
-    mov bx,[vidcolsize]
-    mov di,bx
-    add di,2*9
-    mov ax, DEFAULTCOLOR*100h+SPACE
-    mov dl, 32
-@@:
-    mov cx, 52
-    push di
-    rep stosw
-    pop di
-    add di,bx
-    dec dl
-    jnz @B
-
-  mov [bMode], MODE_EDIT
-dontwipescreen:
-
-  call printoffset              ; print current offset
-
-mainmenu:
-
-    mov sp,[stackbot]
-    mov [handling], ABORT_OPERATION
-    call updatescreen
-    mov dx, offset initialmenu
-    call printmenu
+	mov sp,[stackbot]
+	push offset mainmenu
+	mov [handling], ABORT_OPERATION
+	call updatescreen
+	mov dx, offset initialmenu
+	call printmenu
 
 getkeyagain:
+	call printview              ; print view may change with cursor moves
 
-    call printview
-    mov ax, [crsr_xy]           ; set [scrn_xy] to cursor coordinates so that
-    mov [scrn_xy], ax           ; functions like changemode color the right
+	mov ax, [crsr_xy]           ; set [scrn_xy] to cursor coordinates so that
+	mov [scrn_xy], ax           ; functions like changemode color the right
                                 ; spot on the screen
-    call getkey
+	call getkey
 
-    cmp al, ESCAPE_KEY
-    jne @F
-    call quit
-    jmp mainmenu
-@@:
+  cmp al, ESCAPE_KEY
+  je quit
 
   cmp ah, PAGEDOWN_KEY
   je nextsect
@@ -1067,6 +912,31 @@ getkeyagain:
   cmp ah, CTRLEND_KEY
   je jumptolastsect
 
+  cmp ah, F1_KEY
+  je savetodisk
+
+  cmp ah, F2_KEY                      ; different menu for CDRoms
+  je submenu_fileops
+
+  cmp ah, F3_KEY
+  je submenu_jumpto
+
+  cmp ah, F4_KEY
+  je submenu_view
+
+  cmp ah, F5_KEY
+  je submenu_find
+
+  cmp ah, F6_KEY
+  je submenu_functions
+
+  cmp ah, F7_KEY
+  je submenu_disk
+
+  cmp ah, TAB_KEY
+  je changemode
+
+  push offset getkeyagain
   cmp ah, LEFT_KEY
   je moveleft
 
@@ -1079,50 +949,22 @@ getkeyagain:
   cmp ah, DOWN_KEY
   je movedown
 
-  cmp ah, F1_KEY
-  je savetodisk
+mainmenu endp
 
-  cmp [drivetype], CDROM
-  je cdromfileopts
-    cmp ah, F2_KEY                      ; different menu for CDRoms
-    je fileoperations
-  cdromfileopts:
-  mov byte ptr [srflag], SAVE
-    cmp ah, F2_KEY
-    je srfileoptions
+;--- fall thru!
+;--- "normal" key processing in main menu
 
-  cmp ah, F3_KEY
-  je jumpto
-
-  cmp ah, F4_KEY
-  je viewoptions
-
-  cmp ah, F5_KEY
-  je searchoptions
-
-  cmp ah, F6_KEY
-  je functions
-
-  cmp ah, F7_KEY
-  je setdrive
-
-  cmp ah, TAB_KEY
-  je changemode
+domod proc
 
   cmp ah, DEL_KEY       ; allow writing of null when using the delete key
-  je domod              ; in ascii editing mode
-
+  je @F                 ; in ascii editing mode
   cmp al, 0             ; don't write null values in ascii for certain
   je skipmod            ; extended keys (F8-F12 for example)
-
-domod:
-
-  cmp [editmode], ASCIIEDIT
+@@:
+  cmp [editmode], EM_ASCII
   je modascii
-
 skipmod:
-
-  cmp [displaymode], BINARY
+  cmp [displaymode], DM_BINARY
   je modbinary
 
   mov dl, al            ; back up the key pressed for printing
@@ -1137,7 +979,7 @@ skipmod:
   jbe cletter           ; then a hex letter was typed
 
   cmp al, 37            ; check again
-  ja getkeyagain
+  ja done
 
   sub dl, 32            ; possibly lower case, which are 32 bytes higher
   sub al, 32            ; so subtract 32 bytes for printing/use
@@ -1158,7 +1000,7 @@ modifybuffer:
   mov dl, byte ptr [readbuffer+bx]      ; get the byte to be edited from
                                         ; the buffer
 
-  cmp byte ptr [hl], 0
+  cmp [bHL], 0
   jne lowmodify
     and dl, 0Fh                 ; remove the top nibble, set the typed in
     shl al, 4                   ; value in place to be the new top nibble
@@ -1173,6 +1015,152 @@ modifybuffer:
     mov byte ptr [readbuffer+bx], dl    ; display the new character
     call printchar                      ; on the right side of the screen
   jmp moveright
+done:
+  ret
+domod endp
+
+;--- try a new device
+;--- AL = drive number
+;--- BL = access
+;--- BH = PHYS/FAT/CDROM
+
+trydevice proc
+  mov dx, offset readingdrive
+  call printbottom
+
+  push [dwSector]               ; if drive switching is unsuccessful
+  push word ptr [bDrive]        ; the original drive/sector has to
+  push word ptr [rwfunction]    ; be restored
+  push [dwDrivestart]
+
+  mov [subsector], 0            ; rwfunction is the 'read/write'
+  mov [dwSector], 0             ; function being used.  2 for CDrom,
+  mov [dwDrivestart], 0
+  mov [rwfunction], bl          ; type of read/write functions
+  mov [drivetype], bh
+  mov [bDrive], al              ; attempt to read sector 0
+  call rwsect
+  cmp [status], ERROR           ; failed?
+  je driveerror
+
+; if the drive could be set just fine,
+; then the pushed data (last drive, etc) can be skiped
+  add sp, 12
+  ret
+
+driveerror:
+
+  pop [dwDrivestart]
+  pop word ptr [rwfunction]     ; restore original drive settings
+  pop word ptr [bDrive]         ; if reading the new drive failed
+  pop [dwSector]
+  stc
+  ret
+trydevice endp
+
+;--- enter a disk/drive/image filename
+;--- exit: C if ESC pressed or a ""-filename was entered
+;---       NC, then drive in AL, modes in BX
+
+setdrive proc
+	cmp [driveflag], 0
+	jne fnreq
+	mov dx, offset drivemsg     ; "Drive:"
+	call printbottom            ; print on the bottom of the screen
+getkeyagain:
+	call cursorgetkey           ; cursorgetkey turns the cursor on, gets
+                                ; a key and then shuts the cursor back off
+                                ; again (for normal editing)
+	cmp al, ESCAPE_KEY
+	je abort
+	cmp ah, TAB_KEY
+	je handle_tabkey
+
+	sub al, '0'                 ; subtract 48, so '0' becomes 0, '1' = 1, etc
+	cmp al, 9                   ; if the value is <= 9, the key pressed was
+	jbe hdphysical              ; a drive number, 0-9
+
+	mov bx, FAT*100h + OLDINT25
+	sub al, 17                  ; 17 is the 65-48, so 'A' = 0, 'B' = 1, etc
+	cmp al, 26                  ; if the value is > 26, a non-letter
+	jbe done                    ; was pressed (non-valid drive letter)
+
+	sub al, 32                  ; 32 is 'a'-'A', so 'a' = 0, 'b' = 2, etc
+	cmp al, 26                  ; same concept as above
+	jbe done
+	jmp getkeyagain
+
+hdphysical:                     ; this is for setting up the
+                                ; editing for a physical
+                                ; rather than logical drive
+	mov cl, al                  ; back up drive number
+	mov dx, offset fhdmsg       ; choose between floppy and HD
+	call printbottom
+@@:
+	call cursorgetkey
+	cmp al, ESCAPE_KEY
+	je setdrive
+	cmp ah, SCAN_F
+	je readasfd
+	cmp ah, SCAN_H
+	jne @B
+	add cl, 80h                 ; physical hard drive.
+readasfd:
+	mov al, cl
+;--- al: 80h+ = hard drive
+;--- al: 00h+ = floppy
+	mov bx, PHYSICAL*100h + NEWINT13
+	jmp done
+
+abort:
+	stc
+	ret
+handle_tabkey:
+	xor [driveflag], 1
+	jmp setdrive
+
+fnreq:
+	call getfilename
+	cmp ah, TAB_KEY
+	je handle_tabkey
+	jcxz abort                  ; no chars entered, or ESC pressed
+	call findfile
+	jnc @F
+	mov dx, offset filenotfound
+	call printerror
+	jmp fnreq
+@@:
+	call getfilesize
+;	mov eax, [dwFilesize]      ; file must be 1+ sectors in size
+	cmp eax, 512
+	jnc @F
+	mov dx, offset toosmall
+	call printerror
+	jmp fnreq
+@@:
+	mov [dwRwfilesize], eax
+	call openfile
+	mov ax, [wFilehandle]
+	mov [rwhandle], ax
+	mov bx, PHYSICAL*100h + FILEFUNC
+	mov al, 0FFh
+done:
+	clc
+	ret
+setdrive endp
+
+;--- submenu "disk"
+
+submenu_disk proc
+@@:
+  call setdrive
+  jc done
+  call trydevice
+  jnc drive_ok
+  jmp @B
+done:
+  ret
+submenu_disk endp
 
 ;-------------------------------------------------------
 ;--- rewrite current sector
@@ -1185,28 +1173,29 @@ savetodisk proc
     call rwsect                         ; write it.
     pop word ptr [subsector]
     cmp [status], ERROR
-    je mainmenu
+    je @F
     mov dx, offset donermsg
     call printerror
-    jmp mainmenu
+@@:
+    ret
 savetodisk endp
 ;-------------------------------------------------------
-restrictsectors:
+restrictsectors proc
   mov dx, offset abmsg
   call printbottom
-  rsgetkeys:
+rsgetkeys:
   call cursorgetkey
   cmp al, ESCAPE_KEY
-  je functions
+  je submenu_functions
   cmp ah, SCAN_A
   je restrictabove
   cmp ah, SCAN_B
   jne rsgetkeys
-  restrictbelow:
+restrictbelow:
     mov eax, [dwSector]                 ; set the current sector as the
     mov [dwDataend], eax                ; last sector of the drive
-    jmp mainmenu
-  restrictabove:
+    ret
+restrictabove:
     mov eax, [dwSector]                 ; set the current sector as the
     add [dwDrivestart], eax             ; first sector; this is added to
     sub [dwDataend], eax                ; [dwSector] for r/w, so adjust the
@@ -1217,7 +1206,7 @@ restrictsectors:
       rsgetkeys2:
       call cursorgetkey
       cmp al, ESCAPE_KEY
-      je functions
+      je submenu_functions
       mov dl, PHYSICAL
       cmp ah, SCAN_P
       je donesetpl
@@ -1227,9 +1216,10 @@ restrictsectors:
     donesetpl:
       mov [drivetype], dl
       call setvariables
-      jmp mainmenu
+      ret
+restrictsectors endp
 ;-------------------------------------------------------
-functions:
+submenu_functions proc
   mov dx,offset funcmenu0
 
   ifndef ?BASIC
@@ -1261,11 +1251,11 @@ functions:
   call printmenu
   pop dx
 
-  getkeyagain13:
+getkeyagain13:
   call getkey
 
   cmp al, ESCAPE_KEY
-  je mainmenu
+  je done
 
   cmp ah, F1_KEY
   je restrictsectors
@@ -1278,26 +1268,27 @@ functions:
     je getkeyagain13
 
     cmp ah, F3_KEY
-    jnz @F
-    call unformat
-    jmp mainmenu
-@@:
+    je unformat
+
     cmp dx, offset funcmenu1
     je getkeyagain13
 
     cmp ah, F4_KEY
     je undelete
-  
+  endif
     jmp getkeyagain13
-  
+done:
+    ret
+
+submenu_functions endp
+
+ifndef ?BASIC
 ;------------------------------------------------------
 include UNDELETE.INC
 ;------------------------------------------------------
 include UNFORMAT.INC
 ;------------------------------------------------------
-  else
-    jmp getkeyagain13
-  endif
+endif
 
 fillstring:
   call getstring
@@ -1311,7 +1302,7 @@ dofill:
     mov dx, offset readingmsg
     call printbottom
   push [dwSector]
-  push cs
+  push ds
   pop es
   mov di, offset readbuffer
 
@@ -1336,16 +1327,17 @@ dofill:
 
     mov ax, [wBps]
   jmp cfloop
-;-------------------------------------------------------
+
+;--- submenu "fill"
 fillfunctions:
   mov dx, offset fillmenu
   call printmenu
 
-  getkeyagain14:
+getkeyagain14:
   call getkey
 
   cmp al, ESCAPE_KEY
-  je functions
+  je submenu_functions
 
   cmp ah, F1_KEY
   je fillhex
@@ -1356,17 +1348,17 @@ fillfunctions:
   cmp ah, F4_KEY
   je decremental
 
-  mov byte ptr [fillflag+1], INCREMENT
+  mov [fillflag+1], INCREMENT
 
   cmp ah, F3_KEY
   je incremental
 
-  mov byte ptr [fillflag], INVERSE
+  mov [fillflag], INVERSE
 
   cmp ah, F5_KEY
   je fillinvrand
 
-  mov byte ptr [fillflag], RANDOM
+  mov [fillflag], RANDOM
 
   cmp ah, F6_KEY
   je fillinvrand
@@ -1374,7 +1366,7 @@ fillfunctions:
   jmp getkeyagain14
 ;-----------------------------------------------------
 decremental:
-  mov byte ptr [fillflag+1], DECREMENT
+  mov [fillflag+1], DECREMENT
 incremental:
   mov dx, offset idmenu
   call printmenu
@@ -1388,22 +1380,22 @@ incremental:
 
   xor ecx, ecx
 
-  mov byte ptr [fillflag], BIT8
+  mov [fillflag], BIT8
   mov cl, 0FFh
   cmp ah, F1_KEY
   je fillamount
 
-  mov byte ptr [fillflag], BIT12
+  mov [fillflag], BIT12
   mov ch, 0Fh                           ; ECX=0FFFh
   cmp ah, F2_KEY
   je fillamount
 
-  mov byte ptr [fillflag], BIT16
+  mov [fillflag], BIT16
   mov ch, 0FFh                          ; ECX=0FFFFh
   cmp ah, F3_KEY
   je fillamount
 
-  mov byte ptr [fillflag], BIT32
+  mov [fillflag], BIT32
   mov ecx, 0FFFFFFFFh
   cmp ah, F4_KEY
   jne getkeyagain15
@@ -1419,7 +1411,7 @@ fillinvrand:
     mov dx, offset readingmsg
     call printbottom
   mov eax, ebx
-  push cs
+  push ds
   pop es
 
   push [dwSector]
@@ -1427,16 +1419,16 @@ fillinvrand:
   keeprandomfill:
   mov cx, [wBps]                        ; \Fixed?/
 
-  cmp byte ptr [fillflag], BIT12
+  cmp [fillflag], BIT12
   je do12fill
-  cmp byte ptr [fillflag], BIT8         ; writing byte at a time?
+  cmp [fillflag], BIT8                  ; writing byte at a time?
   je dontshift                          ; then dont divide by 2
     shr cx, 1                           ; divide by 2 to write words
-  cmp byte ptr [fillflag], BIT16        ; if we're writing 32-bits at a time
+  cmp [fillflag], BIT16                 ; if we're writing 32-bits at a time
   je dontshift
     shr cx, 1                           ; divide by 2 again
   dontshift:
-  cmp byte ptr [fillflag], INVERSE
+  cmp [fillflag], INVERSE
   jne randomloop                        ; inverse function requires reading
     mov si, di                          ; every sector to reverse that data
     call rwsect
@@ -1444,28 +1436,28 @@ fillinvrand:
   je fillerror
 
   randomloop:
-    cmp byte ptr [fillflag], INVERSE
+    cmp [fillflag], INVERSE
     jne tryrandfill
       lodsd                             ; reverse a dword at a time
       not eax
     jmp continuerandinv
     tryrandfill:
-    cmp byte ptr [fillflag], RANDOM
+    cmp [fillflag], RANDOM
     jne continuerandinv
       push cx
       call rand                         ; generate random value (eax)
       pop cx
     continuerandinv:
-    cmp byte ptr [fillflag], BIT16
+    cmp [fillflag], BIT16
     je fill16bit
-    cmp byte ptr [fillflag], BIT8
+    cmp [fillflag], BIT8
     je fill8bit
     stosd
 
-    cmp byte ptr [fillflag], BIT32      ; inverse/random are finished
+    cmp [fillflag], BIT32               ; inverse/random are finished
     jne doriloop
     fill32bit:
-      cmp byte ptr [fillflag+1], DECREMENT
+      cmp [fillflag+1], DECREMENT
       je decdword
         inc eax
         jmp doriloop
@@ -1475,7 +1467,7 @@ fillinvrand:
 
     fill16bit:
       stosw
-      cmp byte ptr [fillflag+1], DECREMENT
+      cmp [fillflag+1], DECREMENT
       je decword
         inc ax                          ; increment word
         jmp doriloop
@@ -1485,7 +1477,7 @@ fillinvrand:
 
     fill8bit:                           ; byte
       stosb
-      cmp byte ptr [fillflag+1], DECREMENT
+      cmp [fillflag+1], DECREMENT
       je decbyte
         inc al
         jmp doriloop
@@ -1569,11 +1561,11 @@ fillcommon:                     ; zero flag set if no more sectors to fill
   call rwsect
   cmp [status], ERROR
   je commonfillerror
-  dec dword ptr [value]
+  dec [dwValue]
   jz donefillinc
   inc [dwSector]
   call printcounts
-  push cs
+  push ds
   pop es
   mov di, offset readbuffer
   test di, di                   ; zero flag cleared
@@ -1585,7 +1577,7 @@ commonfillerror:
   ret
 ;-----------------------------------------------------
 cax12:
-  cmp byte ptr [fillflag+1], INCREMENT
+  cmp [fillflag+1], INCREMENT
   je doinc12
     sub ax, 1
     jnc loopdi12                ; rolled over to FFFFh?
@@ -1599,10 +1591,11 @@ cax12:
     xor ax, ax
   loopdi12:
   ret
-;-----------------------------------------------------
-modbinary:
+
+;--- main menu: key entered in binary mode
+modbinary proc
   call spotinbx                 ; get the current cursor position
-  mov cl, byte ptr [hl]
+  mov cl, [bHL]
   cmp cl, 5                     ; if we're over the space between nibbles
   jb skipbinadjust              ; decrement so that the position matches
     dec cl                      ; incrementally to bits 0-7
@@ -1615,7 +1608,7 @@ modbinary:
   cmp al, SPACE
   je reversebin
   cmp al, '0'
-  jne getkeyagain
+  jne done
     not dl
     and byte ptr [readbuffer+bx], dl    ; clearing a bit
     jmp donefixbin
@@ -1639,8 +1632,13 @@ modbinary:
   mov dl, byte ptr [readbuffer+bx]      ; replace the ascii on the screen
   call printchar
   jmp moveright
-;-------------------------------------------------------
-modascii:
+done:
+  ret
+modbinary endp
+
+;--- main menu: character entered in ascii mode
+
+modascii proc
   call spotinbx
   mov byte ptr [readbuffer+bx], al
   mov bx, [spot]
@@ -1648,7 +1646,7 @@ modascii:
   call spotcalc
   mov [scrn_xy], dx
 
-  cmp [displaymode], HEX
+  cmp [displaymode], DM_HEX
   je dofixhex
   call displaybinary
   jmp donefixscreen
@@ -1664,65 +1662,71 @@ modascii:
     mov cl, 1
     call printchar2
   jmp moveright
-;-------------------------------------------------------
-changemode:
-  cmp al, 0                     ; shift+tab
-  je changedispmode
+modascii endp
 
-  cmp [editmode], 0             ; switch between ascii/regular editing
-  sete [editmode]
-
+;--- main menu tab & shift-tab keys
+changemode proc
+  cmp al, 0                     ; shift+tab?
+  je @F
+  xor [editmode], 1             ; switch between ascii/regular editing
   call colorchar
-  jmp getkeyagain
-;-------------------------------------------------------
-changedispmode:
-  cmp [displaymode], 0          ; switch between hex/binary editing
-  sete [displaymode]
-
+  ret
+@@:
+  xor [displaymode], 1          ; switch between hex/binary editing
+  call clearsecarea
   xor dl, dl
   mov ax, [spot]
   call movecursor
-  jmp redraw
-;-------------------------------------------------------
-log2phys:                            ; jump from logical drive
-  mov al, byte ptr [hdnumber]        ; to parent physical drive
-  jmp dophysicalread
-;-------------------------------------------------------
-retfat:
+  ret
+changemode endp
+
+;--- main menu ctrl-enter
+
+retfat proc
   cmp [drivetype], FAT               ; won't work with non-logical drives
-  jne getkeyagain
+  jne done
   mov eax, [dwSector]
   test eax, eax                      ; if we're on a logical drive, attempt
   jz log2phys                        ; to jump to respective phys. drive
 
-  test byte ptr [region], DATA_AREA
-  jz getkeyagain
+  test [bRegion], DATA_AREA
+  jz done
 
-retcluster:
+;retcluster:
   call sector2cluster
   call go2entry
-
   call rwsect
-  jmp mainmenu
-;-------------------------------------------------------
-recursechain:
-  cmp byte ptr [region], FAT_AREA
-  jne getkeyagain
+done:
+  ret
+log2phys:                            ; jump from logical drive
+  mov al, [hdnumber]                 ; to parent physical drive
+  mov bx, PHYSICAL*100h + NEWINT13
+  call trydevice
+  jnc drive_ok
+  ret
+
+retfat endp
+
+;--- main menu ctrl-left
+
+recursechain proc
+  cmp [bRegion], FAT_AREA
+  jne done
 
   call getcurrententry                  ; ebx = current entry number
 
   mov eax, ebx                          ; no where to recurse from
   cmp ebx, 2                            ; starting (2nd) cluster
-  jbe mainmenu
+  jbe done
 
   push [scrn_xy]
   mov dx, offset recursemsg
   call printbottom
   pop [scrn_xy]
 
-  recurse:
+recurse:
     call checkabort
-    je mainmenu
+    je done
 
     dec eax                             ; go back one fat entry
     cmp eax, 1                          ; past first entry in fat?
@@ -1735,24 +1739,26 @@ recursechain:
 
   jne recurse                           ; no...keep recursing
   jmp dochainjump
-  chainnotfound:
+chainnotfound:
   mov dx, offset nochainmsg
   call printerror
-  jmp mainmenu
-;-------------------------------------------------------
-jumpcluster:
-  cmp byte ptr [region], FAT_AREA
+done:
+  ret
+recursechain endp
+
+;--- main menu ctrl-right key
+jumpcluster proc
+  cmp [bRegion], FAT_AREA
   je jumpfatcluster
-  test byte ptr [region], DATA_AREA
-  jz getkeyagain
-      ;-------------------------------------------------------
-jumpdatacluster:
+  test [bRegion], DATA_AREA
+  jz done
+;jumpdatacluster:
   mov eax, [dwSector]
-  mov byte ptr [fromfat], 1
+  mov [fromfat], 1
   call sector2cluster                   ; get respective cluster number
   call getfatentry                      ; read fat entry
   cmp [status], ERROR
-  je mainmenu
+  je done
 
   jmp jumptoeax                         ; jump to the cluster number read
 ;-------------------------------------------------------
@@ -1760,50 +1766,50 @@ jumpfatcluster:
 
   call getcurrententry
   cmp [status], ERROR
-  je mainmenu
+  je done
 
-  dochainjump:
+dochainjump::
 
   cmp eax, 2            ; disregard ebx, which is the current entry #
-  jb mainmenu           ; we only care about eax, the value stored there.
+  jb done               ; we only care about eax, the value stored there.
 ;  cmp eax, 0FFFFFF7h
-;  jae mainmenu
+;  jae done
 
-  cmp eax, dword ptr [lastcluster]
-  ja mainmenu
+  cmp eax, [dwLastcluster]
+  ja done
   push [dwSector]
   call go2entry
   pop edx
   cmp edx, [dwFatend]           ; bad coding.  doesn't support 3+ fats
   jb nsf
-    mov ecx, [dwSpf]
-    add [dwSector], ecx
-  nsf:
-
+  mov ecx, [dwSpf]
+  add [dwSector], ecx
+nsf:
   cmp [dwSector], edx           ; don't read the same sector twice
-  je drsfj
-    call rwsect
-  drsfj:
+  je done
+  call rwsect
+done:
+  ret
+jumpcluster endp
 
-  jmp mainmenu
-;-------------------------------------------------------
-entercluster:
+;--- main menu enter key
+entercluster proc
   cmp [drivetype], FAT
-  jne getkeyagain
+  jne done
 
   cmp [viewmode], ROOTVIEW
   je enterfiledir
 
   call getentrynumber                   ; get the cluster number for current
-jumptoeax:                              ; offset
+jumptoeax::                             ; offset
   cmp eax, 2
-  jb mainmenu
+  jb done
   call cluster2sector                   ; multiply it out to get the
   cmp eax, [dwDataend]                  ; corresponding sector number
-  ja mainmenu                           ; verify that it's a valid sector
+  ja done                               ; verify that it's a valid sector
   mov [dwSector], eax
   call rwsect
-  jmp mainmenu
+  jmp done
 ;-------------------------------------------------------
 enterfiledir:                           ; this code is set up so that
   call spotinbx                         ; if you hit enter on the 32
@@ -1817,23 +1823,27 @@ enterfiledir:                           ; this code is set up so that
   cmp eax, 2
   jb jumptoroot
   jmp jumptoeax
+done:
+  ret
+entercluster endp
+
 ;-------------------------------------------------------
-viewoptions:
+submenu_view proc
   mov dx, offset viewmenu
   call printmenu
 
-  getkeyagain1:
+getkeyagain1:
   call getkey
 
   cmp al, ESCAPE_KEY
-  je mainmenu
+  je done
 
   cmp ah, F1_KEY
   je defaultview
-  jb getkeyagain
+  jb getkeyagain1
 
-mov al, ah
-sub al, 59
+  mov al, ah
+  sub al, 59
 
 ifdef _DEBUG                             ; extra view for registers
   cmp ah, F8_KEY        ; (debug)
@@ -1852,28 +1862,31 @@ setview:                         ; the high byte of viewmode, if set to 1,
   jne dsf12s                     ; used on the drive
 
   mov eax, [dwSector]
-  mov dword ptr [fat12start], eax
+  mov [dwFat12start], eax
 
   dsf12s:
   call checksetview
-  jmp mainmenu
+  ret
 ;-------------------------------------------------------
 defaultview:
   mov byte ptr [viewmode+1], AUTODETECT
   call printcounts
-  jmp mainmenu
+done:
+  ret
+submenu_view endp
+
 ;-------------------------------------------------------
-searchoptions:
+submenu_find proc
   mov dx, offset searchmenu
   call printmenu
 
   mov [handling], QUERY_SKIP
 
-  getkeyagain8:
+getkeyagain8:
   call getkey
 
   cmp al, ESCAPE_KEY
-  je mainmenu
+  je done
 
   cmp ah, F1_KEY
   je findstring
@@ -1895,15 +1908,14 @@ searchoptions:
       ;-------------------------------------------------------
 finddir:
   mov si, offset readbuffer
-
-  finddirnext:
+@@:
   xor bx, bx
-
   call finddirectory
-  jnc mainmenu
-
+  jnc done
   call findcommon
-  jmp finddirnext
+  jmp @B
+done:
+  ret
 ;-------------------------------------------------------
 findbs:
   mov si, offset readbuffer
@@ -1911,10 +1923,11 @@ findbsnext:
   cmp dword ptr [si+1fch], 0AA550000h           ; check for boot sig ++
   jne findbs2
   cmp byte ptr [si], 0EBh                       ; check for jmp
-  je mainmenu
-  findbs2:
+  je done
+findbs2:
   call findcommon
   jmp findbsnext
+
 ;-------------------------------------------------------
 ; This function is slightly bugged; the first byte is a media descriptor
 ; byte and only makes the partition more likely to be a certain type of
@@ -2002,10 +2015,11 @@ findfat:
 
   dfstests:
   cmp word ptr [si+1], 0FFFFh
-  je mainmenu
+  je done
   findfat2:
   call findcommon
   jmp findfatnext
+
 ;-------------------------------------------------------
 findmbr:
   mov si, offset readbuffer
@@ -2032,35 +2046,36 @@ findmbr:
     jne checkactiveloop
 
   cmp al, 1                             ; more than one active partition?
-  je mainmenu                           ; no, MBR found.
+  je done                               ; no, MBR found.
 
   findmbr2:
   call findcommon
   jmp findmbrnext
+
 ;-------------------------------------------------------
 findhex:
   mov dx, offset hexmsg
   call gethexstring
-  jc searchoptions
+  jc submenu_find
 
   test cx, cx
-  jz searchoptions
+  jz submenu_find
 
   mov dx, offset searchingmsg
   call printbottom
   jmp stringsearch
+
+submenu_find endp
+
 ;-------------------------------------------------------
-updatescreen:
-  cmp [bMode], MODE_EDIT
-  je doupdate                   ; fixes display for an init file not found
-    ret
-  doupdate:
+updatescreen proc
+
   call printcounts
-  call printscreen
+  call printsector
 
     cmp byte ptr [viewmode+1], AUTODETECT       ; detect the view type
     jne continueprintview
-    mov dl, byte ptr [region]
+    mov dl, [bRegion]
 
     test dl, 11110000b                  ; is region set with a forced view?
     jz dontscanforbsfs                  ; then set it
@@ -2078,7 +2093,7 @@ updatescreen:
       call finddirectory
       jnc settodir
       mov dl, DATAVIEW
-    dontscanfordir:
+dontscanfordir:
     cmp dl, RESERVED_AREA
     jne dontscanforbsfs
       cmp [dwSector], 0
@@ -2094,16 +2109,16 @@ updatescreen:
       je setfsview                      ; it's the same distance from the backupbs
       mov dl, DATAVIEW                  ; as the main fsinfo is the main
       jmp dontscanforbsfs               ; bootsector, which is wrong.
-      settodir:
+settodir:
       mov dl, ROOTVIEW
-    dontscanforbsfs:
+dontscanforbsfs:
       call checksetview
-    continueprintview:
+continueprintview:
   jmp printview
-  setbsview:
+setbsview:
     mov dl, BOOTSECTORVIEW
     jmp dontscanfordir
-  setfsview:
+setfsview:
     mov dl, FSINFOVIEW
     jmp dontscanfordir
 ;-------------------------------------------------------
@@ -2116,33 +2131,35 @@ choosefatview:
     cmp eax, [dwSector]
     jbe okasis12
       sub eax, [dwSpf]
-    okasis12:
-    mov dword ptr [fat12start], eax
+okasis12:
+    mov [dwFat12start], eax
 
     mov dl, FAT12VIEW
-  tryfat16view:
+tryfat16view:
     cmp [fattype], FAT16
     jne tryfat32view
     mov dl, FAT16VIEW
-  tryfat32view:
+tryfat32view:
     cmp [fattype], FAT32
     jne donechoosingfat
     mov dl, FAT32VIEW
-    donechoosingfat:
+donechoosingfat:
   jmp dontscanfordir
-;-------------------------------------------------------
-findstring:
+updatescreen endp
+
+;--- menu item "find string"
+findstring proc
   call getstring
 
   jcxz abortfindstring
     mov dx, offset searchingmsg
     call printbottom
-    stringsearch:
-    mov word ptr [stringbuffer+74], cx
+stringsearch::
+    mov word ptr [stringbuffer+74], cx  ; save length in last 2 bytes of buffer
     xor bx, bx
     xor si, si
 
-    nextbyte:
+nextbyte:
     mov al, byte ptr [stringbuffer+si]
     cmp al, byte ptr [readbuffer+bx]
     je comparenextbyte
@@ -2155,11 +2172,11 @@ findstring:
 
       dec [dwSector]
       call rwsect
-    dontgolastsect:
+dontgolastsect:
       sub bx, si
       xor si, si
 
-    continuefindstring0:
+continuefindstring0:
     inc bx                              ; next byte in sector
 
     cmp bx, [wBps]                      ; last byte?
@@ -2169,19 +2186,13 @@ findstring:
     mov [subsector], ah
 
     jmp nextbyte
-stringnotfound:
-  mov dx, offset stringerror
-  call printerror
-  jmp searchoptions
-abortfindstring:
-  call updatescreen
-  jmp searchoptions
 
 comparenextbyte:
   inc si                                ; next byte
   cmp si, word ptr [stringbuffer+74]    ; end of string?
-  je mainmenu                           ; found string.
-  jmp continuefindstring0
+  jne continuefindstring0
+  ret                                   ; found string. return to main menu
+
 nextfindsector:
   mov eax, [dwDataend]
   cmp eax, [dwSector]
@@ -2197,40 +2208,58 @@ nextfindsector:
   call printcounts
   xor bx, bx
   jmp nextbyte
-;-------------------------------------------------------
-fileoperations:
+findstring endp
 
-  mov dx, offset filemenu
+abortfindstring:
+  call updatescreen
+  jmp submenu_find
+stringnotfound:
+  mov dx, offset stringerror
+  call printerror
+  jmp submenu_find
+
+;--- file submenu
+
+submenu_fileops proc
+
+  mov [srflag], SR_SAVE
+;--- for CDROMs, there's no "restore", so skip this menu
+  cmp [drivetype], CDROM
+  je srfileoptions
+
+  mov dx, offset filemenu  ; save/restore sectors
   call printmenu
-
-  getkeyagain5:
+getkeyagain5:
   call getkey
-
   cmp al, ESCAPE_KEY
-  je mainmenu
+  je done
 
-    cmp ah, F1_KEY
-    setne byte ptr [srflag]     ; set SAVE mode if equal, otherwise RESTORE
-    je srfileoptions
-    cmp ah, F2_KEY
-    je srfileoptions
-
+  push offset submenu_fileops
+  cmp ah, F1_KEY
+  setne [srflag]           ; set SR_SAVE (=0) mode if equal, otherwise SR_RESTORE
+  je srfileoptions
+  cmp ah, F2_KEY
+  je srfileoptions
+  pop ax
   jmp getkeyagain5
+done:
+  ret
+submenu_fileops endp
 ;-------------------------------------------------------
 
 savechain proc
-  mov byte ptr [fromfat], 1
+  mov [fromfat], 1
   call srcommon
 
-  mov dword ptr [filesize], 0
-  cmp byte ptr [chainflag], FAT_CHAIN
+  mov [dwFilesize], 0
+  cmp [chainflag], FAT_CHAIN
   je begincsave
 
     call spotinbx
     and bl, 11100000b                    ; chop off 0-31 bytes to set bx to
     add bx, offset readbuffer            ; the start of the current entry
     mov eax, dword ptr [bx+DIR_FILESIZE] ; filesize
-    mov dword ptr [filesize], eax
+    mov [dwFilesize], eax
     mov ax, word ptr [bx+DIR_CLUST_HIGH] ; high cluster word
     shl eax, 16
     mov ax, word ptr [bx+DIR_CLUST_LOW]  ; low cluster word
@@ -2271,8 +2300,8 @@ startchainsaving:
   je srfileoptions
 
 chainsaveloop:
-  movzx ebx, byte ptr [spc]             ; save sectors per cluster worth of
-  mov dword ptr [value], ebx            ; sectors.
+  movzx ebx, [bSpc]                     ; save sectors per cluster worth of
+  mov [dwValue], ebx                    ; sectors.
   call writefile
   cmp [status], ERROR
   je srfileoptions
@@ -2290,11 +2319,11 @@ chainsaveloop:
   jmp chainsaveloop
 
 donechainsave:
-  cmp dword ptr [filesize], 0
+  cmp [dwFilesize], 0
   je notruncate
 
   mov ax, 4201h                         ; seek from current file position
-  mov bx, word ptr [filehandle]
+  mov bx, [wFilehandle]
   xor cx, cx
   xor dx, dx
   int 21h
@@ -2302,7 +2331,7 @@ donechainsave:
   shl edx, 16
   mov dx, ax
 
-  cmp edx, dword ptr [filesize]
+  cmp edx, [dwFilesize]
   jbe notruncate
 
   mov dx, offset truncatemsg
@@ -2311,14 +2340,14 @@ donechainsave:
   jnc notruncate
 
     mov ax, 4200h                       ; seek from start of file
-    mov bx, word ptr [filehandle]
-    mov dx, word ptr [filesize]
-    mov cx, word ptr [filesize+2]
+    mov bx, [wFilehandle]
+    mov dx, word ptr [dwFilesize+0]
+    mov cx, word ptr [dwFilesize+2]
     int 21h
 
     xor cx, cx                          ; write to file, 0 bytes (truncate)
     mov ah, 40h
-    mov bx, word ptr [filehandle]
+    mov bx, [wFilehandle]
     int 21h
 
 notruncate:
@@ -2341,9 +2370,9 @@ restchain proc
   mov [dwSecBackup], eax
 
   call getcurrententry
-  cmp byte ptr [chainflag], FAT_CHAIN
+  cmp [chainflag], FAT_CHAIN
   je restclusts
-    mov byte ptr [fromfat], 1
+    mov [fromfat], 1
     call getfilesize
     call spotinbx
     and bl, 11100000b
@@ -2361,13 +2390,13 @@ rbuhs:
   mov [dwCluster], eax
   call cluster2sector                   ; fix?  checking needed for sector.
   mov [dwSector], eax
-  mov al, byte ptr [spc]
+  mov al, [bSpc]
   mov byte ptr [spcc], al
 
 dornsb:
 
   mov ah, 3Fh
-  mov bx, word ptr [filehandle]
+  mov bx, [wFilehandle]
   mov cx, [wBps]
   mov dx, offset writebuffer
   int 21h
@@ -2378,7 +2407,7 @@ dornsb:
     call rwsect
     cmp [status], ERROR
     je srfileoptions
-    push cs                             ; preserve bytes at end of sector
+    push ds                             ; preserve bytes at end of sector
     pop es
     sub cx, ax
     mov si, offset readbuffer
@@ -2429,7 +2458,7 @@ srcommon proc
   call getfilename
   pop ax
   jcxz srskip
-  cmp byte ptr [srflag], RESTORE
+  cmp [srflag], SR_RESTORE
   jne skipffsr
   call findfile
   jnc filefound2
@@ -2454,23 +2483,26 @@ savefile proc
   jmp endsavedrive
 savefile endp
 
-;-------------------------------------------------------
+;--- submenu file options
 srfileoptions proc
-  cmp byte ptr [srflag], SAVE
-  jne startfileops
+
+;  cmp [srflag], SR_SAVE
+;  jne startfileops
 
   cmp [drivetype], CDROM
   jne startfileops
-    mov dx, offset cdfilemenu
-    call printmenu
-    jmp getkeyagain0
+  mov dx, offset cdfilemenu
+  call printmenu
+  jmp getkeyagain0
 
 startfileops:
     call printfilemenu
 getkeyagain0:
     call getkey
+    cmp al, ESCAPE_KEY
+    je done
 
-    cmp byte ptr [srflag], RESTORE
+    cmp [srflag], SR_RESTORE
     je crfile
       cmp ah, F1_KEY
       je savefile
@@ -2480,9 +2512,6 @@ crfile:
 
     cmp [drivetype], CDROM
     je cdf2check
-
-    cmp al, ESCAPE_KEY
-    je fileoperations
 
     cmp ah, F2_KEY      ; bootsect
     je srsector0
@@ -2496,7 +2525,7 @@ crfile:
     je srfat2
     cmp ah, F5_KEY
     je srroot
-    cmp byte ptr [srflag], RESTORE
+    cmp [srflag], SR_RESTORE
     je crdrive
       cmp ah, F6_KEY
       je dumpiso
@@ -2504,10 +2533,10 @@ crfile:
       cmp ah, F6_KEY
       je restdrive
 
-    cmp byte ptr [chainflag], NO_CHAIN
+    cmp [chainflag], NO_CHAIN
     je getkeyagain0
 
-    cmp byte ptr [srflag], RESTORE
+    cmp [srflag], SR_RESTORE
     je crchain
       cmp ah, F7_KEY
       je savechain
@@ -2521,7 +2550,7 @@ hdsfcheck:
     mov bx, 1CAh
     mov cx, 4
     mov al, F3_KEY
-    mov si, offset p1
+    mov si, offset partitions
 
 csp:
     cmp ah, al
@@ -2535,11 +2564,9 @@ cdf2check:
     cmp ah, F2_KEY
     je dumpiso
 
-    cmp al, ESCAPE_KEY
-    je mainmenu
-
   jmp getkeyagain0
-
+done:
+  ret
 srfileoptions endp
 
 ;-------------------------------------------------------
@@ -2551,20 +2578,20 @@ srroot:
 
   cmp [fattype], FAT32
   jne userootsects
-    mov dl, byte ptr [spc]
+    mov dl, [bSpc]
     jmp dorootsr
   userootsects:
     mov dx, [wRootsectors]
 
   dorootsr:
-  mov dword ptr [value], edx
-  cmp byte ptr [srflag], SAVE
+  mov [dwValue], edx
+  cmp [srflag], SR_SAVE
   je endsavedrive
   jmp endrestsectors
 ;-------------------------------------------------------
 restdrive:
   mov eax, [dwDataend]
-  mov dword ptr [value], eax
+  mov [dwValue], eax
 
   call srcommon
   xor eax, eax
@@ -2584,9 +2611,9 @@ srpartition:
   mov [dwSector], edx
   call rwsect
   mov ebx, dword ptr [readbuffer+bx]
-  mov dword ptr [value], ebx
+  mov [dwValue], ebx
   pop [dwSector]
-  cmp byte ptr [srflag], RESTORE
+  cmp [srflag], SR_RESTORE
   je endrestsectors
 ;-------------------------------------------------------
 endsavedrive:
@@ -2605,16 +2632,16 @@ srfat2:
 srfat:
   call srcommon
     mov edx, [dwSpf]
-    mov dword ptr [value], edx
-  cmp byte ptr [srflag], SAVE
+    mov [dwValue], edx
+  cmp [srflag], SR_SAVE
   je endsavedrive
   jmp endrestsectors
 ;-------------------------------------------------------
 srsector0:
   call srcommon
   xor eax, eax
-  mov dword ptr [value], 1
-  cmp byte ptr [srflag], SAVE
+  mov [dwValue], 1
+  cmp [srflag], SR_SAVE
   je endsavedrive
   jmp endrestsectors
 ;-------------------------------------------------------
@@ -2633,7 +2660,7 @@ restfile:
 
   filesizeok:  
 
-;  mov eax, dword ptr [filesize]
+;  mov eax, [dwFilesize]
 
   xor edx, edx
   div ebx
@@ -2655,67 +2682,62 @@ restfile:
 
   mov eax, [dwSector]
   jmp endrestsectors
-;-------------------------------------------------------
-jumptocluster:
-  mov eax, dword ptr [lastcluster]
-  mov dx, offset clustermsg
-  call gethex
-  jc mainmenu
-  mov eax, ebx
-  jmp jumptoeax
-;-------------------------------------------------------
-jumpto2:
+
+;--- submenu "Goto" for physical disk
+
+submenu_jumpto_phys proc
   mov dx, offset pdfilemenu
   call printmenu
 
-  getkeyagain11:
+getkeyagain11:
   call getkey
 
   cmp al, ESCAPE_KEY
-  je mainmenu
+  je done
   cmp ah, F1_KEY
   je jumptosector
   cmp ah, F2_KEY
   je jumptobootsector
 
-  mov ebx, dword ptr [p1]
+  mov ebx, [partitions+0]
   cmp ah, F3_KEY
   je donejump
 
-  mov ebx, dword ptr [p2]
+  mov ebx, [partitions+4]
   cmp ah, F4_KEY
   je donejump
 
-  mov ebx, dword ptr [p3]
+  mov ebx, [partitions+8]
   cmp ah, F5_KEY
   je donejump
 
-  mov ebx, dword ptr [p4]
+  mov ebx, [partitions+12]
   cmp ah, F6_KEY
   je donejump
 
   jmp getkeyagain11
-;-------------------------------------------------------
-jumpto:
+done:
+  ret
+submenu_jumpto_phys endp
+
+;--- submenu goto
+
+submenu_jumpto proc
   cmp [drivetype], PHYSICAL
-  je jumpto2
+  je submenu_jumpto_phys
 
-  cmp [drivetype], CDROM
-  jne doregularjumps
-  mov dx, offset cdjumpmenu
-  jmp docdjumps
-
-  doregularjumps:
   mov dx, offset jumpmenu
-
-  docdjumps:
+  cmp [drivetype], CDROM
+  jne @F
+  mov dx, offset cdjumpmenu
+@@:
   call printmenu
 
-  getkeyagain2:
+getkeyagain2:
   call getkey
 
   cmp al, ESCAPE_KEY
-  je mainmenu
+  je done
   cmp ah, F1_KEY
   je jumptosector
 
@@ -2735,75 +2757,86 @@ jumpto:
   cmp ah, F7_KEY
   jne getkeyagain2
 
-  jumptodata:
+jumptodata:
     mov ebx, [dwDatastart]
     jmp donejump
-  jumptobootsector:
+jumptocluster:
+  mov eax, [dwLastcluster]
+  mov dx, offset clustermsg
+  call gethex
+  jc done
+  mov eax, ebx
+  jmp jumptoeax
+
+jumptobootsector::
     xor ebx, ebx
     jmp donejump
-  jumptofat1:
+jumptofat1:
     mov ebx, [dwReserved]
     jmp donejump
-  jumptofat2:
+jumptofat2:
     cmp [bFats], 2
     jb jumptofat1
     mov ebx, [dwFatend]
     jmp donejump
-  jumptoroot:
+jumptoroot::
     mov ebx, [dwRoot]
 
-  donejump:
+donejump::
   cmp [dwDataend], ebx
-  jb mainmenu 
+  jb @F
   mov [dwSector], ebx
   call rwsect
-  
-  jmp mainmenu
+@@:
+done:
+  ret
 ;-------------------------------------------------------
-jumptosector:
+jumptosector::
   mov eax, [dwDataend]
   mov dx, offset sectormsg
   call inputvalue
   cmp [status], ERROR
-  je jumpto
+  je submenu_jumpto
 
-  mov ebx, dword ptr [value]
+  mov ebx, [dwValue]
   jmp donejump
 ;-------------------------------------------------------
-jumptolastsect:
+jumptolastsect::
   mov ebx, [dwDataend]
   jmp donejump
-;-------------------------------------------------------
+submenu_jumpto endp
+
+;--- main menu csr-up
 moveup:
   xor ax, ax
-  mov dl, byte ptr [hl]
-  cmp [editmode], ASCIIEDIT
+  mov dl, [bHL]
+  cmp [editmode], EM_ASCII
   je regularmoveup
-  cmp [displaymode], BINARY
+  cmp [displaymode], DM_BINARY
   je binarymoveup
-  regularmoveup:
-    sub ax, 12
-  binarymoveup:
-    sub ax, 4
+regularmoveup:
+  sub ax, 12
+binarymoveup:
+  sub ax, 4
   jmp domove
-;-------------------------------------------------------
+;--- main menu csr-down
 movedown:
   xor ax, ax
-  mov dl, byte ptr [hl]
-  cmp [editmode], ASCIIEDIT
+  mov dl, [bHL]
+  cmp [editmode], EM_ASCII
   je regularmovedown
-  cmp [displaymode], BINARY
+  cmp [displaymode], DM_BINARY
   je binarymovedown
-  regularmovedown:
-    add al, 12          ; see moveup
-  binarymovedown:
-    add al, 4
+regularmovedown:
+  add al, 12          ; see moveup
+binarymovedown:
+  add al, 4
   jmp domove
-;-------------------------------------------------------
+;--- main menu csr-left
 moveleft:
-  mov dl, byte ptr [hl]
+  mov dl, [bHL]
   xor ax, ax
-  cmp [editmode], ASCIIEDIT
+  cmp [editmode], EM_ASCII
   je deconly
   cmp dl, 0
   je zero_left
@@ -2814,8 +2847,8 @@ moveleft:
     dec dl
   jmp domove
 
-  zero_left:
-    cmp [displaymode], HEX
+zero_left:
+    cmp [displaymode], DM_HEX
     je dohexaddonly
       mov dl, 7
     dohexaddonly:
@@ -2823,14 +2856,14 @@ moveleft:
     deconly:
     dec ax
   jmp domove
-;-------------------------------------------------------
+;--- main menu csr-right
 moveright:
-  mov dl, byte ptr [hl]
+  mov dl, [bHL]
   xor ax, ax
-  cmp [editmode], DEFAULTEDIT
+  cmp [editmode], EM_DEFAULT
   jne sr_iax
 
-  cmp [displaymode], HEX
+  cmp [displaymode], DM_HEX
   je dohexrightcheck
     cmp dl, 8
   jmp rightcheck
@@ -2851,59 +2884,56 @@ moveright:
   sr_iax:
     inc ax
       ;-------------------------------------------------------
-domove:
+domove proc
   add ax, [spot]
   cmp ax, 512
-  jae getkeyagain
+  jae done
 
   push [spot]                   ; back old cursor spot up
   call movecursor               ; spot is changed to ax
   pop ax
 
-  cmp [displaymode], BINARY
+  cmp [displaymode], DM_BINARY
   jne dontchangescreens
     mov bx, [spot]              ; figures out if we've crossed a 128-byte
     shl ax, 1                   ; barrier by checking if the high bits have
     shl bx, 1                   ; changed.  if so, then we need to redraw,
     cmp bh, ah                  ; otherwise there's no need to waste CPU.
     je dontchangescreens
-    call printscreen
-  dontchangescreens:
+    call printsector
+dontchangescreens:
   call printoffset
-jmp getkeyagain
+done:
+  ret
+domove endp
 ;-------------------------------------------------------
 ; viewmode; see the variable definition for details
 
 printview:
 
-  mov bx, offset viewmode
-  cmp byte ptr [bx], BOOTSECTORVIEW
+  mov al,[viewmode]
+;  mov bx, offset viewmode
+  cmp al, BOOTSECTORVIEW
   je bsview
-  cmp byte ptr [bx], FAT12VIEW
+  cmp al, FAT12VIEW
   je fat12viewmode
-  cmp byte ptr [bx], FAT16VIEW
+  cmp al, FAT16VIEW
   je fat16viewmode
-  cmp byte ptr [bx], FAT32VIEW
+  cmp al, FAT32VIEW
   je fat32viewmode
-  cmp byte ptr [bx], ROOTVIEW
+  cmp al, ROOTVIEW
   je dirview
-  cmp byte ptr [bx], MBRVIEW
+  cmp al, MBRVIEW
   je hd0view
-  cmp byte ptr [bx], FSINFOVIEW
+  cmp al, FSINFOVIEW
   je fsinfoviewmode
 
 ifdef _DEBUG
-  cmp byte ptr [bx], DEBUGVIEW
+  cmp al, DEBUGVIEW
   je debugviewmode
 endif
 
 ;  call clearview
-
-  ; [highlight]: 11223333h
-  ;
-  ;        11: Number of bytes to highlight on screen
-  ;        22: Number of bytes deviating from [spot] to highlight for
-  ;        3333: Starting [spot] to highlight from
 
   ret
 ;-------------------------------------------------------
@@ -2914,7 +2944,7 @@ readbufferinsi:         ; OUT:  si -> offset to current subsector buffer
   add si, ax
   ret
 ;-------------------------------------------------------
-fsinfoviewmode:
+fsinfoviewmode proc
   mov [scrn_xy], 2201h
 
   call readbufferinsi
@@ -2956,8 +2986,10 @@ fsinfoviewmode:
   mov byte ptr [highlight_ofs], 0ECh	;gives 1ECh as offset
   mov dx, CStr('First Free Cluster:  ')
   jmp dofcssfc
+fsinfoviewmode endp
+
 ;-------------------------------------------------------
-dirview:
+dirview proc
   mov [scrn_xy], 2201h
 
   call readbufferinsi
@@ -3130,8 +3162,22 @@ dirview:
   jnz processentry
   doneentry:
   ret
+
 ;-------------------------------------------------------
-fat32viewmode:
+; IN: AL = attribute bits
+;     DH = bit to test for
+;     DL = character to print if bit is set in AL
+;
+testattrib:
+  test al, dh
+  jnz printchar
+    mov dl, '-'
+  jmp printchar
+
+dirview endp
+
+;-------------------------------------------------------
+fat32viewmode proc
   mov [scrn_xy], 2204h
   mov [highlight], 07040000h
 
@@ -3190,9 +3236,11 @@ fat32viewmode:
   dec ch
   jnz fat32loop
 
-ret
+  ret
+fat32viewmode endp
+  
 ;-------------------------------------------------------
-fat16viewmode:
+fat16viewmode proc
   mov [scrn_xy], 2203h
   mov [highlight], 04020000h
 
@@ -3249,9 +3297,10 @@ fat16viewmode:
   dec ch
   jnz fat16loop
 
-ret
+  ret
+fat16viewmode endp
 ;-------------------------------------------------------
-fat12viewmode:
+fat12viewmode proc
 
   mov [highlight], 03020000h
 
@@ -3278,7 +3327,7 @@ fat12viewmode:
 
   mov eax, [dwSector]
 
-  mov ebx, dword ptr [fat12start]
+  mov ebx, [dwFat12start]
   cmp ebx, eax
   ja dodec12
   sub eax, ebx
@@ -3341,6 +3390,8 @@ rp12:
     jmp printchar2
 rp13:
   ret
+fat12viewmode endp
+
 ;-------------------------------------------------------
 hd0common:
   mov al, 20
@@ -3350,7 +3401,7 @@ hd0common:
   inc [scrn_row]
   ret
 ;-------------------------------------------------------
-hd0view:
+hd0view proc
   mov [scrn_col], 01h
   xor cx, cx
 
@@ -3359,7 +3410,7 @@ hd0view:
   nextpart:
   mov [scrn_row], 22h
 
-  mov dx, offset partition
+  mov dx, offset szPartition
   call printstring
   mov dl, SPACE
   call printchar
@@ -3567,8 +3618,9 @@ hd0view:
   jb nextpart
 
   ret
+hd0view endp
 ;-------------------------------------------------------
-bsview:
+bsview proc
   mov [scrn_xy], 2201h
 
 
@@ -3735,16 +3787,19 @@ npldn:
   call printchar2
 
   xor eax, eax
-      ;-------------------------------------------------------
-nextviewline:
+;-------------------------------------------------------
+;nextviewline:
   cmp [scrn_col], 55
   ja gotonextline
   mov [scrn_col], 40
   ret
-gotonextline:
+gotonextline::
   mov [scrn_col], 1
   inc [scrn_row]
   ret
+
+bsview endp
+
 ;-------------------------------------------------------
 colorize:                               ; in: cl=number of chars to color
   pusha                                 ;     al=color to use
@@ -3788,48 +3843,51 @@ bshighlight:
     call colorize
   popa
   ret
-;-------------------------------------------------------
+
+;--- main menu pgup, pgdown, ctrl-pgup, ctrl-pgdown keys
+
 nextsect1000:
   mov eax, [dwSector]
   add eax, 100
-jmp donextsect
-;-------------------------------------------------------
+  jmp donextsect
+
+;--- pagedown
 nextsect:
   inc [subsector]
-  checkcursorbounds:
+checkcursorbounds:
   movzx dx, [subsector]                 ; subsector * 512
   shl dx, 9
   mov ax, [wBps]                        ; if (subsector*512 <= bps), then
   cmp ax, dx                            ; we've not paged down completely
   jbe dorns
-    sub ax, dx
-    dec ax
-    cmp [spot], ax
-    jbe incursorbounds
-      call movecursor
-    incursorbounds:
-    jmp mainmenu
-  dorns:
+  sub ax, dx
+  dec ax
+  cmp [spot], ax
+  jbe @F
+  call movecursor
+@@:
+  ret
+dorns:
   mov eax, [dwSector]
   inc eax
-        ;-------------------------------------------------------
 donextsect:
   cmp eax, [dwDataend]
-  jbe gonextsect
+  jbe @F
   sub eax, [dwDataend]
   dec eax
-  gonextsect:
+@@:
   mov [dwSector], eax
   call rwsect
-  jmp mainmenu
+  ret
 ;-------------------------------------------------------
 lastsect:
   sub [subsector], 1
-  jnc mainmenu
-
+  jnc @F
   mov eax, [dwSector]
   dec eax
-jmp dolastsect
+  jmp dolastsect
+@@:
+  ret
 ;-------------------------------------------------------
 lastsect1000:
   mov eax, [dwSector]
@@ -3843,7 +3901,7 @@ dolastsect:
   mov ebx, [dwDataend]
   sub ebx, eax
   mov eax, ebx
-  golastsect:
+golastsect:
   mov [dwSector], eax
   call rwsect
   mov dx, [wBps]
@@ -3851,6 +3909,7 @@ dolastsect:
   shr dx, 9
   mov [subsector], dl
   jmp checkcursorbounds
+
 ;-------------------------------------------------------
 setcdvar:
   mov bx, 50h
@@ -3875,15 +3934,15 @@ cdbpsset:
   cmp [drivetype], PHYSICAL
   jne logicalsetvars
 
-    push cs                             ; sets variables p1-p4
+    push ds                             ; sets variables p1-p4
     pop es                              ; for jumping to partitions
-    mov di, offset p1                   ; on physical drives
+    mov di, offset partitions           ; on physical drives
     mov si, offset readbuffer + 1c6h
     mov cx, 4
-    partition_data_fill:
+@@:
     movsd
     add si, 0Ch
-    loop partition_data_fill
+    loop @B
 
   cmp [rwfunction], FILEFUNC            ; file read?
   je setffparam
@@ -3891,24 +3950,23 @@ cdbpsset:
   jnz donesetphysvars
 
     mov ah, 08h
-    push 0000h                          ; damned bios bug
-    pop es                              ; circumvention
-    xor di, di
     mov dl, [bDrive]
+    xor di, di                          ; ES:DI=0000:0000 (bios bug)
+    mov es, di
     call int13
     inc dh
-    mov byte ptr [heads], dh
-    mov byte ptr [sectors], cl
-    and byte ptr [sectors], 00111111b
-    mov byte ptr [cylinders], cl
-    shl word ptr [cylinders], 2
-    mov byte ptr [cylinders], ch
+    mov [heads], dh
+    mov [sectors], cl
+    and [sectors], 00111111b
+    and cl,3
+    xchg cl,ch
+    mov [cylinders], cx
 
-    movzx eax, word ptr [cylinders]     ; CHS -> LBA
+    movzx eax, [cylinders]              ; CHS -> LBA
     movzx ebx, dh                       ; heads*cylinders
     mul ebx
     add eax, ebx                        ; + heads
-    mov bl, byte ptr [sectors]
+    mov bl, [sectors]
     mul ebx                             ; * sectors
     dec eax                             ; - 1
     sub eax, [dwDrivestart]
@@ -3933,9 +3991,9 @@ cdbpsset:
     mov [wBps], ax
 
 ;     mov eax, dword ptr [si+14h]
-;     mov dword ptr [dataend2], eax     ; uncomment for (some) support
+;     mov [dwDataendHigh], eax          ; uncomment for (some) support
 ;     dec [dwDataend]                   ; for HDs that are HUGE
-;     sbb dword ptr [dataend2], 0       ; this should never be required
+;     sbb [dwDataendHigh], 0            ; this should never be required
 ;                                       ; as it goes beyond 2tb
 donesetphysvars:
   ret
@@ -3944,14 +4002,14 @@ logicalsetvars:
     xor eax, eax
     mov [dwRootcluster], eax            ; default root cluster = 0
     mov al, [readbuffer].BPB.sectors_cluster   ; sectors per cluster
-    mov byte ptr [spc], al
+    mov [bSpc], al
 
     mov dl, 0FFh
 @@:
     inc dl
     shr al, 1
     jnz @B
-    mov byte ptr [spcmd], dl
+    mov [spcmd], dl
 
     mov ax, [readbuffer].BPB.reserved_sectors ; number of reserved sectors
     mov [dwReserved], eax
@@ -3987,7 +4045,7 @@ skipsub2:
 
       movzx ebx, [wRootsectors]
       sub eax, ebx
-      mov cl, byte ptr [spcmd]
+      mov cl, [spcmd]
       shr eax, cl
 
       mov [fattype], FAT32
@@ -3999,7 +4057,7 @@ skipsub2:
       mov [fattype], FAT12
 goodnumcluster:
       add eax, 2
-      mov dword ptr [lastcluster], eax
+      mov [dwLastcluster], eax
 
     mov eax, [dwSpf]
     movzx ebx, [bFats]
@@ -4012,19 +4070,19 @@ goodnumcluster:
 
     push eax
       mov al, byte ptr [readbuffer+40h] ; hard drive number
-      mov byte ptr [hdnumber], al
+      mov [hdnumber], al
       mov ax, word ptr [readbuffer+32h] ; backup boot sector
       mov [backupbs], ax
       mov ax, word ptr [readbuffer+30h] ; file system info sector
       mov [fsinfo], ax
-      movzx ax, byte ptr [spc]
+      movzx ax, [bSpc]
       mov [wRootsectors], ax
       mov eax, dword ptr [readbuffer+44]
       mov [dwRootcluster], eax
 
       sub eax, 2
       jc wrongrootc
-      mov cl, byte ptr [spcmd]
+      mov cl, [spcmd]
       shl eax, cl
       add [dwRoot], eax
 wrongrootc:
@@ -4034,7 +4092,7 @@ wrongrootc:
 not_fat32:
 
     mov al, byte ptr [readbuffer+24h]   ; hard drive number
-    mov byte ptr [hdnumber], al
+    mov [hdnumber], al
     movzx eax, [wRootsectors]
     add eax, [dwRoot]                   ; calculate start of data area
 
@@ -4042,7 +4100,7 @@ isfat32:
 
   cmp eax, [dwRoot]
   jne datastartiscorrect
-    mov bl, byte ptr [spc]
+    mov bl, [bSpc]
     add eax, ebx
 datastartiscorrect:
     mov [dwDatastart], eax
@@ -4052,7 +4110,7 @@ datastartiscorrect:
     mov [dwFatend], eax                 ; calculate end of fat 1 area
 
     movzx eax, [wBps]                   ; calculate bytes per cluster
-    mov bl, byte ptr [spc]
+    mov bl, [bSpc]
     mul ebx
     mov [dwBpc], eax
 
@@ -4066,11 +4124,12 @@ datastartiscorrect:
       mov ch, 48h
 fat1xlock:
 
-;--- japheth: windows complains if drive is an USB memory stick.
+if ?VDD
+;--- windows complains if drive is an USB memory stick.
 ;--- hence don't lock if running on NT!
     cmp [hVdd],-1
     jnz donegetvars
-
+endif
     mov bl, [bDrive]
     inc bl
     mov dx, 1
@@ -4097,7 +4156,7 @@ setffparam:
 setvariables endp
 
 ;------------------------------------------------------------
-dumpiso:
+dumpiso proc
   call srcommon
   call createfile
   cmp [status], ERROR
@@ -4105,7 +4164,7 @@ dumpiso:
   cmp [drivetype], CDROM
   jne drivedump
 
-  push cs
+  push ds
   pop es
   mov di, offset readbuffer
   mov cx, [wBps]
@@ -4114,7 +4173,7 @@ dumpiso:
 
   mov cx, [wBps]
   mov dx, offset readbuffer
-  mov bx, word ptr [filehandle]
+  mov bx, [wFilehandle]
   mov si, 10h
   isoloop:
   mov ah, 40h                           ; write to file (10 blank sectors)
@@ -4135,7 +4194,7 @@ dumpiso:
   xor eax, eax
   mov edx, [dwDataend]
   inc edx
-  mov dword ptr [value], edx
+  mov [dwValue], edx
   call writefile
   cmp [status], ERROR
   pushf
@@ -4148,18 +4207,16 @@ dumpiso:
     call printerror
 
   jmp srfileoptions
+dumpiso endp
 ;-------------------------------------------------------
-
-
-
-
 
 ;*******************************************************
 ; CALLS
 ;*******************************************************
 include FATFS.INC
 ;-------------------------------------------------------
-printchs:
+
+printchs proc
   call printstring
   mov dl, SPACE
   call printchar
@@ -4201,18 +4258,10 @@ printchs:
   call printcount
   mov dx, offset valuebuffer+8
   jmp printstring
+printchs endp
+
 ;-------------------------------------------------------
-; IN: AL = attribute bits
-;     DH = bit to test for
-;     DL = character to print if bit is set in AL
-;
-testattrib:
-  test al, dh
-  jnz printchar
-    mov dl, '-'
-  jmp printchar
-;-------------------------------------------------------
-finddirectory:                  ;IN: SI=readbuffer
+finddirectory proc                  ;IN: SI=readbuffer
   push cx                       ;    BX=offset in readbuffer
 
                                 ; not found: carry set
@@ -4371,9 +4420,12 @@ finddirectory:                  ;IN: SI=readbuffer
     dec ch
     jnz allzero
     jmp founddir
-;-------------------------------------------------------
-findcommon:
-  pop word ptr [calladdress]
+finddirectory endp
+
+;--- common routine for find cmds
+
+findcommon proc
+  pop [wCalladdress]
   mov dx, offset searchingmsg
   call printbottom
 
@@ -4396,16 +4448,18 @@ findcommon:
     je abortfindstring
 
   jmp dontinc
-  dontrw:
+dontrw:
 
   inc [subsector]
   mov al, [subsector]
   shl ax, 9
   add si, ax
 
-  dontinc:
-  push word ptr [calladdress]
+dontinc:
+  push [wCalladdress]
   ret
+findcommon endp
+
 ;-------------------------------------------------------
 spaceandcolon:                  ; i don't like this function, it was created
   mov dl, ':'                   ; for optimal code size instead of clean,
@@ -4421,12 +4475,12 @@ spaceandcolon:                  ; i don't like this function, it was created
   jb loopwipeview
   ret
 ;-------------------------------------------------------
-readfile:                       ; IN: eax start sector
-  mov dx, offset readingmsg     ;     d:[value] # of sectors to write
+readfile proc                   ; IN: eax start sector
+  mov dx, offset readingmsg     ;     d:[dwValue] # of sectors to write
   call printbottom              ; OUT: sectors written to disk from file
 
   mov edx, eax
-  add edx, dword ptr [value]
+  add edx, [dwValue]
   jc invalidperror
   dec edx
   cmp edx, [dwDataend]
@@ -4434,10 +4488,10 @@ readfile:                       ; IN: eax start sector
 
   push eax
   call getfilesize
-    mov eax, dword ptr [value]
+    mov eax, [dwValue]
     movzx edx, [wBps]
     mul edx
-    cmp dword ptr [filesize], eax
+    cmp [dwFilesize], eax
   pop eax
 
   mov dx, offset toosmall
@@ -4451,7 +4505,7 @@ readfile:                       ; IN: eax start sector
   readfileloop:
 
   mov ah, 3Fh                           ; read 512 bytes of the file
-  mov bx, word ptr [filehandle]         ; directly into the write buffer
+  mov bx, [wFilehandle]                 ; directly into the write buffer
   mov cx, [wBps]                        ; bad idea?
   mov dx, offset writebuffer
   int 21h
@@ -4480,7 +4534,7 @@ readfile:                       ; IN: eax start sector
   inc [dwSector]
   call printcounts
 
-  dec dword ptr [value]
+  dec [dwValue]
   jnz readfileloop
 
   donefileread:
@@ -4496,9 +4550,11 @@ readfile:                       ; IN: eax start sector
   cmp [status], ERROR
   jne printerror
   ret
+readfile endp
+
 ;-------------------------------------------------------
 printentry:                             ; prints the fat entry the cursor
-  cmp byte ptr [region], FAT_AREA       ; is currently in, in the top
+  cmp [bRegion], FAT_AREA               ; is currently in, in the top
   jne abortentry                        ; right of the screen
 
     call getentrynumber
@@ -4524,15 +4580,15 @@ aspotcalc:                      ; ascii spot calculator
   inc dh
   ret
 ;-------------------------------------------------------
-inputvalue:                     ; IN:
-  mov dword ptr [maxvalue], eax ;      EAX: maximum allowed value
+inputvalue proc                 ; IN:
+  mov [dwMaxvalue], eax         ;      EAX: maximum allowed value
   call printbottom              ; OUT:
-  mov dl, [scrn_col]            ;      ECX / [value]: returned value
+  mov dl, [scrn_col]            ;      ECX / [dwValue]: returned value
   mov [maxleft], dl
   call clearbottom
   xor ecx, ecx
   getkeyagain7:
-  mov dword ptr [value], ecx
+  mov [dwValue], ecx
   call cursorgetkey
 
   cmp al, ESCAPE_KEY
@@ -4565,7 +4621,7 @@ inputvalue:                     ; IN:
   shl ebx, 1
   add ebx, edx
 
-  cmp ebx, dword ptr [maxvalue]
+  cmp ebx, [dwMaxvalue]
   ja getkeyagain7
 
   mov ecx, ebx
@@ -4591,11 +4647,12 @@ backvalue:
   mov ecx, eax
 
   jmp getkeyagain7
+inputvalue endp
 ;------------------------------------------------------
-printcounts:
+printcounts proc
   pushad
   mov [scrn_xy], 0021          ; print the current sector
-  mov byte ptr [region], UNDEFINED
+  mov [bRegion], UNDEFINED
   mov eax, [dwSector]          ; the string "Sector:"
   call printcount              ; isn't printed for efficiency
   mov dx, offset valuebuffer
@@ -4640,7 +4697,7 @@ printcounts:
   cmp eax, edx
   jae indata
 
-  mov byte ptr [region], ROOT_AREA
+  mov [bRegion], ROOT_AREA
   mov dx, offset inrootmsg
 
   cmp [fattype], FAT32
@@ -4695,12 +4752,12 @@ printcounts:
   ret
 
   inreserved:
-    mov byte ptr [region], RESERVED_AREA
+    mov [bRegion], RESERVED_AREA
     mov dx, offset inreservedmsg
     jmp continuecount
 
   infat:
-    mov byte ptr [region], FAT_AREA
+    mov [bRegion], FAT_AREA
     push [scrn_xy]
     call printentry
     pop [scrn_xy]
@@ -4729,7 +4786,7 @@ printcounts:
   jmp abortdc
 
   setmbrview:
-    mov byte ptr [region], MBRVIEW
+    mov [bRegion], MBRVIEW
     mov dx, offset inmbrmsg
     call printstring
   jmp abortdc
@@ -4751,7 +4808,7 @@ printcounts:
     cmp [drivetype], FAT
     jne abortdc
 
-      or byte ptr [region], DATA_AREA
+      or [bRegion], DATA_AREA
 
       mov dx, offset clustermsg         ; display cluster number
       call printstring
@@ -4763,7 +4820,8 @@ printcounts:
       call printhex
     jmp continuecount
 ;-------------------------------------------------------
-printhex:                               ; takes whats in eax
+printcounts endp
+printhex proc                           ; takes whats in eax
   pusha                                 ; and sticks the equivalent
     mov byte ptr [valuebuffer+9], 0     ; hex into valuebuffer
     mov si, 8
@@ -4784,6 +4842,7 @@ printhex:                               ; takes whats in eax
     jnz clusterloop
   popa
   ret
+printhex endp
 ;-------------------------------------------------------
 cursorgetkey:
   pusha
@@ -4799,11 +4858,12 @@ cursoroff:
   int 10h
   popa
   ret
-;-------------------------------------------------------
-printstring:
+
+;--- print string: ds:dx -> string
+printstring proc
   pusha
   mov si, dx
-  call cbuffer_offset
+  call cbuffer_offset    ;setup ES:DI to current screen pos
 printstrloop:
   lodsb
   cmp al, 0
@@ -4817,21 +4877,23 @@ abortprintstr:
   call setxy
   popa
   ret
+printstring endp
+
 ;-------------------------------------------------------
-printscreen:                    ; this routine prints out all the
+printsector proc                ; this routine prints out all the
                                 ; bytes in the read buffer
   call readbufferinsi
 
   mov dx, [wBps]
   sub dx, ax
-  mov word ptr [rembytes], dx
+  mov [rembytes], dx
 
   cmp [spot], dx
   jb notsignificant
 
     dec dx
     mov ax, dx
-    mov dl, byte ptr [hl]
+    mov dl, [bHL]
 
   notsignificant:
 
@@ -4845,7 +4907,7 @@ printscreen:                    ; this routine prints out all the
     call aspotcalc
     mov [scrn_xy], dx
     mov dl, al
-    cmp cx, word ptr [rembytes]
+    cmp cx, [rembytes]
     jb nntps
       mov dl, SPACE
     nntps:
@@ -4855,9 +4917,9 @@ printscreen:                    ; this routine prints out all the
     call spotcalc
     mov [scrn_xy], dx
 
-    cmp [displaymode], BINARY
+    cmp [displaymode], DM_BINARY
     je displaybinval
-      cmp cx, word ptr [rembytes]
+      cmp cx, [rembytes]
       jb pscontinue
         mov dl, '-'
         call printchar
@@ -4882,7 +4944,7 @@ printscreen:                    ; this routine prints out all the
       cmp cx, dx
       jb donextdispbyte
 
-      cmp cx, word ptr [rembytes]
+      cmp cx, [rembytes]
       jb pscontinue2
         mov al, '-'
         push cx
@@ -4903,7 +4965,7 @@ printscreen:                    ; this routine prints out all the
   cmp cx, 512
   jne displaynextchar
       ;---------------------------------------------------------------
-printaddresses:
+;printaddresses:
   mov [scrn_col], 1
   mov [scrn_row], 00h
   mov dx, offset offsetmsg
@@ -4916,7 +4978,7 @@ printaddresses:
 
   mov bx, 10h                           ; 16 bytes per line (hex)
   mov cx, 32                            ; 32 vertical lines for editing
-  cmp [displaymode], BINARY
+  cmp [displaymode], DM_BINARY
   jne nextaddress
 
   mov dx, [spot]
@@ -4932,8 +4994,10 @@ printaddresses:
     add ax, bx
     loop nextaddress
   ret
+printsector endp
+
 ;---------------------------------------------------------------
-printoffset:
+printoffset proc
   mov [scrn_xy], 0009
   call spotinbx
   movzx eax, bx
@@ -4947,20 +5011,22 @@ printoffset:
   mov ax, [crsr_xy]
   mov [scrn_xy], ax
   jmp colorchar
+printoffset endp
+
 ;-------------------------------------------------------
 decolorchar:
   pusha
   mov ax, DEFAULTCOLOR + (DEFAULTCOLOR*100h)    ; ah & al = DEFAULTCOLOR
-jmp startcolorchar
+  jmp startcolorchar
 ;-------------------------------------------------------
 colorchar:                      ; in: aL = color for character being edited
   pusha                         ;     aH = color for character cursor is on
   mov ax, EDITCOLOR + (HIGHLIGHTCOLOR*100h)
 
-  startcolorchar:
+startcolorchar:
   call cbuffer_offset
 
-  cmp [editmode], DEFAULTEDIT
+  cmp [editmode], EM_DEFAULT
   je ecolor1
     xchg al, ah
   ecolor1:
@@ -4980,24 +5046,40 @@ colorchar:                      ; in: aL = color for character being edited
 printchar2:
   pusha
   call cbuffer_offset
-
-  printchar2loop:
-    stosb
-    inc di
+@@:
+  stosb
+  inc di
   dec cl
-  jnz printchar2loop
+  jnz @B
   popa
   ret
 ;-------------------------------------------------------
 printchar:
   pusha
   call cbuffer_offset
-
   mov byte ptr es:[di], dl
   inc [scrn_col]
   popa
   ret
 
+;--- clear sector area (lines 1-32, colums 9-61)
+clearsecarea proc
+    mov es,[vidseg]
+    mov bx,[vidcolsize]
+    mov di,bx
+    add di,2*9
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov dl, 32
+@@:
+    mov cx, 52
+    push di
+    rep stosw
+    pop di
+    add di,bx
+    dec dl
+    jnz @B
+    ret
+clearsecarea endp
 ;-------------------------------------------------------
 ; init: - check/set video mode
 ;       - set default byte to edit
@@ -5103,9 +5185,9 @@ clrscn:
   xor dx, dx                            ; y = (spot-1)/16
   call spotcalc
   mov [crsr_xy], dx
-
+if ?VDD
   call initvdd                          ; init vdd on nt platforms
-
+endif
   ret
 init endp
 
@@ -5141,8 +5223,8 @@ printcount:
   ret
 ;-------------------------------------------------------
 getchs:
-  movzx eax, byte ptr [heads]
-  movzx ebx, byte ptr [sectors]
+  movzx eax, [heads]
+  movzx ebx, [sectors]
   mul ebx
 
   mov ebx, eax
@@ -5158,7 +5240,7 @@ getchs:
 
   mov eax, edx
   xor edx, edx
-  movzx ebx, byte ptr [sectors]
+  movzx ebx, [sectors]
   cmp bl, 0
   je skipchs2
     div ebx
@@ -5441,7 +5523,7 @@ hdread:
     mov [si].DAP.dwStartLow, eax        ; set sector #
     mov [si].DAP.dwStartHigh, 0
 
-;    mov eax, [sector2]                 ; \/\/\/\ 64-bit lba support
+;    mov eax, [dwSectorHigh]             ; \/\/\/\ 64-bit lba support
 ;    mov [si].DAP.dwStartHigh, eax
 
     mov dl, [bDrive]
@@ -5489,34 +5571,34 @@ nosectorerror:
     ret
 rwsect endp
 
-;-------------------------------------------------------
-printerror:
+;--- display error msg at menu line, then wait for a key press
+printerror proc
   push dx
   call updatescreen
   pop dx
-  nuprinterror:
+nuprinterror::
   call printbottom
   mov dx, offset errormsg
   call printstring
   call getkey
-
   mov [status], ERROR
   ret
+printerror endp
 ;-------------------------------------------------------
-validpathchar:
+validpathchar proc
   cmp al, BACK_SLASH
   je validchar
   cmp al, COLON
   je validchar
   cmp al, PERIOD
   je validchar
-validfileinputchar:
+validfileinputchar::
   cmp al, 'a'                   ; lower case letters allowed in paths
   jb validfilechar
   cmp al, 'z'
   ja validfilechar
   jmp validchar
-extvalidfilechar:
+extvalidfilechar::
   cmp al, PERIOD
   je validchar
   cmp al, SPACE                 ; directory entries can contain spaces
@@ -5548,13 +5630,13 @@ validfilechar:
   je invalidchar
   cmp al, 'a'                   ; no lower case letters
   jae invalidchar
-
-    validchar:
-    clc
+validchar:
+  clc
   ret
-    invalidchar:
-    stc
+invalidchar:
+  stc
   ret
+validpathchar endp
 ;-------------------------------------------------------
 getfilename proc                ; IN:  nothing
   mov dx, offset filenamemsg    ; OUT: CX=length of filename
@@ -5750,7 +5832,7 @@ spotcalc:                       ; IN:  dx = [spot]
   push ax                       ; OUT: dx = [scrn_xy]
   mov ax, dx
 
-  cmp [displaymode], BINARY
+  cmp [displaymode], DM_BINARY
   je binaryspotcalc
     shr dx, 4                   ; for use with hex view
     inc dl                      ; ---calculates where the current
@@ -5810,8 +5892,11 @@ quit proc
   call getyn
   jnc doret
 
-;--- japheth: exit vdd on nt platforms
+if ?VDD
+;--- exit vdd on nt platforms
   call exitvdd
+endif
+
 if 0
   mov ax, 500h	;select active page
   int 10h
@@ -5865,21 +5950,21 @@ quit endp
 ;-------------------------------------------------------
 savedata proc
 ;
-; IN:   dd:[value]      number of sectors to save
+; IN:   dd:[dwValue]    number of sectors to save
 ;       eax             starting sector
 ;
-; OUT:  disk is read and sectors are dumped to [filehandle]
-;       dw:[filehandle] handle of file to write to
+; OUT:  disk is read and sectors are dumped to [wFilehandle]
+;       dw:[wFilehandle] handle of file to write to
 ;
 
   mov edx, eax
-  add edx, dword ptr [value]
+  add edx, [dwValue]
   jc invalidperror
   dec edx
   cmp edx, [dwDataend]
   ja invalidperror
 
-  mov edx, dword ptr [value]    ; the plan here is to convert
+  mov edx, [dwValue]            ; the plan here is to convert
   mov cx, [wBps]                ; "value" into the number of 512-byte
   shr cx, 10                    ; pieces it contains by shifting it left
   shl edx, cl                   ; if BPS is > 512
@@ -5921,7 +6006,7 @@ savedata endp
 
 ;-------------------------------------------------------
 printfilemenu:
-  mov byte ptr [chainflag], NO_CHAIN
+  mov [chainflag], NO_CHAIN
 
   cmp [drivetype], PHYSICAL
   jne logicalrfo
@@ -5948,11 +6033,11 @@ checkdir:
   call finddirectory
   jc printmenu                  ; dir not found
 
-  mov byte ptr [chainflag], FILE_CHAIN
+  mov [chainflag], FILE_CHAIN
   jmp dochain2
 
 dochain:
-  mov byte ptr [chainflag], FAT_CHAIN
+  mov [chainflag], FAT_CHAIN
 
 dochain2:
   mov dx, offset chainmenu
@@ -6040,7 +6125,7 @@ getstring:                              ; in: nothing
   call printchar
   call setxy
 
-  push cs
+  push ds
   pop es
   stosb
 
@@ -6059,15 +6144,15 @@ backcommon:
   jmp setxy
 ;-------------------------------------------------------
 movecursor:             ; IN:   ax = new [spot]
-                        ;       dl = new [hl]
+                        ;       dl = new [bHL]
   push [crsr_xy]
   pop [scrn_xy]
   call decolorchar
   mov [spot], ax
-  mov byte ptr [hl], dl
+  mov [bHL], dl
   mov dx, ax
   call spotcalc
-  add dl, byte ptr [hl]
+  add dl, [bHL]
   mov [crsr_xy], dx
   jmp printoffset
 ;-------------------------------------------------------
@@ -6145,7 +6230,7 @@ getfilesize:                            ; out: eax & [filesize] = filesize
   mov ah, 2fh                           ; gets the current dta
   int 21h
   mov eax, dword ptr es:[bx+1Ah]
-  mov dword ptr [filesize], eax
+  mov [dwFilesize], eax
   ret
 ;-------------------------------------------------------
 printbottom:
@@ -6177,7 +6262,7 @@ copybuffer:
   pusha
     mov si, offset readbuffer
     mov di, offset writebuffer
-    push cs
+    push ds
     pop es
 
     mov cx, 2352
@@ -6187,13 +6272,13 @@ copybuffer:
 ;-------------------------------------------------------
 closefile:
   mov ah, 3eh
-  mov bx, word ptr [filehandle]
+  mov bx, [wFilehandle]
   int 21h
   ret
 ;-------------------------------------------------------
-writefile:                      ; in: dword [value] = number of sectors
-  push [dwSector]               ;                     to save
-  mov [dwSector], eax           ;     eax           = start sector
+writefile:                      ; in: dword [dwValue] = number of sectors
+  push [dwSector]               ;                       to save
+  mov [dwSector], eax           ;     eax             = start sector
    mov dx, offset writingmsg 
    call printbottom          
    writefileloop:
@@ -6215,7 +6300,7 @@ writefile:                      ; in: dword [value] = number of sectors
 
    mov cx, [wBps]                       ; bytes to write
    mov [status], SUCCESS
-   mov bx, word ptr [filehandle]
+   mov bx, [wFilehandle]
    mov dx, offset readbuffer
    mov ah, 40h                          ; write to file
    int 21h
@@ -6234,7 +6319,7 @@ writefile:                      ; in: dword [value] = number of sectors
    jb diskfullerr
 
    inc [dwSector]
-   dec dword ptr [value]
+   dec [dwValue]
    jnz writefileloop
    errorwritefile:
    pop [dwSector]
@@ -6264,7 +6349,7 @@ tryLFN:
   mov si, offset filename
   xor cx, cx
   int 21h
-  mov word ptr [filehandle], ax
+  mov [wFilehandle], ax
   ret
 openfile endp
 ;-------------------------------------------------------
@@ -6279,7 +6364,7 @@ createfile:
 
   mov dx, offset fileerror
   jc printerror
-  mov word ptr [filehandle], ax
+  mov [wFilehandle], ax
   ret
 
   fileexists:
@@ -6320,7 +6405,7 @@ setseeds2:
   mov ah, 00h
   int 1Ah
 
-  mov word ptr [bx], dx
+  mov word ptr [bx+0], dx   ;set seed1+seed3 or seed2+seed4  
   mov word ptr [bx+4], cx
   ret
 ;-----------------------------------------------------------------
@@ -6331,7 +6416,7 @@ backhex:
 
   call backcommon
 
-  cmp byte ptr [commandflag], GET_STRING
+  cmp [commandflag], GET_STRING
   je backstring
     shr ebx, 4
     jmp getkeyagain10
@@ -6362,12 +6447,12 @@ backhex:
 ;               stringbuffer = hex string gotten (for GET_STRING)
 ;
 gethexstring:
-  mov byte ptr [commandflag], GET_STRING
+  mov [commandflag], GET_STRING
   jmp dogethex
 gethex:
-  mov byte ptr [commandflag], GET_VALUE
+  mov [commandflag], GET_VALUE
   dogethex:
-  mov dword ptr [maxvalue], eax         ; back up max value
+  mov [dwMaxvalue], eax                 ; back up max value
   call printbottom
   mov dl, [scrn_col]                    ; x-coordinate preserved so that
   mov [maxleft], dl                     ; backspace does not go too far
@@ -6414,7 +6499,7 @@ lethex:
 
 numhex:
   and al, 0Fh
-  cmp byte ptr [commandflag], GET_STRING
+  cmp [commandflag], GET_STRING
   je stringhex
 
   cmp al, 0
@@ -6430,7 +6515,7 @@ numhex:
   shl ebx, 4
   or bl, al
 
-  cmp ebx, dword ptr [maxvalue]         ; value smaller or equal to maximum?
+  cmp ebx, [dwMaxvalue]                 ; value smaller or equal to maximum?
   jbe hexok                             ; accept it.
   shr ebx, 4
   jmp getkeyagain10                     ; abort.
@@ -6454,7 +6539,7 @@ stringhex:
   jmp getkeyagain10
 ;-----------------------------------------------------------------
 donegethex:
-  cmp byte ptr [commandflag], GET_STRING
+  cmp [commandflag], GET_STRING
   jne retgethex
   cmp bl, 0
   je noadjust
@@ -6501,20 +6586,20 @@ getcurrententry:                ; IN:  nothing
 
 rand:
   mov eax, 21723
-  movzx ebx, word ptr [seed1]
+  movzx ebx, [seed1]
   mul ebx
-  mov bx, word ptr [seed2]
+  mov bx, [seed2]
   add eax, ebx
-  mov dword ptr [seed1], eax
+  mov [seed12], eax
 
   mov ecx, eax
 
   mov eax, 30714
-  mov bx, word ptr [seed3]
+  mov bx, [seed3]
   mul ebx
-  mov bx, word ptr [seed4]
+  mov bx, [seed4]
   add eax, ebx
-  mov dword ptr [seed3], eax
+  mov [seed34], eax
 
   shl ecx, 16
   and eax, 0FFFFh
@@ -6522,15 +6607,12 @@ rand:
   ret
 ;-----------------------------------------------------------------
 
-;--- japheth: code to access WDEVDD on NT platforms.
+;--- code to access WDEVDD on NT platforms.
 
+if ?VDD
     include wdent.inc
+endif
 
-
-
-
-
-;-------------------------------------------------------
 ;-------------------------------------------------------
 ifdef _DEBUG
 
@@ -6581,37 +6663,37 @@ debugviewmode:
   mov [scrn_xy], 2222h
   mov dx, CStr('Stored EAX: ')
   call printstring
-  mov eax, dword ptr [storedeax]
+  mov eax, [storedeax]
   call printregister
 
   mov [scrn_xy], 2322h
   mov dx, CStr('Stored EBX: ')
   call printstring
-  mov eax, dword ptr [storedebx]
+  mov eax, [storedebx]
   call printregister
 
   mov [scrn_xy], 2422h
   mov dx, CStr('Stored ECX: ')
   call printstring
-  mov eax, dword ptr [storedecx]
+  mov eax, [storedecx]
   call printregister
 
   mov [scrn_xy], 2522h
   mov dx, CStr('Stored EDX: ')
   call printstring
-  mov eax, dword ptr [storededx]
+  mov eax, [storededx]
   call printregister
 
   mov [scrn_xy], 2622h
   mov dx, CStr('Stored SI:  ')
   call printstring
-  movzx eax, word ptr [storedsi]
+  movzx eax, [storedsi]
   call printregister
 
   mov [scrn_xy], 2722h
   mov dx, CStr('Stored DI:  ')
   call printstring
-  movzx eax, word ptr [storeddi]
+  movzx eax, [storeddi]
   call printregister
 
   ret
@@ -6634,12 +6716,12 @@ printregister:
 
 
 storedebugdata:
-  mov dword ptr [storedeax], eax
-  mov dword ptr [storedebx], ebx
-  mov dword ptr [storedecx], ecx
-  mov dword ptr [storededx], edx
-  mov word ptr [storedsi], si
-  mov word ptr [storeddi], di
+  mov [storedeax], eax
+  mov [storedebx], ebx
+  mov [storedecx], ecx
+  mov [storededx], edx
+  mov [storedsi], si
+  mov [storeddi], di
   ret
 
 endif

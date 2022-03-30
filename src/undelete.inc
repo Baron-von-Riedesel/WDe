@@ -5,12 +5,12 @@
 ;-------------------------------------------------------
 undelete proc
 ;undelete:
-  mov byte ptr [fromfat], 1
+  mov [fromfat], 1
   call spotinbx                         ; move to the beginning of the
     and bl, 11100000b                   ; file entry
     add bx, offset readbuffer
   mov eax, dword ptr [bx+DIR_FILESIZE]
-  mov dword ptr [filesize], eax
+  mov [dwFilesize], eax
   mov ax, word ptr [bx+DIR_CLUST_HIGH]  ; get start cluster (high 16-bits)
   shl eax, 16
   mov ax, word ptr [bx+DIR_CLUST_LOW]   ; get start cluster (low 16-bits)
@@ -25,14 +25,14 @@ undelete proc
 invclust:
     mov dx, offset greatmsg
     call printerror
-    jmp mainmenu
+    ret
 filenoexceed:
   test eax, eax
   jz undel1good
 
     mov dx, offset nofirstcluster
     call printerror
-    jmp mainmenu
+    ret
 
 undel1good:
 
@@ -43,7 +43,7 @@ getkeyagain16:
 
   call cursorgetkey
   cmp al, ESCAPE_KEY
-  je mainmenu
+  je done
 
   call validfileinputchar
   jc getkeyagain16
@@ -53,7 +53,7 @@ getkeyagain16:
   cmp al, 'z'
   ja unok1
     sub al, 32
-  unok1:
+unok1:
 ;    call spotinbx                      ; should be preserved from above
 ;    and bl, 11100000b
 ;    add bx, offset readbuffer
@@ -70,22 +70,23 @@ getkeyagain16:
     je undelete_err1
     mov dx, CStr('Finished UnDeleting File')
     call printerror
-  jmp mainmenu
+done:
+    ret
 undelete_err1:
       mov dx, CStr('File Chain Exceeds FAT')
       call printerror
-      jmp mainmenu
+      ret
 undelete endp
 ;--------------------------------------------------------
 UndeleteCore proc
-;UndeleteCore:           ; in: [filesize] - size of file to undelete)
-  pushad                ;     [dwCluster]  - cluster to work from
+;UndeleteCore:           ; in: [dwFilesize] - size of file to undelete)
+  pushad                 ;     [dwCluster]  - cluster to work from
   undelLoop:
     mov eax, [dwBpc]                    ; bytes per cluster
     mov ebx, [dwCluster]
-    cmp dword ptr [filesize], eax       ; less than bytes per cluster left?
+    cmp [dwFilesize], eax               ; less than bytes per cluster left?
     jbe writeeof                        ; yes, write end of file in
-      sub dword ptr [filesize], eax     ; no, subtract bpc
+      sub [dwFilesize], eax             ; no, subtract bpc
     getnextentry:
       inc ebx
       mov eax, ebx

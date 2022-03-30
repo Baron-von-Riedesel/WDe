@@ -15,11 +15,11 @@
 ; 0FFFFFFFFh is returned instead.
 ;
 ;-------------------------------------------------------
-cluster2sector:
+cluster2sector proc
   push ebx
   sub eax, 2
 
-  movzx ebx, byte ptr [spc]
+  movzx ebx, [bSpc]
   mul ebx
   jc errem2
 
@@ -36,16 +36,17 @@ cluster2sector:
   skipfat32adjust:
   pop ebx
   ret
+cluster2sector endp
 ;-------------------------------------------------------
 ;
-; cluster2sector converts a sector number to its matching cluster number.
+; sector2cluster converts a sector number to its matching cluster number.
 ;
 ;               IN:   eax       sector number
 ;               OUT:  eax       corresponding cluster number
 ;                     ecx       corrupted
 ;
 ;-------------------------------------------------------
-sector2cluster:
+sector2cluster proc
   movzx ecx, [bFats]
 
 ;  cmp cl, 0                            ; useful if ever FATS=0
@@ -64,11 +65,12 @@ sector2cluster:
 
   sub eax, [dwReserved]
 
-  mov cl, byte ptr [spcmd]
+  mov cl, [spcmd]
   shr eax, cl                           ; divide by sectors per cluster
     
   add eax, 2                            ; clusters start at 2
   ret
+sector2cluster endp
 ;-------------------------------------------------------
 ;
 ; getfatentry returns the entry in the fat table for a particular cluster #
@@ -77,7 +79,7 @@ sector2cluster:
 ;               OUT:  eax       data stored in the fat
 ;
 ;-------------------------------------------------------
-getfatentry:
+getfatentry proc
   push ebx
   push [dwSector]
   push si
@@ -132,6 +134,7 @@ getfatentry:
   oefgf:
   pop ebx
   ret
+getfatentry endp
 ;-------------------------------------------------------
 ;
 ; putfatentry writes the entry in the fat table for a particular cluster #
@@ -140,7 +143,7 @@ getfatentry:
 ;                     eax       data to store in the fat
 ;
 ;-------------------------------------------------------
-putfatentry:
+putfatentry proc
   push [dwSector]
   push edx
   push si
@@ -196,6 +199,7 @@ fat32pfe:
   pop edx
   pop [dwSector]
   jmp rwsect
+putfatentry endp
 ;-----------------------------------------------------------------
 ;
 ; locatefatentry finds the offset within the fat for a given cluster
@@ -207,13 +211,13 @@ fat32pfe:
 ; the sector is also read into readbuffer
 ;
 ;-----------------------------------------------------------------
-locatefatentry:
+locatefatentry proc
   push eax
   push ecx
                                         
-  cmp ebx, dword ptr [lastcluster]      ; past the last cluster on the drive
+  cmp ebx, [dwLastcluster]      ; past the last cluster on the drive
   seta [status]
-  ja nntri                              ; so abort with an error
+  ja nntri                      ; so abort with an error
 
   mov cl, [fattype]             ; convert cluster number to # of bytes
   shr cl, 1                     ; since the start of the fat table
@@ -243,7 +247,7 @@ locatefatentry:
 
 ;  cmp [bFats], 2
 ;  jb locationinfirstfat
-  cmp byte ptr [fromfat], 1
+  cmp [fromfat], 1
   je locationinfirstfat
     add eax, [dwSpf]
   locationinfirstfat:
@@ -257,6 +261,7 @@ locatefatentry:
   pop ecx
   pop eax
   ret
+locatefatentry endp
 ;-----------------------------------------------------------------
 ;
 ; fat12pad adds extra fat data around the sector buffer in case
@@ -267,7 +272,7 @@ locatefatentry:
 ;               OUT:  bytes written around readbuffer
 ;
 ;-----------------------------------------------------------------
-fat12pad:                               ; IN: ebx = bytes to fat entry
+fat12pad proc                           ; IN: ebx = bytes to fat entry
   pushad                                ;     si = readbuffer pointer
                                         ; OUT: bytes put around sector
   push word ptr [status]
@@ -288,7 +293,7 @@ fat12pad:                               ; IN: ebx = bytes to fat entry
   mov byte ptr [fat12fix+4], al
   inc [dwSector]
 
-  donttrylastsect:
+donttrylastsect:
   mov eax, [dwSector]                   ; we don't want to read the next
   cmp eax, [dwDataend]                  ; sector if it's past the drive end
   jae nf12b
@@ -299,14 +304,15 @@ fat12pad:                               ; IN: ebx = bytes to fat entry
   mov byte ptr [si+bx], al
 
   dec [dwSector]
-  nf12b:
+nf12b:
   call rwsect
-  nf12b2:
+nf12b2:
   mov [handling], ABORT_OPERATION
   pop word ptr [subsector]
   pop word ptr [status]
   popad
   ret
+fat12pad endp
 ;-----------------------------------------------------------------
 ;
 ; getentrynumber gets the fat entry number the cursor is on
@@ -316,15 +322,15 @@ fat12pad:                               ; IN: ebx = bytes to fat entry
 ;               OUT:  eax       entry number
 ;
 ;-----------------------------------------------------------------
-getentrynumber:
+getentrynumber proc
   mov eax, [dwSector]
   sub eax, [dwReserved]
 
-  mov byte ptr [fromfat], 1
+  mov [fromfat], 1
   cmp eax, [dwSpf]
   jb getfromfirstfat
     sub eax, [dwSpf]
-    inc byte ptr [fromfat]
+    inc [fromfat]
   getfromfirstfat:
   mov cl, byte ptr [wBps+1]
   shr cl, 1
@@ -345,6 +351,7 @@ getentrynumber:
     div ebx
   dlfe13:
   ret
+getentrynumber endp
 ;-----------------------------------------------------------------
 ;
 ; go2entry jumps to an entry in the fat
@@ -354,7 +361,7 @@ getentrynumber:
 ;                     [spot]    byte offset within the sector
 ;
 ;-----------------------------------------------------------------
-go2entry:
+go2entry proc
   cmp [fattype], FAT12
   jne nosmd
     mov ecx, 3
@@ -388,4 +395,5 @@ go2entry:
 
   xor dl, dl
   jmp movecursor
+go2entry endp
 ;-------------------------------------------------------

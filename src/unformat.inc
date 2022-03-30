@@ -35,7 +35,7 @@ unformat proc
 
   mov eax, [dwSector]
   mov [dwSecBackup], eax
-  mov byte ptr [fromfat], 1             ; always use fat 1
+  mov [fromfat], 1                      ; always use fat 1
   mov dx, CStr('Scanning Fat...')
   call printbottom
   mov eax, 2                            ; start at cluster 2
@@ -57,7 +57,7 @@ continuefatscan:
 entryisok:
       inc eax                           ; cluster++
 
-      cmp eax, dword ptr [lastcluster]
+      cmp eax, [dwLastcluster]
       jbe continuefatscan
 
 unffatok:
@@ -88,7 +88,7 @@ nextCluster:
 
     call cluster2sector                 ; read first sector in cluster
 
-    mov cl, byte ptr [spc]
+    mov cl, [bSpc]
 
 nextSectorOfCluster:
     call checkabort
@@ -104,7 +104,7 @@ nextSectorOfCluster:
     xor bx, bx
     call finddirectory
     jnc isDirectory
-      cmp cl, byte ptr [spc]            ; if the first sector in a cluster
+      cmp cl, [bSpc]                    ; if the first sector in a cluster
       je nextCluster                    ; is not a directory...scan next
                                         ; cluster
       mov bx, [wBps]
@@ -227,7 +227,7 @@ foundProcessed:
     push ax
     mov eax, dword ptr [bx+1]
     mov [dwCluster], eax
-    mov byte ptr [commandflag], VALIDATE
+    mov [commandflag], VALIDATE
     call checkDirValidity
 
     ; if the directory is deemed invalid, then AL=1,
@@ -271,7 +271,7 @@ notRootLinked:
       mov eax, 0FFFFFFFh
       call putfatentry
     pop bx
-    mov byte ptr [commandflag], PROCESS
+    mov [commandflag], PROCESS
     call checkDirValidity
 
     test byte ptr [bx], UNLINKED_DIRECTORY
@@ -338,7 +338,7 @@ checkDirValidity:
   call cluster2sector
   mov [dwSector], eax           ; get matching sector number
 
-  mov dh, byte ptr [spc]        ; number of sectors per cluster
+  mov dh, [bSpc]                ; number of sectors per cluster
             
 checkNextSector:
 
@@ -370,9 +370,9 @@ processNextEntry:
     ; error checking for cluster # needed here
     ;
 
-    cmp byte ptr [commandflag], FILE_RECOVERY
+    cmp [commandflag], FILE_RECOVERY
     je doRecoverFiles
-    cmp byte ptr [commandflag], PROCESS
+    cmp [commandflag], PROCESS
     je doSetEntryFatData
 
     cmp eax, [dwCluster]        ; cluster # of any entries within the
@@ -424,17 +424,17 @@ skipThisEntry:
 doRecoverFiles:
     mov [dwCluster], eax        ; file cluster #
     mov ebx, dword ptr [readbuffer+si+DIR_FILESIZE]
-    mov dword ptr [filesize], ebx
+    mov [dwFilesize], ebx
 
     mov eax, [maxsize]
     cmp ebx, eax                        ; filesize smaller then maxsize?
     jbe skipSetNextSize                 ; too small.
-    cmp dword ptr [nextsize], eax       ; nextsize is smaller than maxsize?
+    cmp [dwNextsize], eax               ; nextsize is smaller than maxsize?
     jb setNextSize                      ; set filesize as nextsize.
-    cmp ebx, dword ptr [nextsize]       ; filesize bigger than nextsize?
+    cmp ebx, [dwNextsize]               ; filesize bigger than nextsize?
     jae skipSetNextSize                 ; abort.
 setNextSize:
-      mov dword ptr [nextsize], ebx
+      mov [dwNextsize], ebx
 skipSetNextSize:
 
     cmp ebx, [minsize]                  ; file must be bigger than minsize
@@ -469,7 +469,7 @@ writeRootEntry:                         ; IN: si = offset readbuffer
 
   mov ebx, [dwRoot]
 
-  mov ch, byte ptr [spc]                ; start at the first root sector
+  mov ch, [bSpc]                        ; start at the first root sector
   xor dx, dx                            ; zero the checked root entry count
 
 checkNextRootSect:
@@ -580,12 +580,12 @@ recoverValidFiles:
 
     mov eax, dword ptr [bx+1]
     mov [dwCluster], eax
-    mov byte ptr [commandflag], FILE_RECOVERY
+    mov [commandflag], FILE_RECOVERY
     call checkDirValidity
   jmp continueRecoveryLoop
 
 adjustMinMax:
-    mov eax, dword ptr [nextsize]
+    mov eax, [dwNextsize]
     cmp [maxsize], eax             ; nextsize is smaller or equal to maxsize,
     jae finishedUnformat           ; so no bigger files were found.
 

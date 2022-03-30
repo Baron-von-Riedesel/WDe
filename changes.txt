@@ -8,8 +8,9 @@ WDe V0.33
     line.
   - added SETM43 tool. If it works with the graphics card, WDE's look
     might improve since a 8x14 font (instead of 8x8) is used then.
-  - accept a drive letter on the command line when WDe is started.
+  - accept 'x:' or 'xH'/'xF' on the command line when WDe is started.
   - source changed to true tiny model (reduces binary size).
+  - lot of "spaghetti" code cleaned.
 
 WDe V0.32
   - don't change video mode if current mode has at least 43 lines.

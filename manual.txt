@@ -62,6 +62,7 @@ WDe User Manual
 
     Escape        - Back out of a menu (Quit also)
     Arrow Keys    - Change offset within data
+    Home/End      - Move cursor to start/end of data
     PageUp        - Back 1 sector
     PageDown      - Forward 1 sector
     Ctrl+PageUp   - Back 100 sectors

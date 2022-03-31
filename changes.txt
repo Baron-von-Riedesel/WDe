@@ -6,11 +6,15 @@ WDe V0.33
   - ensure that displays are done in current video page.
   - fixed: switching between hex and binary mode didn't clear the first data
     line.
+  - fixed: if HD access had to use int 13h, ah=3 (old write function),
+    a wrong address (read buffer instead of write buffer) was used.
   - added SETM43 tool. If it works with the graphics card, WDE's look
     might improve since a 8x14 font (instead of 8x8) is used then.
   - accept 'x:' or 'xH'/'xF' on the command line when WDe is started.
   - source changed to true tiny model (reduces binary size).
   - lot of "spaghetti" code cleaned.
+  - find function will move cursor to the start of the found string.
+  - Home/End key in main menu move cursor to start/end of current sector.
 
 WDe V0.32
   - don't change video mode if current mode has at least 43 lines.

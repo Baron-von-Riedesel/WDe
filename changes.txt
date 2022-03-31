@@ -15,6 +15,8 @@ WDe V0.33
   - lot of "spaghetti" code cleaned.
   - find function will move cursor to the start of the found string.
   - Home/End key in main menu move cursor to start/end of current sector.
+  - "find next" function added. Also, find will now start from cursor 
+    position in current sector, not from the current sector's start.
 
 WDe V0.32
   - don't change video mode if current mode has at least 43 lines.

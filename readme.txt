@@ -6,12 +6,14 @@
   mediums.
 
   WDe is currently capable of editing logical, physical and CD-Rom drives
-  on MS-DOS V4.0+ or compatible.  It should (theoretically) be able to edit
-  drives up to 2 TB in size.
+  on MS-DOS V4.0+ or compatible.  It should be able to edit drives up to
+  2 TB in size.
 
-  I strongly recommend using a cache utility (such as SMARTDrive) to speed
-  up functions that would otherwise be quite slow.
-
+  Please be aware that a disk editor, if used inappropriately, might easily
+  cause severe data losses, if the user doesn't know what he/she is doing.
+  So be careful and, before doing any real work, get accustomed to WDe by 
+  experimenting with storage devices that don't hold important data.
+   
 
   2. User Interface
 

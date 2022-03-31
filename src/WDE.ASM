@@ -465,8 +465,8 @@ cdjumpmenu      db 0
 viewmenu        db 2
                 db 25,17,9,39,40,41,26,-1
 
-searchmenu      db 3
-                db 27,28,17,9,31,26,-1
+searchmenu      db 2
+                db 27,28,43,17,9,31,26,-1
 
 fillmenu        db 3
                 db 28,27,32,33,42,34,-1
@@ -494,9 +494,9 @@ funcmenu0       db 3
                 db 30,29,-1
 ifndef ?BASIC
 funcmenu1       db 3
-                db 30,29,44,-1
+                db 30,29,45,-1
 funcmenu2       db 3
-                db 30,29,44,43,-1
+                db 30,29,45,44,-1
 endif
 
 introtext       db 'WDe V0.33',0
@@ -571,9 +571,10 @@ part01          db 'Fat12',0                            ; 39
 part04060E      db 'Fat16',0                            ; 40
 part0B0C        db 'Fat32',0                            ; 41
                 db 'Inverse',0                          ; 42
+                db 'Next',0                             ; 43
         ifndef ?BASIC
-                db 'UnDelete',0                         ; 43
-                db 'UnFormat',0                         ; 44
+                db 'UnDelete',0                         ; 44
+                db 'UnFormat',0                         ; 45
         endif
 
 
@@ -614,6 +615,7 @@ sectorrerror3   db ' - Abort/Skip/Ignore All [A/S/I]? ',0
 sectorwerror    db 'Error Writing Sector',0
 greatmsg        db 'Invalid Start Cluster',0
 nochainmsg      db 'Recursive Link Not Found',0
+nosearchstring  db 'No search string defined yet',0
 errormsg        db ' - Press Any Key',0
 
 inmbrmsg        db '[MBR]',0
@@ -790,7 +792,7 @@ endif
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
 filename        db 69 dup(?)
-stringbuffer    db 76 dup(?)
+stringbuffer    db 76 dup(?)    ; buffer for find string (pos 74: length)
 diskinfobuffer  db 1Ah dup(?)   ; buffer for int13h "get drive info"
 fat12fix        db 5 dup(?)     ; stores first borrowed byte for fat12
 	align 4
@@ -1901,15 +1903,18 @@ getkeyagain:
   je findhex
 
   cmp ah, F3_KEY
-  je findmbr
+  je findnext
 
   cmp ah, F4_KEY
-  je findbs
+  je findmbr
 
   cmp ah, F5_KEY
-  je findfat
+  je findbs
 
   cmp ah, F6_KEY
+  je findfat
+
+  cmp ah, F7_KEY
   jne getkeyagain
 ;-------------------------------------------------------
 finddir:
@@ -2060,16 +2065,38 @@ findmbrnext:
   call findcommon
   jmp findmbrnext
 
-;-------------------------------------------------------
+findnext:
+  mov cx, word ptr [stringbuffer+74]
+  jcxz nostringdefined
+  call spotinbx
+  inc bx            ;go to next byte in sector
+  cmp bx,[wBps]     ;reached sector's end?
+  jb @F
+  inc [dwSector]    ;then read in next sector
+  call rwsect
+  call updatescreen
+  xor bx,bx         ;and set spot to position 0
+@@:
+  mov ax,bx
+  mov dl,0
+  call movecursor
+  mov cx, word ptr [stringbuffer+74]
+  jmp findstring_common
+nostringdefined:
+  mov dx, offset nosearchstring
+  jmp nuprinterror
+findstring:
+  call getstring
+  jmp findstring_common
 findhex:
   mov dx, offset hexmsg
   call gethexstring
-  jc done
+  jc @F
+findstring_common:
   test cx, cx
-  jz done
-  mov dx, offset searchingmsg
-  call printbottom
-  jmp stringsearch
+  jnz stringsearch
+@@:
+  ret
 
 submenu_find endp
 
@@ -2149,18 +2176,23 @@ setDLview:
 
 updatescreen endp
 
-;--- menu item "find string"
+;--- search string in stringbuffer
+;--- CX: size of string
+;--- search starts at begin of current sector?
 
-findstring proc
-  call getstring
-  and cx,cx
-  jz abortfindstring
+stringsearch proc
 
     mov dx, offset searchingmsg
     call printbottom
-stringsearch::                          ; <--- find "hex" entry
+
     mov word ptr [stringbuffer+74], cx  ; save length in last 2 bytes of buffer
+
+stringsearch_next::
+if 0
     xor bx, bx
+else
+    call spotinbx
+endif
     xor si, si
 
 nextbyte:
@@ -2188,7 +2220,6 @@ continuefindstring0:
     mov ah, bh
     shr ah, 1                           ; calculate our current subsector
     mov [subsector], ah
-
     jmp nextbyte
 
 comparenextbyte:
@@ -2224,7 +2255,8 @@ nextfindsector:
   call printcounts
   xor bx, bx
   jmp nextbyte
-findstring endp
+
+stringsearch endp
 
 abortfindstring:
   call updatescreen

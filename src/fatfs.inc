@@ -97,29 +97,29 @@ getfatentry proc
 
     test al, 00000001b
     jnz method2
-    method1:
+method1:
       mov ax, word ptr [si+bx]
       and ah, 0Fh
     jmp f12gfs
-    method2:
+method2:
       mov ax, word ptr [si+bx]
       shr ax, 4
-  f12gfs:
+f12gfs:
       cmp ax, 0FF7h                     ; if the fat entry is an end of chain
       jb f16gfd                         ; or bad cluster entry, then pad
       jmp filltopbits                   ; it so for any FAT type it's set
                                         ; to 0FFFFFFxh
-  dof13:
+dof13:
   mov eax, dword ptr [si+bx]
   cmp [fattype], FAT32
   je f32gfd
-    f16gfd:
+f16gfd:
     and eax, 0FFFFh                     ; cut off top word for fat16
     cmp ax, 0FFF7h
     jb abortgfe
-    filltopbits:                        ; for ease/compatibility, all fat 
+filltopbits:                            ; for ease/compatibility, all fat 
     or eax, 0FFFF000h                   ; oddities (full/bad cluster) are
-  f32gfd:                               ; set as FFFFFFxh
+f32gfd:                                 ; set as FFFFFFxh
   and eax, 0FFFFFFFh
   abortgfe:
   pop si
@@ -131,7 +131,7 @@ getfatentry proc
   cmp [status], ERROR
   je oefgf
   call rwsect
-  oefgf:
+oefgf:
   pop ebx
   ret
 getfatentry endp

@@ -48,20 +48,17 @@ cluster2sector endp
 ;-------------------------------------------------------
 sector2cluster proc
   movzx ecx, [bFats]
-
-;  cmp cl, 0                            ; useful if ever FATS=0
-;  je skipsfats
-;  inc cl
-
-  subfats:
-    sub eax, [dwSpf]
-  loop subfats
+; jcxz skipfats                         ; useful if ever FATS=0
+@@:
+  sub eax, [dwSpf]
+  loop @B
+skipfats:
 
   cmp [fattype], FAT32
   je dontsubroot
-    mov cx, [wRootsectors]
-    sub eax, ecx
-  dontsubroot:
+  mov cx, [wRootsectors]
+  sub eax, ecx
+dontsubroot:
 
   sub eax, [dwReserved]
 
@@ -80,39 +77,39 @@ sector2cluster endp
 ;
 ;-------------------------------------------------------
 getfatentry proc
-  push ebx
-  push [dwSector]
-  push si
+    push ebx
+    push [dwSector]
+    push si
 
-;  and eax, 0FFFFFFFh            ; ignore highest nibble
-  mov ebx, eax
-  call locatefatentry
-  cmp [status], ERROR
-  je abortgfe
-  mov si, offset readbuffer
-  cmp [fattype], FAT12
-  jne dof13
+;   and eax, 0FFFFFFFh            ; ignore highest nibble
+    mov ebx, eax
+    call locatefatentry
+    cmp [status], ERROR
+    je abortgfe
+    mov si, offset readbuffer
+    cmp [fattype], FAT12
+    jne dof13
 
-  call fat12pad
+    call fat12pad
 
     test al, 00000001b
     jnz method2
 method1:
-      mov ax, word ptr [si+bx]
-      and ah, 0Fh
+    mov ax, word ptr [si+bx]
+    and ah, 0Fh
     jmp f12gfs
 method2:
-      mov ax, word ptr [si+bx]
-      shr ax, 4
+    mov ax, word ptr [si+bx]
+    shr ax, 4
 f12gfs:
-      cmp ax, 0FF7h                     ; if the fat entry is an end of chain
-      jb f16gfd                         ; or bad cluster entry, then pad
-      jmp filltopbits                   ; it so for any FAT type it's set
-                                        ; to 0FFFFFFxh
+    cmp ax, 0FF7h                     ; if the fat entry is an end of chain
+    jb f16gfd                         ; or bad cluster entry, then pad
+    jmp filltopbits                   ; it so for any FAT type it's set
+                                      ; to 0FFFFFFxh
 dof13:
-  mov eax, dword ptr [si+bx]
-  cmp [fattype], FAT32
-  je f32gfd
+    mov eax, dword ptr [si+bx]
+    cmp [fattype], FAT32
+    je f32gfd
 f16gfd:
     and eax, 0FFFFh                     ; cut off top word for fat16
     cmp ax, 0FFF7h
@@ -120,20 +117,19 @@ f16gfd:
 filltopbits:                            ; for ease/compatibility, all fat 
     or eax, 0FFFF000h                   ; oddities (full/bad cluster) are
 f32gfd:                                 ; set as FFFFFFxh
-  and eax, 0FFFFFFFh
-  abortgfe:
-  pop si
-  pop ebx
-  cmp [dwSector], ebx
-  je oefgf
-  mov [dwSector], ebx
-
-  cmp [status], ERROR
-  je oefgf
-  call rwsect
-oefgf:
-  pop ebx
-  ret
+    and eax, 0FFFFFFFh
+abortgfe:
+    pop si
+    pop ebx
+    cmp [dwSector], ebx
+    je @F
+    mov [dwSector], ebx
+    cmp [status], ERROR
+    je @F
+    call rwsect
+@@:
+    pop ebx
+    ret
 getfatentry endp
 ;-------------------------------------------------------
 ;
@@ -207,67 +203,66 @@ putfatentry endp
 ;               IN:   ebx       cluster number to locate
 ;               OUT:  [dwSector]  sector # the entry is in
 ;                     ebx       byte offset to it inside the sector
-;
+;                     [status]
 ; the sector is also read into readbuffer
 ;
 ;-----------------------------------------------------------------
 locatefatentry proc
-  push eax
-  push ecx
+    push eax
+    push ecx
                                         
-  cmp ebx, [dwLastcluster]      ; past the last cluster on the drive
-  seta [status]
-  ja nntri                      ; so abort with an error
+    cmp ebx, [dwLastcluster]    ; past the last cluster on the drive
+    seta [status]
+    ja nntri                    ; so abort with an error
 
-  mov cl, [fattype]             ; convert cluster number to # of bytes
-  shr cl, 1                     ; since the start of the fat table
-  shl ebx, cl
-  cmp cl, 0
-  jne donelfe13
+    mov cl, [fattype]           ; convert cluster number to # of bytes
+    shr cl, 1                   ; since the start of the fat table
+    shl ebx, cl
+    cmp cl, 0
+    jne donelfe13
     mov eax, ebx                ; adjustment for fat12
     shr eax, 1
     add ebx, eax
-  donelfe13:
+donelfe13:
 
                                 ; ebx = # of bytes since fat start
-  movzx ecx, [wBps]
-  push cx
+    movzx ecx, [wBps]
+    push cx
     shr cx, 9
     add cl, 8
                                 ; divides ebx by bps in order to find what
     mov eax, ebx                ; sector the fat entry is in
     shr eax, cl
-  pop cx
+    pop cx
 
-  shr ch, 1
-  or cx, 111111111b
-  and ebx, ecx 
+    shr ch, 1
+    or cx, 111111111b
+    and ebx, ecx 
 
-  add eax, [dwReserved]
+    add eax, [dwReserved]
 
-;  cmp [bFats], 2
-;  jb locationinfirstfat
-  cmp [fromfat], 1
-  je locationinfirstfat
+;    cmp [bFats], 2
+;    jb locationinfirstfat
+    cmp [fromfat], 1
+    je locationinfirstfat
     add eax, [dwSpf]
-  locationinfirstfat:
+locationinfirstfat:
 
-  cmp [dwSector], eax   ; sets [dwSector] to that sector
-  je nntri
-  mov [dwSector], eax
-  call rwsect
-  nntri:
-
-  pop ecx
-  pop eax
-  ret
+    cmp [dwSector], eax   ; sets [dwSector] to that sector
+    je nntri
+    mov [dwSector], eax
+    call rwsect
+nntri:
+    pop ecx
+    pop eax
+    ret
 locatefatentry endp
 ;-----------------------------------------------------------------
 ;
 ; fat12pad adds extra fat data around the sector buffer in case
 ;          the fat entry being read/written crosses a sector boundary
 ;
-;               IN:   ebx       bytes to fat entry
+;               IN:   bx        bytes to fat entry
 ;                     si        readbuffer pointer
 ;               OUT:  bytes written around readbuffer
 ;
@@ -275,41 +270,39 @@ locatefatentry endp
 fat12pad proc                           ; IN: ebx = bytes to fat entry
   pushad                                ;     si = readbuffer pointer
                                         ; OUT: bytes put around sector
-  push word ptr [status]
-  push word ptr [subsector]
-  mov [handling], IGNORE_ERRORS
   mov eax, [dwSector]                   ; did we call this function
-  cmp dword ptr [fat12fix], eax         ; from the same sector?  then
-  je nf12b2                             ; we already have the correct data
-  mov dword ptr [fat12fix], eax         ; ...this would be a tiny bug if
+  cmp [fat12fixsec], eax                ; from the same sector?  then
+  je done                               ; we already have the correct data
+  mov [fat12fixsec], eax                ; ...this would be a tiny bug if
                                         ; we switch drives on sector 0
-
+  push word ptr [status]
+  mov [handling], IGNORE_ERRORS
   mov bx, [wBps]
   test eax, eax                         ; if the current sector is 0
-  jz donttrylastsect                    ; then we can't read the previous
+  jz nopred                             ; then we can't read the previous
+
   dec [dwSector]
   call rwsect
   mov al, byte ptr [si+bx-1]            ; copy last byte of previous sector
-  mov byte ptr [fat12fix+4], al
+  mov [fat12fix1], al
   inc [dwSector]
 
-donttrylastsect:
+nopred:
   mov eax, [dwSector]                   ; we don't want to read the next
   cmp eax, [dwDataend]                  ; sector if it's past the drive end
-  jae nf12b
+  jae nosucc
 
   inc [dwSector]                        ; copy first byte of next sector
   call rwsect
   mov al, byte ptr [si]
   mov byte ptr [si+bx], al
-
   dec [dwSector]
-nf12b:
-  call rwsect
-nf12b2:
-  mov [handling], ABORT_OPERATION
-  pop word ptr [subsector]
+
+nosucc:
+  call rwsect                           ;restore current sector
   pop word ptr [status]
+  mov [handling], ABORT_OPERATION
+done:
   popad
   ret
 fat12pad endp

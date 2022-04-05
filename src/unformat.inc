@@ -64,8 +64,7 @@ unffatok:
     mov eax, [dwRoot]                   ; jump to the root directory
     mov [dwSector], eax
     call rwsect
-    cmp [status], ERROR
-    je abortUnformat
+    jc abortUnformat
     mov dx, CStr('Root Not Blank')
     cmp byte ptr [readbuffer], 0        ; check if first root entry is blank
     jne unformatError
@@ -97,7 +96,7 @@ nextSectorOfCluster:
     cmp eax, [dwDataend]
     ja doneFindDirs
     mov [dwSector], eax
-    call printcounts
+    call printtopline
     call rwsect                         ; need error checking b4 & after
 
     mov si, offset readbuffer
@@ -147,7 +146,7 @@ notLastSect:
     je dontReRead                       ; don't re-read it.
 
       mov [dwSector], eax               ; read first sector of cluster
-      call printcounts
+      call printtopline
       call rwsect
 
 dontReRead:
@@ -346,7 +345,7 @@ checkNextSector:
     ; Error checking?
     ;
 
-    call printcounts
+    call printtopline
     call rwsect                 ; read the data in
     mov dl, 16                  ; 16 32-byte entries per directory sector
     xor si, si                  ; pointer to the entry being worked with
@@ -475,7 +474,7 @@ writeRootEntry:                         ; IN: si = offset readbuffer
 checkNextRootSect:
     mov [dwSector], ebx                 ; error checking needed
 
-    call printcounts
+    call printtopline
     call rwsect
     mov cl, 16                          ; 16 entries per sector
     mov si, offset readbuffer           ; start with entry at offset 0
@@ -522,8 +521,9 @@ writeLostDir:
 writtenDirType:
     and eax, 0000FFFFh
 
-    call printcount                             ; decimal representation
+    call rendernumdec                           ; decimal representation
     mov eax, dword ptr [valuebuffer+6]          ; of the lost/root dir count
+    or eax,'0000'                               ; since rendernumdec does no longer emit leading zeros
     mov dword ptr [si+04h], eax                 ; ("WDIR0001" etc)
 
     mov ax, word ptr [dwCluster+2]              ; high word of cluster #
@@ -534,7 +534,7 @@ writtenDirType:
     mov dword ptr [si+08h], 10202020h           ; extension+attribs
 
     call copybuffer
-    call printcounts
+    call printtopline
     mov [bRW], WRITE
     call rwsect
     ;

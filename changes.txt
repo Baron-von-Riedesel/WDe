@@ -1,5 +1,10 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
+WDe V0.34
+  - decimal numbers now displayed without leading zeros.
+  - input of numeric data is now checked only after the return key has
+    been pressed.
+
 WDe V0.33
   - set video attributes only in the 80x43 area in case current video mode
     has more rows/cols.

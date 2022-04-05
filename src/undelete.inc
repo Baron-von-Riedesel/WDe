@@ -6,7 +6,7 @@
 undelete proc
 ;undelete:
   mov [fromfat], 1
-  call spotinbx                         ; move to the beginning of the
+  call spot2bufofs                      ; move to the beginning of the
     and bl, 11100000b                   ; file entry
     add bx, offset readbuffer
   mov eax, dword ptr [bx+DIR_FILESIZE]
@@ -54,7 +54,7 @@ getkeyagain16:
   ja unok1
     sub al, 32
 unok1:
-;    call spotinbx                      ; should be preserved from above
+;    call spot2bufofs                   ; should be preserved from above
 ;    and bl, 11100000b
 ;    add bx, offset readbuffer
     mov byte ptr [bx], al
@@ -81,18 +81,18 @@ undelete endp
 UndeleteCore proc
 ;UndeleteCore:           ; in: [dwFilesize] - size of file to undelete)
   pushad                 ;     [dwCluster]  - cluster to work from
-  undelLoop:
+undelLoop:
     mov eax, [dwBpc]                    ; bytes per cluster
     mov ebx, [dwCluster]
     cmp [dwFilesize], eax               ; less than bytes per cluster left?
     jbe writeeof                        ; yes, write end of file in
       sub [dwFilesize], eax             ; no, subtract bpc
-    getnextentry:
+getnextentry:
       inc ebx
       mov eax, ebx
     call getfatentry
-  cmp [status], ERROR
-  je undelCoreError
+    cmp [status], ERROR
+    je undelCoreError
     test eax, eax
     jnz getnextentry
 
@@ -100,10 +100,10 @@ UndeleteCore proc
     xchg ebx, [dwCluster]
     call putfatentry
     jmp undelLoop
-    writeeof:
+writeeof:
     mov eax, 0FFFFFFFh
     call putfatentry
-  undelCoreError:
+undelCoreError:
   popad
   ret
 UndeleteCore endp

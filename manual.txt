@@ -215,6 +215,11 @@ WDe User Manual
       show a Yes/No prompt to quit; hitting escape again will
       go back to the menu.
 
+      If the user is prompted to enter a numeric value, and that value
+      is not accepted by WDe ( because it's out of range or otherwise
+      invalid ), a beep is emitted.
+
+
     4.2 - Menu Items & Submenus
 
       4.2.1 - Item "Save"

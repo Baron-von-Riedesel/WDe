@@ -350,7 +350,7 @@ endif
         FILE_CHAIN       EQU 1
         FAT_CHAIN        EQU 2
 
-; "commandflag" variable for gethex
+; "commandflag" variable for gethexstring/gethexvalue
         GET_VALUE        EQU 0
         GET_STRING       EQU 1
 
@@ -784,7 +784,7 @@ area            db ?            ; specifies where on a drive we are
 srflag          db ?            ; "file ops" menu flag
 undelflag       db ?            ; 
 driveflag       db ?            ; setdrive gets File or Drive? 0/1 respective
-commandflag     db ?            ; used by unformat & gethex
+commandflag     db ?            ; used by unformat & gethexstring
 chainflag       db ?            ; dictates what type of chain to save
                                 ; fat links/file
 cylinders       dw ?
@@ -1345,9 +1345,9 @@ submenu_functions proc
     xor bx, bx
     call finddirectory 
 
-    mov dx,offset funcmenu1
+    mov dx, offset funcmenu1
 
-    jc nlfdf                    ; dir not found
+    jc nlfdf                    ; no directory found
     call spot2bufofs            ; if a directory is found, check to see if
     and bl, 11100000b           ; the very first entry of the current file
                                 ; we're in (cur_byte / 32) is equal to
@@ -1499,11 +1499,11 @@ fillamount proc
 
     mov dx, offset hexmsg
     mov eax, ecx
-    call gethex                         ; set valuebuffer with hex value
+    call gethexvalue                    ; get hex value in ebx
     jc exit
 ;---
 fillinvrand::                           ;<--- entry for RANDOM/INVERSE
-    call getnos
+    call getnos                         ; get number of sectors in [dwValue]
     jc exit
     mov dx, offset writetodiskmsg
     call printbottom
@@ -1532,6 +1532,8 @@ dontshift:
     mov si, di                          ; every sector to reverse that data
     call rwsect
     jc fillerror
+    push ds
+    pop es
 randomloop:
     cmp bl, FL_INVERSE
     jne @F
@@ -1641,10 +1643,10 @@ fillhex::
 ;--- menu item "string" of submenu "fill"
 
 fillstring::
-  call getstring
+  call getstringprompt
 dofill:
   jcxz exit
-  call getnos
+  call getnos                         ; get number of sectors in [dwValue]
   jc exit
 
   mov dx, offset writetodiskmsg
@@ -1680,9 +1682,12 @@ dfs:
 fillamount endp
 
 ;--- this routine must not modify EAX!
+;--- decrements [dwValue] (=number of sectors)
+;--- out: C if ESC pressed or error
+;---      Z set if no more sectors to fill
 
-fillcommon proc                 ; zero flag set if no more sectors to fill
-  call checkabort               ; carry flag set if there's an error
+fillcommon proc
+  call checkabort
   je error
 ;  call copybuffer              ; v0.34: no need to copy anymore, fillamount uses writebuffer
   mov [bRW], WRITE
@@ -1908,12 +1913,16 @@ done:
   ret
 submenu_view endp
 
-;-------------------------------------------------------
+;--- submenu "find": "string hex next MBR boot sector, FAT, directory,..."
+
 submenu_find proc
   mov dx, offset searchmenu
   call printmenu
 
   mov [handling], QUERY_SKIP
+
+;--- setup SI; findmbr, findbs, findfat & finddir expect that
+  mov si, offset readbuffer
 
   push offset submenu_find
 getkeyagain:
@@ -1942,62 +1951,67 @@ getkeyagain:
 
   cmp ah, F7_KEY
   jne getkeyagain
-;-------------------------------------------------------
+
+;--- find directory entries
+
 finddir:
-  mov si, offset readbuffer
+;  mov si, offset readbuffer
 @@:
   xor bx, bx
-  call finddirectory
-  jnc done
-  call findcommon
+  call finddirectory  ;scan if a dir entry is found in buffer
+  jnc doneX
+  call findcommon     ;get next (sub)sector, will set SI
   jmp @B
 doneX:
   pop ax    ;skip submenu_find "return" address
 done:
   ret
-;-------------------------------------------------------
+
+;--- find boot sector
+
 findbs:
-  mov si, offset readbuffer
+;  mov si, offset readbuffer
 findbsnext:
   cmp dword ptr [si+1fch], 0AA550000h           ; check for boot sig ++
   jne findbs2
   cmp byte ptr [si], 0EBh                       ; check for jmp
-  je done
+  je doneX
 findbs2:
-  call findcommon
+  call findcommon     ;get next (sub)sector, will set SI
   jmp findbsnext
 
-;-------------------------------------------------------
+;--- find FAT
+;
 ; This function is slightly bugged; the first byte is a media descriptor
 ; byte and only makes the partition more likely to be a certain type of
 ; fat.  Fat finding should only verify that the first byte is a valid
 ; media descriptor and then attempt to identify the fat type.
 ;
 findfat:
-  mov si, offset readbuffer
-  findfatnext:
+;  mov si, offset readbuffer
+findfatnext:
   cmp byte ptr [si], 0F0h       ; fat12
   je n12sfl
   cmp byte ptr [si], 0F8h       ; fat16/fat32
   jne findfat2
-  fatok:
+fatok:
   mov bx, 3
   cmp byte ptr [si+bx], 0Fh     ; fat32
   jne if16
 
   ; likely fat32
 
-  lfatloop:
-    add bx, 4
-    test byte ptr [si+bx], 0F0h         ; highest nibble on fat32 shouldn't
-    jnz findfat2                        ; be anything but 0000b
+lfatloop:
+  add bx, 4
+  test byte ptr [si+bx], 0F0h   ; highest nibble on fat32 shouldn't
+  jnz findfat2                  ; be anything but 0000b
   cmp bx, 511
   jne lfatloop
   jmp dfstests
 
   ; likely fat12
 
-  if12:
+if12:
     mov ax, word ptr [si+bx]
     and ah, 0Fh
     cmp ax, 001h                        ; nothing links to cluster 1
@@ -2006,7 +2020,7 @@ findfat:
     jae n12sfl
     cmp ah, 0Fh                         ; no clusters >= F00h
     je findfat2
-    n12sfl:
+n12sfl:
     mov al, byte ptr [si+bx+2]
     mov ah, byte ptr [si+bx+1]
     rol ax, 4
@@ -2017,7 +2031,7 @@ findfat:
     jae d12sw
     cmp ah, 0Fh
     je findfat2
-    d12sw:
+d12sw:
     add bx, 3
     cmp bx, 510
   jb if12
@@ -2030,19 +2044,19 @@ findfat:
 
   ; likely fat16
 
-  if16:
+if16:
   cmp byte ptr [si+bx], 0FFh
   jne findfat2
   inc bx
 
-  lfatloop2:
+lfatloop2:
     cmp word ptr [si+bx], 0001h         ; nothing links to cluster 1
     je findfat2
     cmp word ptr [si+bx], 0FFF7h
     jae nf16lt
     cmp word ptr [si+bx], 0E800h        ; no clusters >= E800h in the first
     jae findfat2                        ; sector of the fat?  (not a fact)
-    nf16lt:
+nf16lt:
     add bx, 2
   cmp bx, 512
   jne lfatloop2
@@ -2052,17 +2066,17 @@ findfat:
   cmp byte ptr [si+5], 0FFh
   jne findfat2
 
-  dfstests:
+dfstests:
   cmp word ptr [si+1], 0FFFFh
   je done
-  findfat2:
-  call findcommon
+findfat2:
+  call findcommon     ;get next (sub)sector, will set SI
   jmp findfatnext
 
-;-------------------------------------------------------
-findmbr:
-  mov si, offset readbuffer
+;--- find MBR
 
+findmbr:
+;  mov si, offset readbuffer
 findmbrnext:
   cmp byte ptr [si], 0EBh
   je findmbr2
@@ -2074,7 +2088,7 @@ findmbrnext:
   mov bx, 1BEh
 
   xor al, al
-  checkactiveloop:
+checkactiveloop:
     mov ah, byte ptr [si+bx]            ; "active" partition byte
     test ah, 01111111b                  ; any bits other than 7 set?
     jnz findmbr2                        ; yes, not a valid MBR.
@@ -2087,9 +2101,11 @@ findmbrnext:
   cmp al, 1                             ; more than one active partition?
   je done                               ; no, MBR found.
 
-  findmbr2:
-  call findcommon
+findmbr2:
+  call findcommon   ;get next (sub)sector, will set SI
   jmp findmbrnext
+
+;--- find next occurence of (hex) string
 
 findnext:
   mov cx, word ptr [stringbuffer+74]
@@ -2111,13 +2127,16 @@ findnext:
 nostringdefined:
   mov dx, offset nosearchstring
   jmp nuprinterror
+
 findstring:
-  call getstring
+  call getstringprompt
   jmp findstring_common
+
 findhex:
   mov dx, offset hexmsg
   call gethexstring
   jc @F
+
 findstring_common:
   test cx, cx
   jnz stringsearch
@@ -2555,9 +2574,8 @@ srcommon endp
 ;-------------------------------------------------------
 savefile proc
   call srcommon
-  call getnos
+  call getnos                         ; get number of sectors in [dwValue]
   jc @F
-
   mov eax, [dwSector]
   jmp endsavedrive
 @@:
@@ -2569,14 +2587,14 @@ savefile endp
 
 submenu_fileoptions proc
 
-;  cmp [srflag], SR_SAVE
-;  jne @F
+;   cmp [srflag], SR_SAVE
+;   jne @F
 
-  cmp [drivetype], CDROM
-  jne @F
-  mov dx, offset cdfilemenu   ;F1=save file F2=dump cd as ISO
-  call printmenu
-  jmp getkeyagain
+    cmp [drivetype], CDROM
+    jne @F
+    mov dx, offset cdfilemenu   ;F1=save file F2=dump cd as ISO
+    call printmenu
+    jmp getkeyagain
 @@:
     call printfilemenu
     push offset submenu_fileoptions
@@ -2764,7 +2782,7 @@ filesizeok:
   mvok:                                 ; of partition sectors remaining
                                         ; as maxvalue
   mov dx, offset sectorsmsg
-  call inputvalue
+  call getdecvalue
   jc @F
   mov eax, [dwSector]
   jmp endrestsectors
@@ -2774,7 +2792,7 @@ filesizeok:
 ;--- submenu "Goto" for physical disk
 
 submenu_jumpto_phys proc
-  mov dx, offset pdfilemenu
+  mov dx, offset pdfilemenu   ;menu "input, MBR, partition1, ..."
   call printmenu
 
 getkeyagain11:
@@ -2851,7 +2869,7 @@ jumptodata:
 jumptocluster:
   mov eax, [dwLastcluster]
   mov dx, offset clustermsg
-  call gethex
+  call gethexvalue
   jc done
   mov eax, ebx
   jmp jumptoeax
@@ -2882,7 +2900,7 @@ done:
 jumptosector::
   mov eax, [dwDataend]
   mov dx, offset sectormsg
-  call inputvalue
+  call getdecvalue
   jc submenu_jumpto
   mov ebx, ecx
   jmp donejump
@@ -4368,21 +4386,27 @@ printchs proc
   jmp printstring
 printchs endp
 
-;-------------------------------------------------------
-finddirectory proc                  ;IN: SI=readbuffer
-  push cx                       ;    BX=offset in readbuffer
+;--- scan read buffer for directories (FAT type)
+;--- IN: SI=sector buffer
+;---     BX=offset in buffer (currently assumed 0000!)
+;--- OUT: not found: carry set
+;---      found    : carry cleared
+;--- must preserve DX, CX
 
-                                ; not found: carry set
-                                ; found    : carry cleared
+finddirectory proc
+
+  push cx
+
   cmp byte ptr [si+bx], 0
   je notfound
 
-  flok:
-;  mov ch, byte ptr [wBps+1]             ; 16 entries every 512 bytes
-;  shl ch, 4                             ; this puts 16 in ch if bps is 512
-  mov ch, 16
+flok:
+;  mov ch, byte ptr [wBps+1]            ; 16 entries every 512 bytes
+;  shl ch, 4                            ; this puts 16 in ch if bps is 512
 
-  nextentry:
+  mov ch, 512 / 32                      ; = 16 dir entries in a sector
+
+nextentry:
 
 ;  cmp byte ptr [si+12+bx], 0           ; NT series *does* use this byte,
 ;  jne notfound                         ; so it may not be 0 on drives that
@@ -4398,7 +4422,7 @@ finddirectory proc                  ;IN: SI=readbuffer
   cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
   je lfn                                ; if attribute is 0F, then it's lfn
 
-  notlfn:
+notlfn:
     inc cl
     cmp byte ptr [si+0Dh+bx], 199               ; tenth of a second for
     ja notfound                                 ; creation time (0-199)
@@ -4424,7 +4448,7 @@ finddirectory proc                  ;IN: SI=readbuffer
     jz notfound
     cmp al, 12
     ja notfound
-    dontcheckseconddate:
+dontcheckseconddate:
 
     mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
     shl eax, 16
@@ -4441,24 +4465,24 @@ finddirectory proc                  ;IN: SI=readbuffer
       jnz notfound
       cmp dword ptr [si+bx+DIR_FILESIZE], 0          ; filesize must = 0   
       jne notfound
-    entrynotdirectory:
+entrynotdirectory:
 
     cmp byte ptr [si+bx], 20h           ; first character cannot be a space
     je notfound
     cmp byte ptr [si+bx], 0E5h          ; first character can be E5h (del'd)
     je charok
-      kctfn:
+kctfn:
       mov al, byte ptr [si+bx]
       call extvalidfilechar
       jc notfound
-      charok:
+charok:
 
     inc bx
     dec cl
     jnz kctfn
     jmp donextentry
 
-  lfn:
+lfn:
 
   cmp word ptr [si+bx+DIR_CLUST_LOW], 0         ; low cluster word must = 0
   jne notfound                                  ; for long file names
@@ -4480,7 +4504,7 @@ finddirectory proc                  ;IN: SI=readbuffer
   cmp al, 20
   ja notfound
 
-  nextletter:
+nextletter:
     inc bx
     mov al, byte ptr [si+bx]
     cmp al, 0
@@ -4494,7 +4518,7 @@ finddirectory proc                  ;IN: SI=readbuffer
     cmp al, 20h
     jb notfound
 
-    letterok:
+letterok:
 
   dec cl
   jnz nextletter
@@ -4503,23 +4527,23 @@ finddirectory proc                  ;IN: SI=readbuffer
 ;  mov [subsector], al
 
   inc bx
-  donextentry:
+donextentry:
   add bx, 21
   dec ch
   jnz nextentry
 
-  founddir:
+founddir:
     pop cx
     clc
     ret
-  notfound:
+notfound:
     pop cx
     stc
     ret
 
-  allzero:
+allzero:
     mov cl, 32
-    allzero2:
+allzero2:
     cmp byte ptr [si+bx], 0
     jne notfound
     inc bx
@@ -4528,9 +4552,11 @@ finddirectory proc                  ;IN: SI=readbuffer
     dec ch
     jnz allzero
     jmp founddir
+
 finddirectory endp
 
 ;--- common routine for find cmds
+;--- out: SI=current (sub)sector
 
 findcommon proc
 ;  pop [wCalladdress]
@@ -4538,7 +4564,7 @@ findcommon proc
   call printbottom
 
   call checkabort
-  je abortfindstring2
+  je abortfindstring2  ;pop address, update screen, then RET
 
   call printtopline
   mov si, offset readbuffer
@@ -4694,16 +4720,18 @@ aspotcalc:
   ret
 
 ;-------------------------------------------------------
+; enter a decimal value.
+; used to enter sectors (# or count).
 ; IN:         EAX: maximum allowed value
 ;              DX: string to print at bottom line
 ; OUT:
 ;     if NC:  ECX / [dwValue]: returned value
 ;     if  C:  ESC pressed
 
-inputvalue proc
+getdecvalue proc
 
   mov [dwMaxvalue], eax
-  call getstring2       ;get string in stringbuffer
+  call getstring             ; get string in stringbuffer
 tryagain:
   stc
   jcxz exit
@@ -4713,7 +4741,7 @@ tryagain:
   pop ecx
 nextblank:
   lodsb
-  cmp al,' '        ;skip leading blanks
+  cmp al,' '                 ; skip leading blanks
   loopz nextblank
   inc cx
   dec si
@@ -4750,13 +4778,12 @@ invalkey:
   jz donevalue
 invalvalue:
   mov ax,0E07h
-  mov bh,0
   int 10h
   shr ecx,16	;restore cx
-  call getstring3
+  call getstring2
   jmp tryagain
 
-inputvalue endp
+getdecvalue endp
 
 ;--- display some values on line 0 (sector#, cluster#, ... )
 
@@ -6166,65 +6193,72 @@ invalidperror::
   jmp printerror
 savedata endp
 
-;-------------------------------------------------------
-printfilemenu:
+;--- print "file ops" menu for non-CD devices
+;--- for physical devices, just print the corresponding menu
+;--- for logical devices, check if the menu item "chain" is to be added
+
+printfilemenu proc
+
   mov [chainflag], NO_CHAIN
 
+  mov dx, offset pdfilemenu    ; menu "input, MBR, partition1, ..."
   cmp [drivetype], PHYSICAL
-  jne logicalrfo
-  mov dx, offset pdfilemenu
-  jmp printmenu
-logicalrfo:
+  je printmenu
 
-  mov dx, offset ldfilemenu
+  mov dx, offset ldfilemenu    ; menu "input, boot sector, fat1, ..."
   mov eax, [dwReserved]
   cmp [dwSector], eax
   jb printmenu
 
+;--- currently within a FAT?
+
   mov eax, [dwSpf]
   movzx ebx, [bFats]
   mul ebx
-  mov dx, offset ldfilemenu
+;  mov dx, offset ldfilemenu
   add eax, [dwReserved]
   cmp [dwSector], eax
   jb dochain
 
-checkdir:
+;--- check if in a valid directory entry
+;--- todo: use [spot], don't check the whole buffer!
+
   mov si, offset readbuffer
   xor bx, bx
-  call finddirectory
-  jc printmenu                  ; dir not found
-
+  call finddirectory           ; check for a directory
+  jc printmenu
   mov [chainflag], FILE_CHAIN
   jmp dochain2
-
 dochain:
   mov [chainflag], FAT_CHAIN
-
 dochain2:
-  mov dx, offset chainmenu
+  mov dx, offset chainmenu     ; menu "input, boot sector, fat1, ..., chain"
+  jmp printmenu
+  
+printfilemenu endp
 
 ;--- print menu at bottom line.
 ;--- dx=menu
-printmenu:
+
+printmenu proc
   mov [scrn_xy], BOTTOMROW * 100h + 1
   mov si, dx
 ; mov ah, byte ptr [si]         ; number of items in the menu
 ; inc si
   movzx cx, byte ptr [si]       ; number of spaces between each item
 
-  nextmenuitem:
+nextmenuitem:
     inc si
     mov bl, byte ptr [si]
     cmp bl,-1
     jz printmenu_done
     mov di, offset menustrings
 
-  foundnextitem:
+foundnextitem:
     cmp bl, 0
     je printitem
 
-  findnextitem:
+findnextitem:
     inc di
     cmp byte ptr [di], 0
     jne findnextitem
@@ -6232,7 +6266,7 @@ printmenu:
   dec bl
   jmp foundnextitem
 
-  printitem:
+printitem:
     mov dl, 'F'
     call printchar
     mov dl, '1'
@@ -6250,55 +6284,58 @@ printmenu:
 printmenu_done:
   jmp clearbottom
 
+printmenu endp
+
+getstringprompt:
+  mov dx, offset stringmsg
+
 ;--- enter a string in bottom line
+;--- in:  DX=prompt
 ;--- out: CX=chars entered
 ;---      DI=pos in stringbuffer
+;---      stringbuffer filled
 
-getstring proc                          ; in: nothing
-  mov dx, offset stringmsg              ; out: stringbuffer filled
-getstring2::                            ;<--- used to enter numbers
-  call printbottom                      ;      cx = # of bytes entered
+getstring proc
+  call printbottom
   mov di, offset stringbuffer
   xor cx, cx
-getstring3::                            ;<--- if string is to reedited
-getkeyagain9:
+getstring2::                            ;<--- if string is to reedited
+  mov dh, RIGHTCOL
+  sub dh,[scrn_col]
+getkeyagain:
   call cursorgetkey
 
   cmp al, BACKSPACE_KEY
-  jne nobackspacestring
-  jcxz getkeyagain9
-  dec cx
-
-  call backcommon
-
-  dec di
-  jmp getkeyagain9
-nobackspacestring:
-
+  je backspace
   cmp al, ESCAPE_KEY
-  je abortgetstring
-
+  je abort
   cmp al, ENTER_KEY
-  je donegetstring
-
-  cmp cx, 70
-  je getkeyagain9
-
+  je done
   cmp al, 0
-  je getkeyagain9
+  je getkeyagain
+  cmp cl, dh
+  je maxkeys
 
   mov dl, al
   call printchar
-
-  push ds
-  pop es
-  stosb
-
+  mov [di],al
+  inc di
   inc cx
-  jmp getkeyagain9
-abortgetstring:
+  jmp getkeyagain
+maxkeys:
+  mov ax,0e07h
+  int 10h
+  jmp getkeyagain
+backspace:
+  jcxz getkeyagain
+  call backcommon
+  dec cx
+  dec di
+  jmp getkeyagain
+abort:
   xor cx, cx
-donegetstring:
+  stc
+done:
   ret
 
 getstring endp
@@ -6369,7 +6406,7 @@ getnos:                               ; 'get number of sectors' from the
   sub eax, [dwSector]
   inc eax
   mov dx, offset sectorsmsg
-  call inputvalue
+  call getdecvalue
   jc @F
   stc
   jecxz @F
@@ -6593,34 +6630,12 @@ setseeds2:
   mov word ptr [bx+0], dx   ;set seed1+seed3 or seed2+seed4  
   mov word ptr [bx+4], cx
   ret
-;-----------------------------------------------------------------
-backhex:
-  mov dl, [scrn_col]                    ; can't backspace any further then the
-  cmp [maxleft], dl                     ; x-coord after string printed
-  je getkeyagain10
 
-  call backcommon
-
-  cmp [commandflag], GET_STRING
-  je backstring
-    dec si
-    shr ebx, 4
-    jmp getkeyagain10
-
-  backstring:
-    cmp bl, 0
-    je loworder2
-    mov bl, 0
-    jmp getkeyagain10
-
-  loworder2:
-    dec si
-    and byte ptr [stringbuffer+si], 0F0h
-    mov bl, 1
-    jmp getkeyagain10
 ;-----------------------------------------------------------------
 ;
 ; Returns the hex value obtained from the user.
+; gethexstring: used by menus "fill hex" and "find hex".
+; gethexvalue:  used by "jumpto cluster" and "fill inc/dec".
 ;
 ; IN:           commandflag: GET_STRING
 ;                            GET_VALUE
@@ -6632,133 +6647,123 @@ backhex:
 ;               EBX = value gotten (for GET_VALUE)
 ;               stringbuffer = hex string gotten (for GET_STRING)
 ;
-gethexstring:
+gethexstring proc
   mov [commandflag], GET_STRING
   jmp dogethex
-gethex:
+gethexvalue::                           ; <---
   mov [commandflag], GET_VALUE
-dogethex:
   mov [dwMaxvalue], eax                 ; back up max value
-  call printbottom
-  mov dl, [scrn_col]                    ; x-coordinate preserved so that
-  mov [maxleft], dl                     ; backspace does not go too far
-  xor ebx, ebx
-  xor si, si
-
-getkeyagain10:
-
-  call cursorgetkey
-
-  cmp al, ENTER_KEY
-  je donegethex
-  cmp al, ESCAPE_KEY
-  jne noabortgetkey10
+dogethex:
+  call getstring
+tryagain:
+  jcxz abort
+  mov si, offset stringbuffer
+  mov dx, cx
+@@:
+  lodsb
+  cmp al,' '                 ; skip leading blanks
+  loopz @B
+  inc cx
+  dec si
+  push si
+  push cx
+nextchar:
+  lodsb
+  cmp al,'0'
+  jb invalchar
+  cmp al,'9'
+  jbe validchar
+  or al,20h
+  cmp al,'a'
+  jb invalchar
+  cmp al,'f'
+  ja invalchar
+validchar:
+  loop nextchar
+  pop cx
+  pop si
+  cmp [commandflag], GET_STRING
+  jz processstring
+  jmp processvalue
+invalchar:
+  add sp,4     ;skip saved si,cx
+  mov ax,0e07h
+  int 10h
+  mov cx,dx
+  call getstring2
+  jmp tryagain
+abort:
   stc
   ret
-
-noabortgetkey10:
-
-  cmp al, BACKSPACE_KEY
-  je backhex
-
-  cmp [scrn_col], RIGHTCOL
-  je getkeyagain10
-
-  mov dl, al
-
-  cmp al, '0'
-  jb getkeyagain10
-  cmp al, '9'
-  jbe numhex
-
-  cmp al, 'A'
-  jb getkeyagain10
-  cmp al, 'F'
-  jbe lethex
-
-  sub dl, 32
-
-  cmp al, 'a'
-  jb getkeyagain10
-  cmp al, 'f'
-  ja getkeyagain10
- ;-------------------------------------------------
-lethex:
-  add al, 9
-numhex:
-  and al, 0Fh
-  cmp [commandflag], GET_STRING
-  je stringhex
-
-if 0;this rejects to enter a 0 as first (only) digit. why?
-  cmp al, 0
-  jne @F
-  mov dh, [scrn_col]                    ; get x-coord on screen
-  cmp [maxleft], dh                     ; characters already been typed?
-  je getkeyagain10                      ; yes, skip char
+processvalue:
+  xor ebx,ebx
+nextdigit:
+  lodsb
+  sub al,'0'
+  cmp al,9
+  jb @F
+  or al,20h
+  sub al,31h-10
 @@:
-endif
-  cmp si,8
-  jnc getkeyagain10
-  
-;  test ebx, 0F0000000h                  ; cannot exceed FFFFFFFFh
-;  jnz getkeyagain10
-
-  shl ebx, 4
-  or bl, al
-  inc si
-
+  test ebx,0f0000000h
+  jnz invalchar
+  shl ebx,4
+  or bl,al
+  loop nextdigit
   cmp ebx, [dwMaxvalue]                 ; value smaller or equal to maximum?
-  jbe hexok                             ; accept it.
-  dec si
-  shr ebx, 4
-  jmp getkeyagain10                     ; abort.
-
-stringhex:
-  cmp bl, 1
-  je lownibble
-    shl al, 4
-    mov byte ptr [stringbuffer+si], al
-    mov bl, 1
-  jmp hexok
-
-  lownibble:
-    or byte ptr [stringbuffer+si], al
-    xor bl, bl
-    inc si
-
-hexok:
-  call printchar
-  jmp getkeyagain10
-
-;-----------------------------------------------------------------
-donegethex:
-  cmp [commandflag], GET_STRING
-  jne retgethex
-  cmp bl, 0
-  je noadjust
-;   mov bx, offset stringbuffer         ; AAB -> AAB0
-;   add bx, si                          ; instead of
-;   mov cx, si                          ; AAB -> 0AAB
-;   shr word ptr [bx], 4
-  inc si
-  noadjust:
-    mov cx, si
-    mov word ptr [stringbuffer+74], bx
-  retgethex:
-    clc                                 ; success
+  ja invalchar
+  clc
   ret
+processstring:
+  mov bx,sp
+  test cl,1
+  jz @F
+  push 0
+@@:
+nextdigit2:
+  lodsb
+  sub al,'0'
+  cmp al,9
+  jb @F
+  or al,20h
+  sub al,31h-10
+@@:
+  push ax
+  loop nextdigit2
+  mov si,bx
+  mov di,offset stringbuffer
+  push ds
+  pop es
+nextnibble:
+  sub si,4
+  mov al,[si+2]
+  shl al,4
+  or al,[si+0]
+  stosb
+  cmp si,sp
+  jnz nextnibble
+  mov sp,bx
+  mov cx, bx
+  sub cx, si
+  shr cx, 2
+  mov word ptr [stringbuffer+74], cx
+  ret
+
+gethexstring endp
+
 ;-----------------------------------------------------------------
 spot2bufofs:                            ; this function figures out what
   mov bl, [subsector]                   ; byte [spot] should actually be
   shl bx, 9                             ; pointing to within the buffer.
   add bx, [spot]
   ret
+
 ;------------------------------------------------------
 getcurrententry:                ; IN:  nothing
   call getentrynumber           ; OUT: eax = data stored at current entry
   mov ebx, eax                  ;      ebx = current entry #
   jmp getfatentry               ;      other reg's corrupted
+
 ;-------------------------------------------------------
 ; rand is a random number generator (eax)
 ; Concatenation of 16-bit multiply with carry generators:

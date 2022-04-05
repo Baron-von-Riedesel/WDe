@@ -146,9 +146,6 @@ WDe User Manual
     hex and binary editing.  In this mode, you can use 0 and 1 to set
     bits or use the space bar to invert them.
 
-    Note: If queried for a value and you wish to type '0' but it is
-    not accepted, simply press enter.
-
 
 
 
@@ -217,7 +214,8 @@ WDe User Manual
 
       If the user is prompted to enter a numeric value, and that value
       is not accepted by WDe ( because it's out of range or otherwise
-      invalid ), a beep is emitted.
+      invalid ), a beep is emitted. Note that cluster numbers must be
+      entered in hexadezimal.
 
 
     4.2 - Menu Items & Submenus
@@ -273,8 +271,9 @@ WDe User Manual
         4.2.2.7 - Item "Chain"
 
           This option will appear when you're currently in the FAT table
-          or in the 32 bytes belonging to a file.  Using this option can
-          save the data in a fat or file chain to a specified file.
+          or in the 32 bytes belonging to a directory entry.  Using this
+          option can save the data in a fat or file chain to a specified
+          file.
 
       4.2.3 - Menu "Goto"
 
@@ -439,7 +438,7 @@ WDe User Manual
 
       This error will typically occur when the user enters an invalid path
       for the file to be stored in; or the media to be recorded to is
-      write-only.
+      write-only; or a directory of the specified name exists.
 
     5.8 - "Invalid Sector Range"
 

@@ -3109,18 +3109,18 @@ dirview proc
 
   cmp cx, 64
   jb dirviewok
-  dirviewnotok:
-    sub cx, 32
-    add bx, 32
-  cmp bx, 416
+dirviewnotok:
+  sub cx, 32
+  add bx, 32
+  cmp bx, 13*32        ;=416
   jae dirviewok
   cmp cx, 64
   jae dirviewnotok
-  dirviewok:
+dirviewok:
 
   mov ch, 7
 
-  processentry:
+processentry:
 
   cmp bx, 512          ; when we're looking at the very last entry in
   jb ncll1             ; a directory...a line remains that needs wiping.
@@ -3130,7 +3130,7 @@ dirview proc
     mov cl, 78
     call printchar2
     jmp doneentry
-  ncll1:
+ncll1:
 
   mov dx, offset attributesmsg
   call printstring
@@ -3172,7 +3172,7 @@ dirview proc
   cmp dl, 199
   jb msok
     mov dl, 199
-  msok:
+msok:
 
   sub bx, 02h
   mov ax, word ptr [si+bx]
@@ -3190,7 +3190,7 @@ dirview proc
   cmp al, 199
   jbe msecok
     mov al, 199
-  msecok:
+msecok:
   xor dx, dx
   push bx
   mov bx, 10
@@ -3227,7 +3227,7 @@ dirview proc
 
   call gotonextline
 
-  halfdir:
+halfdir:
 
   mov dx, offset accessedmsg    ; last accessed
   call printstring
@@ -3250,7 +3250,6 @@ dirview proc
   call printtime
   pop bx
 
-
   add [scrn_col], 7
 
   mov dx, offset sizemsg
@@ -3258,21 +3257,25 @@ dirview proc
 
   mov [highlight], 0A04001Ch
   add [highlight_ofs], bx
-  call bshighlight
+;  call bshighlight
 
   mov eax, dword ptr [si+bx+DIR_FILESIZE]
-  call rendernumdec
-  call printstring
+  call printvalue_hl
+;  call rendernumdec
+;  call printstring
+
+;--- the rest must be cleared
   mov cl,RIGHTCOL
   sub cl,[scrn_col]
-  mov al,SPACE
-  call printchar2
-
+  jbe @F
+  mov ax, DEFAULTCOLOR * 100h + SPACE
+  call printcell2
+@@:
   call gotonextline
   add bx, 32
   dec ch
   jnz processentry
-  doneentry:
+doneentry:
   ret
 
 ;-------------------------------------------------------
@@ -3871,14 +3874,7 @@ basicbs:
   mov word ptr [highlight_size], cx
   call printstring
   call spaceandcolon
-  call rendernumdec
-  mov cx, offset valuebuffer+10  ;calculate string size
-  sub cx, dx
-  mov byte ptr [highlight+3], cl
-  call bshighlight
-
-  call printstring
-
+  call printvalue_hl
   cmp bx, BPB.media_byte
   jne npldn2
   cmp al, 0F0h
@@ -3916,6 +3912,20 @@ gotonextline:
   inc [scrn_row]
   ret
 
+;--- print a value and check if it should be highlighted
+;--- in: eax=value to display
+;---     [highlight_ofs]
+
+printvalue_hl:  
+  call rendernumdec
+  push ax
+  mov ax, offset valuebuffer+10  ;calculate string size
+  sub ax, dx
+  mov [highlight_scsiz], al
+  pop ax
+  call bshighlight
+  jmp printstring
+
 ;-------------------------------------------------------
 ;--- modify color of chars on screen
 ;--- at current screen pos [scrn_xy].
@@ -3930,13 +3940,6 @@ bshighlight proc
 
   mov al, DEFAULTCOLOR
   mov cl, [highlight_scsiz]    ;no of chars on screen to highlight
-  mov ah, RIGHTCOL+1
-  sub ah, [scrn_col]           ;ensure no attribute beyond col 80 is touched
-  cmp ah, 10
-  jb @F
-  mov ah, 10
-@@:
-  sub ah, cl
   movzx bx, [highlight_size]
   mov dx, [highlight_ofs]
   cmp [spot], dx
@@ -3945,23 +3948,12 @@ bshighlight proc
   cmp [spot], dx
   jae nextcell
   mov al, HIGHLIGHTCOLOR
+  mov ch, cl
 nextcell:
   inc di
   stosb
-  cmp byte ptr es:[di],' '
-  jnz @F
-  mov al, DEFAULTCOLOR
-@@:
   dec cl
   jnz nextcell
-  movzx cx, ah
-  jcxz done
-  mov al, DEFAULTCOLOR
-@@:
-  inc di
-  stosb
-  loop @B
-done:
   popa
   ret
 bshighlight endp
@@ -4731,11 +4723,12 @@ aspotcalc:
 getdecvalue proc
 
   mov [dwMaxvalue], eax
-  call getstring             ; get string in stringbuffer
+  sub sp,80-8
+  mov di,sp
+  call getstringX            ; get string in buffer at DI
 tryagain:
-  stc
-  jcxz exit
-  mov si, offset stringbuffer
+  jcxz abort
+  mov si, sp
   push cx
   push cx
   pop ecx
@@ -4766,12 +4759,15 @@ donevalue:
   ja invalvalue
   mov ecx, ebx
   mov [dwValue],ecx
-  clc
-exit:
+  add sp,80-8
+  ret
+abort:
+  add sp,80-8
+  stc
   ret
 invalkey:
   dec si
-@@:           ;skip trailing blanks
+@@:               ;skip trailing blanks
   lodsb
   cmp al,' '
   loopz @B
@@ -4779,7 +4775,7 @@ invalkey:
 invalvalue:
   mov ax,0E07h
   int 10h
-  shr ecx,16	;restore cx
+  shr ecx,16      ;restore cx
   call getstring2
   jmp tryagain
 
@@ -4977,9 +4973,9 @@ rendernumdec proc
     div ebx
     add dl, '0'
     mov byte ptr [si], dl
-	and eax,eax
-	jnz @B
-	mov dx, si
+    and eax,eax
+    jnz @B
+    mov dx, si
 ;    cmp si, offset valuebuffer-1
 ;    jnz @B
 ;    lea dx,[si+1]
@@ -5248,6 +5244,21 @@ printchar2:
 @@:
   stosb
   inc di
+  dec cl
+  jnz @B
+  pop cx
+  pop di
+  ret
+
+;--- print cell in AX CL times
+;--- (no screen pos update!)
+
+printcell2:
+  push di
+  push cx
+  call cbuffer_offset
+@@:
+  stosw
   dec cl
   jnz @B
   pop cx
@@ -5659,7 +5670,6 @@ itsZ:
 itsS:
     mov dx, bx
     call printbottom
-	clc
     jmp nosectorerror
 
 checkskip:
@@ -6296,8 +6306,9 @@ getstringprompt:
 ;---      stringbuffer filled
 
 getstring proc
-  call printbottom
   mov di, offset stringbuffer
+getstringX::                            ;<--- if another buffer is to be used
+  call printbottom
   xor cx, cx
 getstring2::                            ;<--- if string is to reedited
   mov dh, RIGHTCOL

@@ -6,6 +6,13 @@ WDe V0.34
     been pressed.
   - fixed: find directory in v0.33 didn't update the screen until ESC
     has been pressed.
+  - fixed: if the string to be found began at offset 0 of next sector,
+    the cursor wasn't positioned correctly.
+  - prompts for entering sectors/cluster show hints about valid range.
+  - fixed: menu item "file ops" may have displayed a wrong submenu in
+    v0.33 if current sector was in data region.
+  - lengthy operations will display progress in bottom line.
+  
 
 WDe V0.33
   - set video attributes only in the 80x43 area in case current video mode

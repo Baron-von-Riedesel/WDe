@@ -31,12 +31,24 @@
   3. Environment
 
   WDe is supposed to run in DOS. There's a support dll supplied (WDEVDD.DLL),
-  that may allow to run WDe in Windows XP as administrator, but this is
-  unsupported and won't work with newer versions of Windows. Also note that
+  that may allow to run WDe in Windows XP or Vista as administrator, but this
+  is unsupported and won't work with newer versions of Windows. Also note that
   WDe needs at least a 80386 cpu to run.
 
 
-  4. License
+  4. Creating the Binaries
+
+  In case one wants to create the binaries from the source:
+
+  WDe and the optional tools ( SETM43 and WDEVDD.DLL ) are written in
+  Masm-style assembly language. They are supposed to be created by JWasm;
+  Masm may also be used, but this additionally requires an OMF linker for
+  WDe ( and SETM43 ) and a COFF linker for WDEVDD.DLL. A simple batch file
+  (build.bat) is supplied that does the job. The source can be copied from
+  https://github.com/Baron-von-Riedesel/WDe
+
+
+  5. License
 
   WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
   

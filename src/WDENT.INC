@@ -13,6 +13,7 @@ Dispatch macro
     db 0C4h, 0C4h, 58h, 2
     endm
 
+if 0
 CallInt macro intno
     cmp [hVdd],-1
     jnz @F
@@ -30,6 +31,7 @@ endif
     Dispatch
     ret
 endm
+endif
 
 	.data
 
@@ -38,15 +40,37 @@ hVdd dw -1
 	.code
 
 int13:
-    CallInt 13h
+	int 13h
+	ret
+    mov ax,[hVdd]
+    Dispatch
+    ret
 int21:
-    CallInt 21h
+    int 21h
+	ret
+    mov ax,[hVdd]
+    Dispatch
+    ret
 int25:
-    CallInt 25h
+	int 25h
+	pop dx
+	ret
+    mov ax,[hVdd]
+    Dispatch
+    ret
 int26:
-    CallInt 26h
+	int 26h
+	pop dx
+	ret
+    mov ax,[hVdd]
+    Dispatch
+    ret
 int2F:
-    CallInt 2Fh
+	int 2fh
+	ret
+    mov ax,[hVdd]
+    Dispatch
+    ret
 
 
 initvdd proc
@@ -61,14 +85,26 @@ initvdd proc
     pop es
     RegisterModule
     jc @F
+    cmp ax,-1
+    jz @F
     mov [hVdd], ax
-@@:
+    mov ax,06A50h               ;push AX, push XX
+    mov cx,9021h                ;push XX, nop
+    mov word ptr cs:[int21+0],ax
+    mov byte ptr cs:[int21+2],cl
+    mov cl,25h
+    mov word ptr cs:[int25+0],ax
+    mov word ptr cs:[int25+2],cx
+    mov cl,26h
+    mov word ptr cs:[int26+0],ax
+    mov word ptr cs:[int26+2],cx
+    mov cl,2Fh
+    mov word ptr cs:[int2F+0],ax
+    mov byte ptr cs:[int2F+2],cl
 ifdef _DEBUG
-    cmp [hVdd],-1
-    jnz @F
-    mov byte ptr [dbgout], 0C3h  ;opcode for RET
-@@:
+    mov byte ptr cs:[dbgout], ch  ;nop
 endif
+@@:
     ret
 initvdd endp
 
@@ -84,7 +120,8 @@ exitvdd endp
 
 ifdef _DEBUG
 dbgout proc
-    push ax		;location will be patched if VDD not found
+    ret			;location will be patched with NOP if VDD found
+    push ax
     push 41h
     mov ax,[hVdd]
     Dispatch

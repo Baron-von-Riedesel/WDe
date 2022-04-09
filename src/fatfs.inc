@@ -25,7 +25,7 @@ cluster2sector proc
 
   add eax, [dwDatastart]
   jc errem2
-  cmp [fattype], FAT32
+  cmp [fattype], FT_FAT32
   jne skipfat32adjust
   cmp [dwRootcluster], 2
   ja skipfat32adjust
@@ -54,7 +54,7 @@ sector2cluster proc
   loop @B
 skipfats:
 
-  cmp [fattype], FAT32
+  cmp [fattype], FT_FAT32
   je dontsubroot
   mov cx, [wRootsectors]
   sub eax, ecx
@@ -78,16 +78,16 @@ sector2cluster endp
 ;-------------------------------------------------------
 getfatentry proc
     push ebx
-    push [dwSector]
+    push [dwCurSector]
     push si
 
 ;   and eax, 0FFFFFFFh            ; ignore highest nibble
     mov ebx, eax
     call locatefatentry
-    cmp [status], ERROR
+    cmp [status], ST_ERROR
     je abortgfe
     mov si, offset readbuffer
-    cmp [fattype], FAT12
+    cmp [fattype], FT_FAT12
     jne dof13
 
     call fat12pad
@@ -108,7 +108,7 @@ f12gfs:
                                       ; to 0FFFFFFxh
 dof13:
     mov eax, dword ptr [si+bx]
-    cmp [fattype], FAT32
+    cmp [fattype], FT_FAT32
     je f32gfd
 f16gfd:
     and eax, 0FFFFh                     ; cut off top word for fat16
@@ -121,10 +121,10 @@ f32gfd:                                 ; set as FFFFFFxh
 abortgfe:
     pop si
     pop ebx
-    cmp [dwSector], ebx
+    cmp [dwCurSector], ebx
     je @F
-    mov [dwSector], ebx
-    cmp [status], ERROR
+    mov [dwCurSector], ebx
+    cmp [status], ST_ERROR
     je @F
     call rwsect
 @@:
@@ -140,16 +140,16 @@ getfatentry endp
 ;
 ;-------------------------------------------------------
 putfatentry proc
-  push [dwSector]
+  push [dwCurSector]
   push edx
   push si
   mov edx, ebx
 ;  and eax, 0FFFFFFFh
   call locatefatentry
-  cmp [status], ERROR
+  cmp [status], ST_ERROR
   je abortpfe
   mov si, offset readbuffer
-  cmp [fattype], FAT12
+  cmp [fattype], FT_FAT12
   jne dof132
 
   call fat12pad
@@ -170,7 +170,7 @@ putfatentry proc
 
     jmp dpfe2
   dof132:
-    cmp [fattype], FAT32
+    cmp [fattype], FT_FAT32
     jne dpfe2
 fat32pfe:
     and dword ptr [si+bx], 0F0000000h   ; preserve highest nibble in fat32
@@ -179,12 +179,12 @@ fat32pfe:
     mov word ptr [si+bx], ax
   dpfe:
   call copybuffer
-  mov [bRW], WRITE
+  mov [ioreq.bRW], RW_WRITE
   call rwsect
 
   cmp bx, 511
   jne abortpfe
-    inc [dwSector]
+    inc [dwCurSector]
     call rwsect
     inc bx
     mov al, byte ptr [si+bx]
@@ -193,7 +193,7 @@ fat32pfe:
   abortpfe:
   pop si
   pop edx
-  pop [dwSector]
+  pop [dwCurSector]
   jmp rwsect
 putfatentry endp
 ;-----------------------------------------------------------------
@@ -201,7 +201,7 @@ putfatentry endp
 ; locatefatentry finds the offset within the fat for a given cluster
 ;
 ;               IN:   ebx       cluster number to locate
-;               OUT:  [dwSector]  sector # the entry is in
+;               OUT:  [dwCurSector]  sector # the entry is in
 ;                     ebx       byte offset to it inside the sector
 ;                     [status]
 ; the sector is also read into readbuffer
@@ -248,9 +248,9 @@ donelfe13:
     add eax, [dwSpf]
 locationinfirstfat:
 
-    cmp [dwSector], eax   ; sets [dwSector] to that sector
+    cmp [dwCurSector], eax      ; sets [dwCurSector] to that sector
     je nntri
-    mov [dwSector], eax
+    mov [dwCurSector], eax
     call rwsect
 nntri:
     pop ecx
@@ -270,7 +270,7 @@ locatefatentry endp
 fat12pad proc                           ; IN: ebx = bytes to fat entry
   pushad                                ;     si = readbuffer pointer
                                         ; OUT: bytes put around sector
-  mov eax, [dwSector]                   ; did we call this function
+  mov eax, [dwCurSector]                ; did we call this function
   cmp [fat12fixsec], eax                ; from the same sector?  then
   je done                               ; we already have the correct data
   mov [fat12fixsec], eax                ; ...this would be a tiny bug if
@@ -281,22 +281,22 @@ fat12pad proc                           ; IN: ebx = bytes to fat entry
   test eax, eax                         ; if the current sector is 0
   jz nopred                             ; then we can't read the previous
 
-  dec [dwSector]
+  dec [dwCurSector]
   call rwsect
   mov al, byte ptr [si+bx-1]            ; copy last byte of previous sector
   mov [fat12fix1], al
-  inc [dwSector]
+  inc [dwCurSector]
 
 nopred:
-  mov eax, [dwSector]                   ; we don't want to read the next
+  mov eax, [dwCurSector]                ; we don't want to read the next
   cmp eax, [dwDataend]                  ; sector if it's past the drive end
   jae nosucc
 
-  inc [dwSector]                        ; copy first byte of next sector
+  inc [dwCurSector]                     ; copy first byte of next sector
   call rwsect
   mov al, byte ptr [si]
   mov byte ptr [si+bx], al
-  dec [dwSector]
+  dec [dwCurSector]
 
 nosucc:
   call rwsect                           ;restore current sector
@@ -310,13 +310,13 @@ fat12pad endp
 ;
 ; getentrynumber gets the fat entry number the cursor is on
 ;
-;               IN:   [dwSector]  current sector within a fat
+;               IN:   [dwCurSector]  current sector within a fat
 ;                     [spot]    byte offset inside current sector
 ;               OUT:  eax       entry number
 ;
 ;-----------------------------------------------------------------
 getentrynumber proc
-  mov eax, [dwSector]
+  mov eax, [dwCurSector]
   sub eax, [dwReserved]
 
   mov [fromfat], 1
@@ -350,12 +350,12 @@ getentrynumber endp
 ; go2entry jumps to an entry in the fat
 ;
 ;               IN:   eax       cluster number
-;               OUT:  [dwSector]  corresponding sector within a fat
+;               OUT:  [dwCurSector]  corresponding sector within a fat
 ;                     [spot]    byte offset within the sector
 ;
 ;-----------------------------------------------------------------
 go2entry proc
-  cmp [fattype], FAT12
+  cmp [fattype], FT_FAT12
   jne nosmd
     mov ecx, 3
     mul ecx
@@ -384,7 +384,7 @@ go2entry proc
   donesub:
 
   add ecx, [dwReserved]
-  mov [dwSector], ecx
+  mov [dwCurSector], ecx
 
   xor dl, dl
   jmp movecursor

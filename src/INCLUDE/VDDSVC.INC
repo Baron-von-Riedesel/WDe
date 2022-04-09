@@ -2,10 +2,21 @@
 VDM_V86	equ 0
 VDM_PM	equ 1
 
- @Vdd macro name_, parms
- externdef stdcall _imp__&name_&@&parms :pfunc@&parms
- name_ equ <_imp__&name_&@&parms>
- endm
+@Vdd macro name_, parms
+if parms eq 0
+  name_ proto
+elseif parms eq 4
+  name_ proto :dword
+elseif parms eq 8
+  name_ proto :dword, :dword
+elseif parms eq 12
+  name_ proto :dword, :dword, :dword
+endif
+endm
+
+ifdef __JWASM__
+    option dllimport:<NTVDM.EXE>
+endif
 
  @Vdd VdmMapFlat ,12
  @Vdd getEAX, 0
@@ -91,3 +102,6 @@ VDM_PM	equ 1
  @Vdd setOF, 4 
  @Vdd setMSW, 4
 
+ifdef __JWASM__
+    option dllimport:none
+endif

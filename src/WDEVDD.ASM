@@ -8,12 +8,13 @@
 	.MODEL FLAT, stdcall
 	option casemap:none
 
-	.nolist
-	.nocref
 	include winbase.inc
 	include vddsvc.inc
-	.cref
-	.list
+
+ifdef __JWASM__
+@pe_file_flags = @pe_file_flags and not IMAGE_FILE_RELOCS_STRIPPED
+@pe_file_flags = @pe_file_flags or      IMAGE_FILE_DLL
+endif
 
 ?RAWMODE equ 1		;1=support CDROM raw read mode
 ?CDSECADJUST equ 1	;1=adjust sector number for CD access
@@ -61,7 +62,7 @@ endif
 
 ;--- Init
 
-Init proc stdcall
+Init proc stdcall export
 
 	@DbgOutC <"WDEVDD.Init enter",13,10>
 	@DbgOutC <"WDEVDD.Init exit",13,10>
@@ -682,7 +683,7 @@ disk_access endp
 ;--- int number is found in real-mode SS:[SP+0]
 ;--- value of register AX is found in real-mode SS:[SP+2]
 
-Dispatch proc stdcall uses ebx esi edi
+Dispatch proc stdcall export uses ebx esi edi
 
 	@DbgOutC <"WDEVDD.Dispatch enter",13,10>
 	invoke getESP

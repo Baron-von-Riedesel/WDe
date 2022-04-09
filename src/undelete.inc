@@ -19,7 +19,7 @@ undelete proc
   jb invclust                           ; not a valid cluster if it's below 2
   mov [dwCluster], eax
   call getfatentry
-  cmp [status], ERROR                   ; not enough free clusters?
+  cmp [status], ST_ERROR                ; not enough free clusters?
   jne filenoexceed
   jmp undelete_err1
 invclust:
@@ -59,14 +59,14 @@ unok1:
 ;    add bx, offset readbuffer
     mov byte ptr [bx], al
     call copybuffer
-    mov [bRW], WRITE
+    mov [ioreq.bRW], RW_WRITE
     call rwsect
 
     mov dx, CStr('UnDeleting...')
     call printbottom
 
     call UndeleteCore
-    cmp [status], ERROR
+    cmp [status], ST_ERROR
     je undelete_err1
     mov dx, CStr('Finished UnDeleting File')
     call printerror
@@ -91,7 +91,7 @@ getnextentry:
       inc ebx
       mov eax, ebx
     call getfatentry
-    cmp [status], ERROR
+    cmp [status], ST_ERROR
     je undelCoreError
     test eax, eax
     jnz getnextentry

@@ -33,41 +33,41 @@ endif
 endm
 endif
 
-	.data
+    .data
 
 hVdd dw -1
 
-	.code
+    .code
 
 int13:
-	int 13h
-	ret
+    int 13h
+    ret
     mov ax,[hVdd]
     Dispatch
     ret
 int21:
     int 21h
-	ret
+    ret
     mov ax,[hVdd]
     Dispatch
     ret
 int25:
-	int 25h
-	pop dx
-	ret
+    int 25h
+    pop dx
+    ret
     mov ax,[hVdd]
     Dispatch
     ret
 int26:
-	int 26h
-	pop dx
-	ret
+    int 26h
+    pop dx
+    ret
     mov ax,[hVdd]
     Dispatch
     ret
 int2F:
-	int 2fh
-	ret
+    int 2fh
+    ret
     mov ax,[hVdd]
     Dispatch
     ret
@@ -87,23 +87,29 @@ initvdd proc
     jc @F
     cmp ax,-1
     jz @F
+    push ds
     mov [hVdd], ax
+    push cs
+    pop ds
+    assume ds:_TEXT
     mov ax,06A50h               ;push AX, push XX
     mov cx,9021h                ;push XX, nop
-    mov word ptr cs:[int21+0],ax
-    mov byte ptr cs:[int21+2],cl
+    mov word ptr [int21+0],ax
+    mov byte ptr [int21+2],cl
     mov cl,25h
-    mov word ptr cs:[int25+0],ax
-    mov word ptr cs:[int25+2],cx
+    mov word ptr [int25+0],ax
+    mov word ptr [int25+2],cx
     mov cl,26h
-    mov word ptr cs:[int26+0],ax
-    mov word ptr cs:[int26+2],cx
+    mov word ptr [int26+0],ax
+    mov word ptr [int26+2],cx
     mov cl,2Fh
-    mov word ptr cs:[int2F+0],ax
-    mov byte ptr cs:[int2F+2],cl
+    mov word ptr [int2F+0],ax
+    mov byte ptr [int2F+2],cl
 ifdef _DEBUG
-    mov byte ptr cs:[dbgout], ch  ;nop
+    mov byte ptr [dbgout], ch  ;nop
 endif
+    pop ds
+    assume ds:DGROUP
 @@:
     ret
 initvdd endp
@@ -120,7 +126,7 @@ exitvdd endp
 
 ifdef _DEBUG
 dbgout proc
-    ret			;location will be patched with NOP if VDD found
+    ret         ;location will be patched with NOP if VDD found
     push ax
     push 41h
     mov ax,[hVdd]

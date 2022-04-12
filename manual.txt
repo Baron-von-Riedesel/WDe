@@ -36,7 +36,7 @@ WDe User Manual
       4.2.7 - Item "Disk"
 
   5.0 - Error Messages
-    5.1 - "No Matches Found"
+    5.1 - "No (More) Matches Found"
     5.2 - "File Chain Exceeds FAT"
     5.3 - "File Too Small"
     5.4 - "File Too Corrupt"
@@ -54,6 +54,7 @@ WDe User Manual
     5.14- "Fat Table Not Blank"
     5.15- "Root Not Blank"
     5.16- "No Directories Found"
+    5.17- "No search string defined yet"
 
 
   0.0 - Hot-Key Quick Reference
@@ -272,8 +273,9 @@ WDe User Manual
 
           This option will appear when you're currently in the FAT table
           or in the 32 bytes belonging to a directory entry.  Using this
-          option can save the data in a fat or file chain to a specified
-          file.
+          option can save/restore the data in a fat or file chain to/from
+          a specified file. Note that the chain itself is never changed,
+          just the corresponding sector contents.
 
       4.2.3 - Menu "Goto"
 
@@ -397,7 +399,7 @@ WDe User Manual
 
   5.0 - Error Messages
 
-    5.1 - "No Matches Found"
+    5.1 - "No (More) Matches Found"
 
       This error simply means that WDe has reached the end of the drive and
       whatever it was searching for (using the "Find" functions) was not
@@ -514,4 +516,9 @@ WDe User Manual
         This is another UnFormat error; it means that the entire drive has
         been scanned but no valid directories were found.  Since UnFormat
         can only recover files within directories, the UnFormat is aborted.
+    
+    5.17- "No search string defined yet"
+
+        This is emitted by "Find Next" if no search string (via F1 or F2 in
+        the find submenu) has been defined yet.
     

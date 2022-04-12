@@ -558,6 +558,16 @@ local	drvparam:I13DPARAM
 		jz diskerror
 		invoke set1308, addr drvparam
 		jmp exit
+	.elseif ( ah == 41h )
+		invoke getEBX
+		.if ax == 55AAh
+			xchg ah,al
+			invoke setEBX, eax
+		.endif
+		invoke getECX
+		or al,5
+		invoke setECX, eax
+		jmp exit
 	.elseif ( ah == 42h || ah == 43h )
 		.if ( ah == 43h )
 			mov bWrite, 1

@@ -14,7 +14,8 @@ WDe V0.40
   - lengthy operations will display progress in bottom line.
   - memory model changed to small to increase data segment to 64 kB
     and allow to implement dynamically allocated buffers.
-  
+  - fixed: restoring file/fat chain gave wrong or misleading feedback.
+  - string search fastened (but still room for improvements).
 
 WDe V0.33
   - set video attributes only in the 80x43 area in case current video mode

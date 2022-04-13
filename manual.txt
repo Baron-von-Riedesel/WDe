@@ -72,6 +72,7 @@ WDe User Manual
     Shift+Tab     - Switch between hex and binary
     Ctrl+End      - Jump to last sector on drive
     Ctrl+Home     - Jump to first sector on drive
+    Ctrl+Up       - pop sector from stack and jump to it
     
     Keys in Fat of Fat32/Fat1x partitions:
 
@@ -83,6 +84,7 @@ WDe User Manual
         
     Ctrl+Right    - Jump to linked cluster in fat
     Ctrl+Enter    - Jump to fat entry for this cluster
+    Enter         - If in directory, jump to first cluster of entry
 
 
 
@@ -122,10 +124,7 @@ WDe User Manual
     respectively.
 
     The current sector, offset, area and cluster/fat-entry is
-    displayed along the top for convenience.  Next to the sector number
-    is a value in square brackets; this specifies what "section" of the
-    sector is currently being edited in the case that the sector size is
-    greater than 512 bytes.
+    displayed along the top for convenience.
 
     When in the fat area, Ctrl+Right will jump to the next entry
     in the fat chain and Ctrl+Left will attempt to recurse to the previous
@@ -136,7 +135,10 @@ WDe User Manual
 
     When in the data area, Ctrl+Enter will jump to the corresponding
     fat entry.  Hitting Ctrl+Right will jump directly to the cluster
-    connected to it within the fat.
+    connected to it within the fat. Hitting Enter while in a directory
+    will jump to the beginning of the first cluster of that entry; the
+    current sector will be saved on the sector stack and can be popped
+    by Ctrl-Up.
 
     Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
     to edit the physical drive that partition belongs to.

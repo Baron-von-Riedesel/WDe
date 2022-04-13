@@ -1,6 +1,6 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
-WDe V0.40
+WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.
   - input of numeric data is now checked only after the return key has
     been pressed.
@@ -16,8 +16,11 @@ WDe V0.40
     and allow to implement dynamically allocated buffers.
   - fixed: restoring file/fat chain gave wrong or misleading feedback.
   - string search fastened (but still room for improvements).
+  - enclose current entry in directory view with '>' and '<'.
+  - implemented a small (8 items) "sector stack" to be used by Ctrl-Up.
+    Supposed to revert Enter or Ctrl-Enter keys.
 
-WDe V0.33
+WDe V0.33 [01.04.2022]
   - set video attributes only in the 80x43 area in case current video mode
     has more rows/cols.
   - ensure that displays are done in current video page.
@@ -35,13 +38,13 @@ WDe V0.33
   - "find next" function added. Also, find will now start from cursor 
     position in current sector, not from the current sector's start.
 
-WDe V0.32
+WDe V0.32 [17.03.2022]
   - don't change video mode if current mode has at least 43 lines.
 
-WDe V0.31
+WDe V0.31 [21.02.2010]
   - added WDEVDD to allow WDE running in Windows XP.
 
-WDe V0.30b:
+WDe V0.30b [??/??/??]
   - fixed a small bug in the hex printing code
   - separated int 13h buffers for getting drive info and reading/writing,
   - reversed display of attribute bits in directory view to match binary

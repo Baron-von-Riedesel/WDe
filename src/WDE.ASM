@@ -285,6 +285,7 @@ endif
         CTRLRIGHT_KEY    EQU 116
         CTRLHOME_KEY     EQU 119
         CTRLEND_KEY      EQU 117
+        CTRLUP_KEY       EQU 8Dh
 
         ; it's far more code efficient to use scan codes
         ; instead of checking for both upper/lower case letters
@@ -969,6 +970,9 @@ getkeyagain:
     cmp ah, CTRLRIGHT_KEY
     je jumpcluster
 
+    cmp ah, CTRLUP_KEY
+    je jumpstkpop
+
     cmp ah, CTRLHOME_KEY
     je jumptobootsector
 
@@ -1104,7 +1108,7 @@ donefixscreen:
     mov [scrn_xy], dx
 
     mov cl, 1
-    call printchar2
+    call fillchar
     jmp moveright
 
 modascii endp
@@ -1156,6 +1160,7 @@ done:
 
 modbinary endp
 
+if 0 ; not used yet
 allocbuffer proc
     mov ax, [wBps]
     add ax, [_mem]
@@ -1167,6 +1172,8 @@ freebuffer proc
     mov [_mem], ax
     ret
 freebuffer endp
+
+endif
 
 ;--- try a new device
 ;--- "usually" called after setdrive()
@@ -1824,35 +1831,90 @@ changemode proc
   ret
 changemode endp
 
+;--- main menu ctrl-up
+
+jumpstkpop proc
+    call popstack
+    ret
+jumpstkpop endp
+
 ;--- main menu ctrl-enter
+;--- jump to cluster entry in FAT
 
 retfat proc
-    cmp [ioreq.drvtype], DT_FAT        ; won't work with non-logical drives
+    cmp [ioreq.drvtype], DT_FAT ; won't work with non-logical drives
     jne done
     mov eax, [dwCurSector]
-    test eax, eax                      ; if we're on a logical drive, attempt
-    jz log2phys                        ; to jump to respective phys. drive
+    test eax, eax
+    jz log2phys
 
     test [bRegion], RG_DATA
     jz done
 
 ;retcluster:
-    call sector2cluster
-    call go2entry
-    call rwsect
+    call pushstack
+    call sector2cluster         ; convert sector# to cluster#
+    call go2entry               ; convert cluster# to location inside FAT
+    call rwsect                 ; read that FAT sector
 done:
     ret
-log2phys:                               ; jump from logical drive
-    mov al, [hdnumber]                  ; to parent physical drive
-    and al,al                           ; underlying physical drive?
-    jz @F                               ; (not true for ramdisks)
+
+;--- if we're on a logical drive, attempt
+;--- to jump to respective phys. drive.
+;--- won't work for ramdisks.
+log2phys:
+    mov al, [hdnumber]
+    and al,al
+    jz @F
     mov bh, DT_PHYSICAL
     call trydevice
-   jnc drive_ok
+    jnc drive_ok
 @@:
     ret
 
 retfat endp
+
+
+_BSS segment
+secstk dd 8*2 dup (?)
+secstk_top db ?
+_BSS ends
+
+popstack proc
+    push bx
+    movzx bx,[secstk_top]
+    dec bl
+    and bl,7
+    shl bx,3
+    xor eax, eax
+    xchg eax, dword ptr [bx+offset secstk+0]
+    cmp eax, 0
+    jz done
+    dec [secstk_top]
+    mov [dwCurSector], eax
+    call rwsect
+    mov ax,  word ptr [bx+offset secstk+4]
+    mov dl,0
+    call movecursor
+done:
+    pop bx
+    ret
+popstack endp
+
+pushstack proc
+    push bx
+    movzx bx,[secstk_top]
+    and bl,7
+    shl bx,3
+    mov dword ptr [bx+offset secstk+0], eax
+    push ax
+    mov ax,[spot]
+    mov  word ptr [bx+offset secstk+4], ax
+    pop ax
+    inc [secstk_top]
+    pop bx
+    ret
+pushstack endp
 
 ;--- main menu ctrl-left
 
@@ -1947,6 +2009,9 @@ entercluster proc
     cmp [ioreq.drvtype], DT_FAT
     jne done
 
+    mov eax,[dwCurSector]
+    call pushstack
+
     cmp [viewmode], VM_DIRECTORY
     je enterfiledir
 
@@ -1957,6 +2022,9 @@ jumptoeax::                             ; offset
     ja done                             ; verify that it's a valid sector
     mov [ioreq.dwSector], eax
     call rwsectx
+    mov ax,0
+    mov dl,0
+    call movecursor
     ret
 
 ;-------------------------------------------------------
@@ -2545,16 +2613,10 @@ startchainsaving:
 chainsaveloop:
     movzx ebx, [bSpc]                     ; writefile will write one cluster at a time
     mov [dwValue], ebx
-    xor di,di                             ; suppress progress display in writefile
+    mov di, offset mydisp                 ; function address to call inside writefile
     call writefile
     jc done
 
-    call checktime
-    jc @F
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("Writing file, saving cluster %lX..."), [dwSecBackup]
-    call printbottom
-@@:
     mov eax, [dwSecBackup]
     call cluster2sector
     cmp eax, [dwDataend]
@@ -2567,6 +2629,11 @@ chainsaveloop:
     pop eax
 
     jmp chainsaveloop
+
+mydisp:
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("Writing file, saving cluster %lX..."), [dwSecBackup]
+    jmp printbottom
 
 donechainsave:
     cmp [dwFilesize], 0                   ; file chain?
@@ -3254,7 +3321,7 @@ nextitem:
     call printstring
     mov al, ' '
     mov cl, 3
-    call printchar2
+    call fillchar
     jmp dtsc
 vbik:
     call bshighlight
@@ -3272,6 +3339,8 @@ dtsc:
 
 fsinfoviewmode endp
 
+SIZEDIRENT equ 32
+
 ;--- directory view
 
 dirview proc
@@ -3283,30 +3352,60 @@ dirview proc
 
     xor bx, bx
 
-    cmp cx, 64
+    cmp cx, 2 * SIZEDIRENT
     jb dirviewok
 dirviewnotok:
-    sub cx, 32
-    add bx, 32
-    cmp bx, 13*32        ;=416
+    sub cx, SIZEDIRENT
+    add bx, SIZEDIRENT
+    cmp bx, 13 * SIZEDIRENT  ; =416
     jae dirviewok
-    cmp cx, 64
+    cmp cx, 2 * SIZEDIRENT
     jae dirviewnotok
 dirviewok:
 
     mov ch, 7
 
-processentry:
+processentry:            ; <--- next view line
 
     cmp bx, 512          ; when we're looking at the very last entry in
-    jb ncll1             ; a directory...a line remains that needs wiping.
+    jb @F                ; a directory...a line remains that needs wiping.
     cmp ch, 1
-    jne ncll1
+    jne @F
     mov al, SPACE
     mov cl, 78
-    call printchar2
+    call fillchar
     jmp doneentry
-ncll1:
+@@:
+
+if 1                     ; mark the current entry in the view
+    mov dx, "  "
+    mov ax, [spot]
+    and al, 0E0h
+    cmp bx, ax
+    jb @F
+    add ax, SIZEDIRENT
+    cmp bx, ax
+    jae @F
+    mov dx, "<>"
+@@:
+    push [scrn_xy]
+
+    mov [scrn_col],0
+    call printchar
+    inc [scrn_row]
+    mov [scrn_col],0
+    call printchar
+    dec [scrn_row]
+
+    mov [scrn_col],79
+    mov dl,dh
+    call printchar
+    inc [scrn_row]
+    mov [scrn_col],79
+    call printchar
+
+    pop [scrn_xy]
+endif
 
     mov dx, offset attributesmsg
     call printstring
@@ -3444,10 +3543,10 @@ halfdir:
     sub cl,[scrn_col]
     jbe @F
     mov ax, DEFAULTCOLOR * 100h + SPACE
-    call printcell2
+    call fillcell
 @@:
     call gotonextline
-    add bx, 32
+    add bx, SIZEDIRENT
     dec ch
     jnz processentry
 doneentry:
@@ -3528,7 +3627,7 @@ nextcol:
 done:
     mov al, SPACE
     mov cl, 55
-    jmp printchar2
+    jmp fillchar
 
 fat32viewmode endp
   
@@ -3591,7 +3690,7 @@ nextcol:
 done:
     mov al, SPACE
     mov cl, 69
-    jmp printchar2
+    jmp fillchar
 
 fat16viewmode endp
 
@@ -3675,7 +3774,7 @@ ssection:
 done:
     mov al, SPACE
     mov cl, 4
-    jmp printchar2
+    jmp fillchar
 
 print12bits:
     mov dl, SPACE
@@ -3752,7 +3851,7 @@ nextpart:
     push cx
     mov al, SPACE
     mov cl, 8
-    call printchar2
+    call fillchar
     pop cx
     jmp donepart
 
@@ -3862,7 +3961,7 @@ donepart:
     push cx                       ; clear space after partition number
     mov al, SPACE
     mov cl, 10
-    call printchar2
+    call fillchar
     pop cx
 
     jmp dontshowpart
@@ -4015,7 +4114,7 @@ nextitem:
 
     mov cl, 9
     mov al, SPACE
-    call printchar2
+    call fillchar
 
     pop cx
     mov [scrn_col], 40
@@ -4543,7 +4642,7 @@ drivedump:
     mov edx, [dwDataend]
     inc edx
     mov [dwValue], edx
-    mov di,1
+    xor di, di
     call writefile
     pushf
     call closefile
@@ -4680,14 +4779,14 @@ entrynotdirectory:
     je notfound
     cmp byte ptr [si+bx], 0E5h          ; first character can be E5h (del'd)
     je charok
-kctfn:
+nextchar:
     mov al, byte ptr [si+bx]
     call extvalidfilechar
     jc notfound
 charok:
     inc bx
     dec cl
-    jnz kctfn
+    jnz nextchar
     jmp donextentry
 
 lfn:
@@ -4880,7 +4979,7 @@ abortentry:
 printentry endp
 ;-------------------------------------------------------
 getkey:
-    mov ah, 00h
+    mov ah, 10h    ; use 10h instead of 00 to get ctrl-up, ctrl-dn, ... codes
     int 16h
     ret
 
@@ -4980,7 +5079,7 @@ printtopline proc
     mov cl,36
     sub cl,[scrn_col]
     mov al, ' '
-    call printchar2
+    call fillchar
     add [scrn_col], cl
 
 ;    mov [scrn_col], 36
@@ -5029,7 +5128,7 @@ abortdc:
     pushf
     sub cl, [scrn_col]
     mov al, SPACE
-    call printchar2
+    call fillchar
     popf
     jne done
 
@@ -5076,7 +5175,7 @@ firstfat:
     call printchar
     mov al, SPACE
     mov cl, 2
-    call printchar2
+    call fillchar
 
     cmp [fattype], UNDEFINED
     je abortdc
@@ -5298,9 +5397,9 @@ displaybinval:
     mov al, '-'
     push cx
     mov cl, 4
-    call printchar2
+    call fillchar
     add [scrn_col], 5
-    call printchar2
+    call fillchar
     pop cx
     jmp donextdispbyte
 
@@ -5404,10 +5503,10 @@ ecolor1:
 
 colorchar endp
 
-;--- print char in AL CL times
+;--- fill char in AL CL times
 ;--- (no screen pos update!)
 
-printchar2:
+fillchar:
     push di
     push cx
     call cbuffer_offset
@@ -5423,7 +5522,7 @@ printchar2:
 ;--- print cell in AX CL times
 ;--- (no screen pos update!)
 
-printcell2:
+fillcell:
     push di
     push cx
     call cbuffer_offset
@@ -5660,6 +5759,7 @@ rwsectx:
     lea sp,[esp+4]
     ret
 
+if 0 ; not used yet
 ;--- read specified sector, don't modify [dwCurSector]
 ;--- assumes that caller has set [ioreq.pBuffer]
 readsect:
@@ -5669,6 +5769,7 @@ readsect:
     call rwsect
     pop [dwCurSector]
     ret
+endif
 
 writesect:
     mov [ioreq.bRW],RW_WRITE
@@ -6348,7 +6449,7 @@ savedata proc
 donesavedata:
     ret
 dosavedata:
-    mov di, 1
+    xor di, di
     call writefile
     pushf
     call closefile
@@ -6400,12 +6501,24 @@ printfileoptionmenu proc
     cmp [dwCurSector], eax
     jb dochain
 
-;--- check if in a valid directory entry
-
+if 0
+;--- check if in a valid directory entry.
+;--- finddirectory may have a problem if called from here.
+;--- ( apparently because of lowercase letters in vol labels )
     call bufferinsi
     xor bx, bx
     call finddirectory           ; check for a directory
     jc printmenu
+else
+;--- just rely on what's in [viewmode]
+    cmp [viewmode], VM_DIRECTORY
+    jnz printmenu
+    call bufferinsi
+endif
+    mov bx, [spot]               ; check the first char of the current entry
+    and bl, 11100000b
+    cmp byte ptr [si+bx],0       ; dir entry empty?
+    jz printmenu
     mov [chainflag], FILE_CHAIN  ; we're in a directory
     jmp dochain2
 dochain:
@@ -6454,7 +6567,7 @@ printitem:
     mov dx, di
     call printstring
     mov al, SPACE
-    call printchar2
+    call fillchar
     add [scrn_col], cl
     inc ch
     jmp nextmenuitem
@@ -6636,7 +6749,7 @@ clearbottom:
     mov cl, RIGHTCOL+1
     sub cl, [scrn_col]
     mov al, SPACE
-    call printchar2
+    call fillchar
     popa
     ret
 ;-------------------------------------------------------
@@ -6659,7 +6772,7 @@ closefile:
 ;--- in: dword [dwValue] = number of sectors to save
 ;---     eax             = start sector
 ;---     [wFilehandle]   = file to write to
-;---     di              = 1 if to print progress at bottom
+;---     di              = function to call for progress display or NULL
 ;--- out: C if error
 ;--- this function may be called in a loop by "save chain"
 
@@ -6672,15 +6785,18 @@ writefile proc
 ;    call printbottom          
 writefileloop:
     call checktime
-    jc @F
+    jc wfl1
     call checkabort
     je abort
     and di,di
     jz @F
+    call di
+    jmp wfl1
+@@:
     mov eax, [dwValue]
     mov cx, offset writingmsg 
     call printbottomX
-@@:
+wfl1:
     mov [handling], QUERY_FILL
     call rwsectx
     mov [handling], ABORT_OPERATION

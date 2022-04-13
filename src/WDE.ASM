@@ -836,6 +836,8 @@ fat12fixsec     dd ?            ; sector # for fat12 fix
 
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
+lasttick        dw ?            ; timer ticks since last call
+
     align 4
 filenamebuffer  db 72 dup(?)    ; size must be at least 69, 72 used for alignment
 stringbuffer    db 76 dup(?)    ; buffer for string input (pos 74: length)
@@ -1760,18 +1762,21 @@ fillamount endp
 ;---      Z set if no more sectors to fill
 
 fillcommon proc
-    call checkabort
-    je abort
     call writesect
     jc error
     dec [dwValue]
     jz done
+
+    call checktime
+    jc @F
+    call checkabort
+    je abort
     pusha 
     mov eax, [dwValue]
     mov cx, offset writetodiskmsg
     call printbottomX
     popa
-  
+@@:
     inc [dwCurSector]
 
     push ds
@@ -1792,13 +1797,14 @@ fillcommon endp
 ;--- write bottom line in a lengthy operation
 ;--- in:  EAX = remaining sectors
 ;---       CX = operation string ("restoring", "searching", "writing",...)
+;--- all registers preserved ( sprintf leaves them all intact)
 
 printbottomX:
-    pusha
+    push dx
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("%s (sector %lu, remaining %lu)"), cx, [dwCurSector], eax
     call printbottom
-    popa
+    pop dx
     ret
 
 ;--- main menu tab & shift-tab keys
@@ -2381,12 +2387,10 @@ nextfindsector:
     call rwsect
     jc abort
 
-    test byte ptr [dwCurSector], 0fh   ; display every 16. sector only
-    jnz @F
-
+    call checktime
+    jc @F
     call checkabort
     je abort
-
     push cx
     mov eax, [dwDataend]
     sub eax, [dwCurSector]
@@ -2417,11 +2421,10 @@ findcommon proc
 ;    mov dx, offset searchingmsg
 ;    call printbottom
 
+    call checktime
+    jc @F
     call checkabort
     je abort                  ; pop address, update screen, then RET
-
-    test byte ptr [dwCurSector],0fh
-    jnz @F
     mov eax, [dwDataend]
     sub eax, [dwCurSector]
     mov cx, offset searchingmsg
@@ -2546,10 +2549,12 @@ chainsaveloop:
     call writefile
     jc done
 
+    call checktime
+    jc @F
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("Writing file, saving cluster %lX..."), [dwSecBackup]
     call printbottom
-
+@@:
     mov eax, [dwSecBackup]
     call cluster2sector
     cmp eax, [dwDataend]
@@ -4837,10 +4842,12 @@ keepreadingfile:
 
     inc [dwCurSector]
 
+    call checktime
+    jc @F
     mov eax, [dwValue]
     mov cx, offset restoremsg
     call printbottomX
-
+@@:
     dec [dwValue]
     jnz readfileloop
 
@@ -5207,13 +5214,15 @@ printstring proc
 printstrloop:
     lodsb
     cmp al, 0
-    je abortprintstr
-    inc [scrn_col]
+    je done
     stosb
     inc di
     jmp printstrloop
-
-abortprintstr:
+done:
+    mov ax, si
+    sub ax, dx
+    dec al
+    add [scrn_col], al
     popa
     ret
 printstring endp
@@ -6662,9 +6671,10 @@ writefile proc
 ;    mov dx, offset writingmsg 
 ;    call printbottom          
 writefileloop:
+    call checktime
+    jc @F
     call checkabort
     je abort
-
     and di,di
     jz @F
     mov eax, [dwValue]
@@ -7102,6 +7112,24 @@ storedebugdata:
 endif
 ;-------------------------------------------------------
 ;-------------------------------------------------------
+
+checktime proc
+    push ax
+    push ds
+    xor ax,ax
+    mov ds,ax
+    mov ax,ds:[46Ch]
+    pop ds
+    push ax
+    sub ax,[lasttick]
+    cmp ax,5
+    pop ax
+    jc @F
+    mov [lasttick],ax
+@@:
+    pop ax
+    ret
+checktime endp
 
 ;-------------------------------------------------------
 int24h:         ; this is the new int 24h to catch any critical errors

@@ -1773,14 +1773,13 @@ fillcommon proc
     jc @F
     call checkabort
     je abort
-    pusha 
+    push eax
     mov eax, [dwValue]
     mov cx, offset writetodiskmsg
     call printprogress
-    popa
+    pop eax
 @@:
     inc [dwCurSector]
-
     push ds
     pop es
     mov di, offset sectbuffer
@@ -2841,30 +2840,6 @@ savefile endp
 
 submenu_fileoptions proc
 
-;    .const
-    align 2
-
-ldfileoptcmds label word
-    dw srfile
-    dw srsector0
-    dw srfat1
-    dw srfat2
-    dw srroot
-    dw srdisk
-    dw srchain
-pdfileoptcmds label word
-    dw srfile
-    dw srsector0
-    dw srhdcheck
-    dw srhdcheck
-    dw srhdcheck
-    dw srhdcheck
-cdfileoptcmds label word
-    dw srfile
-    dw dumpiso
-
-;    .code
-
     cmp ah, F2_KEY
     setz [srflag]                  ; set SR_RESTORE for F2, else SR_SAVE
 
@@ -2922,6 +2897,30 @@ dochain2:
 ;    jmp setxxfileopt
 setxxfileopt:
     jmp pushmenustack
+
+;    .const
+    align 2
+
+ldfileoptcmds label word
+    dw srfile
+    dw srsector0
+    dw srfat1
+    dw srfat2
+    dw srroot
+    dw srdisk
+    dw srchain
+pdfileoptcmds label word
+    dw srfile
+    dw srsector0
+    dw srhdcheck
+    dw srhdcheck
+    dw srhdcheck
+    dw srhdcheck
+cdfileoptcmds label word
+    dw srfile
+    dw dumpiso
+
+;    .code
 
 srfile:
     cmp [srflag], SR_RESTORE

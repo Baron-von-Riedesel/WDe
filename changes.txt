@@ -1,5 +1,9 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
+WDe V0.41 []
+  - the non-menu keys ( cursor movement, sector editing, ... )
+    will now work in all menus, not just in the main menu.
+
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.
   - input of numeric data is now checked only after the return key has
@@ -18,7 +22,7 @@ WDe V0.40 [13.04.2022]
   - string search fastened (but still room for improvements).
   - enclose current entry in directory view with '>' and '<'.
   - implemented a small (8 items) "sector stack" to be used by Ctrl-Up.
-    Supposed to revert Enter or Ctrl-Enter keys.
+    Supposed to revert Enter, Ctrl-Enter or Ctrl-Left keys.
 
 WDe V0.33 [01.04.2022]
   - set video attributes only in the 80x43 area in case current video mode

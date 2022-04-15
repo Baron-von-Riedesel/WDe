@@ -18,8 +18,9 @@
 	.286
 	.model small,stdcall
 
-ROWS	equ 43				;600/14 ( actually, 43*14 is 602 )
-?DRIVER	equ 1				;insert code to generate a DOS driver + .EXE
+ROWS	equ 43				; 600/14 ( actually, 43*14 is 602 )
+?DRIVER	equ 1				; insert code to generate a DOS driver + .EXE
+?DIRECTCRT equ 1            ; 0=use BIOS to enable/disable write access to CRT 
 
 	.stack 200h
 	.code
@@ -81,6 +82,7 @@ endif
 ;--- clear write protection for CRT register 0-7
 
 disablewp proc
+if ?DIRECTCRT
 	mov al,11h			;vertikal retrace end register bit 7 reset
 	out dx,al
 	inc dx
@@ -88,12 +90,18 @@ disablewp proc
 	and al,7fh
 	out dx,al
 	dec dx
+else
+	mov ax,1201h
+	mov bl,32h
+	int 10h
+endif
 	ret
 disablewp endp
 
 ;--- restore write protection for CRT register 0-7
 
 enablewp proc
+if ?DIRECTCRT
 	mov al,11h
 	out dx,al
 	inc dx
@@ -101,6 +109,11 @@ enablewp proc
 	or al,80h
 	out dx,al
 	dec dx
+else
+	mov ax,1200h
+	mov bl,32h
+	int 10h
+endif
 	ret
 enablewp endp
 

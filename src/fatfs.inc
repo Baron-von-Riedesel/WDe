@@ -121,6 +121,7 @@ filltopbits:                          ; for ease/compatibility, all fat
     or eax, 0FFFF000h                 ; oddities (full/bad cluster) are
 f32gfd:                               ; set as FFFFFFxh
     and eax, 0FFFFFFFh
+    cmp eax, 2
 abortgfe:
     pop si
     pop ebx

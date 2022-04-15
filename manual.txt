@@ -123,8 +123,8 @@ WDe User Manual
     Ctrl+Home & Ctrl+End jump to the beginning and end of the drive,
     respectively.
 
-    The current sector, offset, area and cluster/fat-entry is
-    displayed along the top for convenience.
+    The current sector, offset, area and cluster/fat-entry is displayed
+    along the top for convenience.
 
     When in the fat area, Ctrl+Right will jump to the next entry
     in the fat chain and Ctrl+Left will attempt to recurse to the previous
@@ -208,8 +208,7 @@ WDe User Manual
 
       Some menu items open up new "submenus" which will then change
       the use of the function keys; you can use the 'Escape' key to
-      go back to the previous menu.  Note that while in a submenu,
-      none of the keys used for editing work.
+      go back to the previous menu.
 
       To quit WDe, pressing 'Escape' when at the main menu will
       show a Yes/No prompt to quit; hitting escape again will

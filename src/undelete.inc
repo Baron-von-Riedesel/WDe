@@ -9,7 +9,7 @@
 undelete proc
     mov [fromfat], 1
     call spot2bufofs                      ; bx = spot + bufofs
-    and bl, 11100000b                     ; bx = start file entry
+    and bl, 11100000b                     ; bx = start directory entry
     add bx, offset sectbuffer
     mov eax, dword ptr [bx+DIR_FILESIZE]
     mov [dwFilesize], eax
@@ -21,15 +21,18 @@ undelete proc
     jb invclust                           ; not a valid cluster if it's below 2
     mov [dwCluster], eax
     call getfatentry
-    jc undelete_err1                      ; not enough free clusters?
+    jc undelete_err1                      ; "file chain exceeds FAT"?
     jmp filenoexceed
 invclust:
     mov dx, offset invalstartclust        ; "invalid start cluster"
     call printerror
     ret
 filenoexceed:
-    test eax, eax
+    test eax, eax                         ; is the returned cluster# 0?
     jz undel1good
+
+;--- this error may also occur if one has manually edited the first byte
+;--- of a directory entry to 0E5h. 
 
     mov dx, CStr('File Too Corrupt')
     call printerror

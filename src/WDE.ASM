@@ -138,6 +138,12 @@
     .stack 4096
     .386
 
+;--- segments that might need translation if run in pm
+
+_0000H equ 0
+_B000H equ 0B000h
+_B800H equ 0B800h
+
 
 ;        _DEBUG           EQU 1 ; uncomment to assemble in debug mode
 ;        ?BASIC           EQU 1 ; uncomment to disable extended functionality
@@ -224,7 +230,7 @@ endif
         VERIFY                  EQU 2
         NEWINT13_WRITE_FLAG     EQU NO_VERIFY
 
-; attribute bits
+; directory entry attribute bits
         READONLY         EQU 00000001b
         HIDDEN           EQU 00000010b
         SYSTEM           EQU 00000100b
@@ -239,29 +245,32 @@ endif
         DIR_CLUST_HIGH   EQU 14h
 
 ; ascii
-        BACKSPACE_KEY    EQU 8
-        TAB_KEY          EQU 9
+;        BACKSPACE_KEY    EQU 8
+;        TAB_KEY          EQU 9
 ;        CTRLENTER_KEY    EQU 10
         ENTER_KEY        EQU 13
         ESCAPE_KEY       EQU 27
-        SPACE            EQU 32
-        DOUBLE_QUOTE     EQU 34
-        PERCENT          EQU 37
-        ASTERISK         EQU 42
-        COMMA            EQU 44
-        PERIOD           EQU 46
-        FORWARD_SLASH    EQU 47
-        COLON            EQU 58
-        SEMICOLON        EQU 59
-        LESS_THAN        EQU 60
-        GREATER_THAN     EQU 62
-        QUESTION_MARK    EQU 63
-        BACK_SLASH       EQU 92
-        PIPE             EQU 124
+
+        SPACE            EQU ' ' ;20h
+        DOUBLE_QUOTE     EQU '"' ;22h
+        PERCENT          EQU '%' ;25h
+        ASTERISK         EQU '*' ;2ah
+        COMMA            EQU ',' ;2ch
+        PERIOD           EQU '.' ;2eh
+        FORWARD_SLASH    EQU '/' ;2fh
+        COLON            EQU ':' ;3ah
+        SEMICOLON        EQU ';' ;3bh
+        LESS_THAN        EQU '<' ;3ch
+        GREATER_THAN     EQU '>' ;3eh
+        QUESTION_MARK    EQU '?' ;3fh
+        BACK_SLASH       EQU '\' ;5Ch
+        PIPE             EQU '|' ;7ch
 
 
 ; scan codes
+        BACKSPACE_SCAN   EQU 0eh
         TAB_SCAN         EQU 0fh
+        ENTER_SCAN       EQU 1ch
         F1_KEY           EQU 3bh
         F2_KEY           EQU 3ch
         F3_KEY           EQU 3dh
@@ -449,6 +458,9 @@ mode     db ?           ;+24
          db ?,?,?
 CDREQ ends
 
+;--- this struct is used for communication with rwsect()
+;--- currently only a static member!
+
 IOREQ struct
 dwSector   dd ?
 bDrive     db ? ; drive number (bDrive ... drvtype must be one dword)
@@ -457,6 +469,17 @@ rwfunc     db ? ; what read/write function to use
 drvtype    db ? ; physical/fat/cdrom/file
 pBuffer    dw ?
 IOREQ ends
+
+MENULVL struct  ; item for menu stack
+wMenuOfs dw ?
+wCmdOfs  dw ?
+MENULVL ends
+
+SECITEM struct  ; size must be 8
+dwSector dd ?
+wSpot    dw ?
+         dw ?
+SECITEM ends
 
     .const
 
@@ -481,7 +504,7 @@ searchmenu      db 2
 fillmenu        db 3
                 db 28,27,32,33,42,34,-1
 
-idmenu          db 3
+incdecmenu      db 3
                 db 35,36,37,38,-1
 
 cdfileoptmenu   db 3
@@ -492,22 +515,29 @@ pdfileoptmenu   label byte
 pdjumpmenu      db 2
                 db 16,17,18,19,20,21,-1
 
-ldfileoptmenu   db 3
-                db 16,9,10,11,12,22,-1
+    .data  ; submenus "file options" & "functions" are dynamically modified
 
-ldchainmenu     db 2
-                db 16,9,10,11,12,22,23,-1
+MENUF_CHAIN equ 23
 
-funcmenu0       db 3
-                db 30,29,-1
+ldfileoptmenu   db 2
+                db 16,9,10,11,12,22
+ldfileoptf7     db -2
+                db -1
+
+funcmenu        db 3
+                db 30,29
 ifndef ?BASIC
-funcmenu1       db 3
-                db 30,29,45,-1
-funcmenu2       db 3
-                db 30,29,45,44,-1
-endif
 
-introtext       db 'WDe V0.41',0
+MENUF_UNFORMAT equ 44
+MENUF_UNDELETE equ 45
+
+funcmf3         db -2    ; "unformat"
+funcmf4         db -2    ; "undelete"
+endif
+                db -1
+    .const
+
+introtext       db 'WDe V0.50',0
 copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
 
 owmsg           db 'File Exists - Append/Overwrite/Cancel [A/O/C]? ',0
@@ -582,8 +612,8 @@ part0B0C        db 'Fat32',0                            ; 41
                 db 'Inverse',0                          ; 42
                 db 'Next',0                             ; 43
         ifndef ?BASIC
-                db 'UnDelete',0                         ; 44
-                db 'UnFormat',0                         ; 45
+                db 'UnFormat',0                         ; 44
+                db 'UnDelete',0                         ; 45
         endif
 
 
@@ -665,8 +695,8 @@ _psp dw 0
 _mem dw 0   ;current top of memory
 
 fifields label word
-    dw DStr('Total Free Clusters: '), offset rendernumdec
-    dw DStr('First Free Cluster:  '), offset rendernumhex
+    dw DStr('Total Free Clusters: '), offset printvalue_hl
+    dw DStr('First Free Cluster:  '), offset printhex_hl
 numfifields equ ($ - offset fifields) / (2 * sizeof word)
 
 ;--- a dword-aligned _BSS segment is needed,
@@ -767,6 +797,7 @@ sectors         db ?
 handling        db ?            ; inside rwsect: how to handle errors
 menustackidx    db ?            ; index for menustack
 secstk_top      db ?            ; index for secstk
+bSecure         db ?
 
 ; unformat
     align dword
@@ -791,8 +822,8 @@ fat12fixsec     dd ?            ; sector # for fat12 fix
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
 lasttick        dw ?            ; timer ticks since last call
-menustack       dw 4*2 dup (?)  ; menu stack ( room for 4 menus )
-secstk          dd 8*2 dup (?)  ; sector stack ( room for 8 items )
+menustack       MENULVL 4 dup (<?>)  ; menu stack
+secstk          SECITEM 8 dup (<?>)  ; sector stack ( room for 8 items )
 
 
 
@@ -821,66 +852,116 @@ _BSS ends
 
 Start proc
 
-    call init            ;clear .data?, check video mode, init screen
-    mov [stackbot],sp
-    mov [_mem],sp        ;start of heap
+;--- setup small memory model
+
+    cld
+    mov dx, @data
+    mov ds, dx
+    mov [_psp], es
+    mov ax, ss
+    sub ax, dx
+    shl ax, 4
+    mov ss, dx
+    add sp, ax
+if 1 ;free memory beyond 64kB dgroup
+    mov cx, es
+    mov bx, ds
+    sub bx, cx
+    add bx, 1000h
+    mov ah, 4ah
+    int 21h
+endif
+    push ds
+    pop es
+
+;--- now ds=es=ss=dgroup
+
+;--- clear uninitialized vars
+
+    mov di, offset startbss
+    mov cx, sp
+    sub cx, di
+    shr cx, 1
+    xor ax, ax
+    rep stosw
+
+    mov [stackbot], sp
+    mov [_mem], sp       ;set start of heap (currently used by unformat only)
 
 ;--- scan command line
 
-    mov es,[_psp]
-    mov si,80h
-    movzx cx,byte ptr es:[si]
+    mov es, [_psp]
+    mov si, 80h
+    movzx cx, byte ptr es:[si]
     inc si
 @@:
-    jcxz donecmdline
+    jcxz inval_cmd
     lodsb es:[si]
     dec cl
     cmp al,' '
     jbe @B
-    mov ah,es:[si]
-    cmp al,'0'
-    jb donecmdline
-    cmp al,'9'
+    mov ah, es:[si]
+    cmp al,'/'
+    jz handleoptions
+    cmp al,'-'
+    jz handleoptions
+    cmp al, '0'
+    jb inval_cmd
+    cmp al, '9'
     jbe maybedrive
     mov bh, DT_FAT
-    or al,20h
-    cmp al,'a'
-    jb donecmdline
-    cmp al,'z'
-    ja donecmdline
-    sub al,'a'
-    cmp ah,':'
-    jz drive_entered
-    jmp donecmdline
+    or al, 20h
+    cmp al, 'a'
+    jb inval_cmd
+    cmp al, 'z'
+    ja inval_cmd
+    sub al, 'a'
+    cmp ah, ':'
+    jz donecmdline
+    jmp inval_cmd
+handleoptions:
+    jcxz inval_cmd
+    call options
+    inc si
+    dec cl
+    jnz @B
+    jmp inval_cmd
 maybedrive:
     mov bh, DT_PHYSICAL
-    sub al,'0'
-    or al,80h
-    cmp ah,13
-    jz drive_entered
-    or ah,20h
-    cmp ah,'h'
-    jz drive_entered
-    and al,7fh
-    cmp ah,'f'
-    jz drive_entered
-
+    sub al, '0'
+    or al, 80h
+    cmp ah, 13
+    jz donecmdline
+    or ah, 20h
+    cmp ah, 'h'
+    jz donecmdline
+    and al, 7fh
+    cmp ah, 'f'
+    jz donecmdline
+inval_cmd:
+    mov al, -1
 donecmdline:
+    pusha
+    call init            ; check & set video mode, init screen
+    popa
+    cmp al, -1
+    jnz disk_entered
+enter_disk:
     call setdrive
-    jnc drive_entered
+    jnc disk_entered
     call quit
-    jmp donecmdline
-drive_entered:
+    jmp enter_disk
+disk_entered:
     call trydevice
-    jc donecmdline
+    jc enter_disk
     call clearsecarea           ; clear sector rectangle (contains copyright msg)
 
 drive_ok::
     call setvariables           ; set all obtainable parameter variables
     call printoffset            ; print current offset
 
-    mov menustack[0], offset initialmenu
-    mov menustack[2], offset initialcmds
+    mov menustack.wMenuOfs, offset initialmenu
+    mov menustack.wCmdOfs, offset initialcmds
     mov menustackidx, 0
 
 Start endp
@@ -889,7 +970,7 @@ Start endp
 
 main proc
 
-    mov sp,[stackbot]
+    mov sp, [stackbot]
     mov [handling], ABORT_OPERATION
     call updatescreen           ; print line 0, sector area and view area
     call printmenu
@@ -902,78 +983,27 @@ getkeyagain:
                                 ; spot on the screen
     call getkey
 
-    cmp al, ESCAPE_KEY
+    cmp al, ESCAPE_KEY          ; exit menu or program
     je handle_esc
+    cmp al, ENTER_KEY           ; jump to cluster ( in FAT or directory )
+    je handle_enter
+    cmp ax, CTRLENTER_KEY       ; jump to FAT entry for current cluster
+    je handle_ctlenter
 
-;--- main menu keys
+    call checkmenu              ; check for menu (=function) keys
 
-    call checkmenu
+    mov dx, sp                  ; set dx to "clean" stack
+    push offset getkeyagain     ; default to 'no full screen update'
+    push offset updateview      ; edit keys may change view, so update it after processing
 
-    cmp ah, PAGEDOWN_KEY
-    je nextsect
+    call ctrlkeys               ; check for control keys
 
-    cmp ah, PAGEUP_KEY
-    je prevsect
-
-    cmp ah, CTRLPAGEDOWN_KEY
-    je nextsect1000
-
-    cmp ah, CTRLPAGEUP_KEY
-    je prevsect1000
-
-    cmp al, ENTER_KEY
-    je entercluster
-
-    cmp ax, CTRLENTER_KEY
-    je retfat
-
-    cmp ah, CTRLLEFT_KEY
-    je recursechain
-
-    cmp ah, CTRLRIGHT_KEY
-    je jumpcluster
-
-    cmp ah, CTRLUP_KEY
-    je jumpstkpop
-
-    cmp ah, CTRLHOME_KEY
-    je jumptobootsector
-
-    cmp ah, CTRLEND_KEY
-    je jumptolastsect
-
-    cmp ah, TAB_SCAN
-    je changemode
-
-    push offset getkeyagain             ; no full screen update for the simple cursor movement keys
-
-    push offset printview               ; edit keys may change view, so update it after processing
-
-    cmp ah, LEFT_KEY
-    je moveleft
-
-    cmp ah, RIGHT_KEY
-    je moveright
-
-    cmp ah, UP_KEY
-    je moveup
-
-    cmp ah, DOWN_KEY
-    je movedown
-
-    cmp ah, HOME_KEY
-    je movefirst
-
-    cmp ah, END_KEY
-    je movelast
-
-
-;    cmp ah, DEL_KEY       ; allow writing of null when the "del" key in ascii
-;    je @F                 ; edit mode is pressed (however, al is 0E0h then!).
-    cmp al, 0             ; don't write null values in ascii for certain
-    je skipkey            ; extended keys (Fxx keys)
-    cmp al, 0E0h          ; don't write 0E0h values in ascii for certain
-    je skipkey            ; extended keys (Home, End, PgUp, ...)
+;    cmp ah, DEL_KEY             ; allow writing of null when the "del" key in ascii
+;    je @F                       ; edit mode is pressed (however, al is 0E0h then!).
+    cmp al, 0                   ; don't write null values in ascii for certain
+    je skipkey                  ; extended keys (Fxx keys)
+    cmp al, 0E0h                ; don't write 0E0h values in ascii for certain
+    je skipkey                  ; extended keys (Home, End, PgUp, ...)
 @@:
     call bufferinsi
     mov bx, [spot]
@@ -981,149 +1011,162 @@ getkeyagain:
     je modascii
     cmp [displaymode], DM_BINARY
     je modbinary
-
-    mov dl, al            ; back up the key pressed for printing
-    sub al, '0'           ; subtract 48, so '0'-'9' becomes 0-9
+modhex:
+    sub al, '0'                 ; check for valid hex digit
     cmp al, 9
-    jbe number            ; below or equal to 9?  a number was typed.
-    sub al, 'A' - '0'     ; make A-F = 0-5
-    cmp al, 5             ; 'A' - 'F'?
-    jbe @F                ; is ok
-    sub dl, 32            ; display upper-case only.
-    sub al, 32            ; check again for lower-case
-    cmp al, 5             ; 'a' - 'f'?
+    jbe digitok                 ; '0' - '9'?
+    sub al, 'A' - '0'           ; 'A' - 'F' -> 0 - 5
+    cmp al, 5
+    jbe @F
+    sub al, 32                  ; check again for lower-case
+    cmp al, 5                   ; 'a' - 'f'?
     ja skipkey
 @@:
-    add al, 10            ; convert A-F (=0-5) to 0A-0F
-number:
-    call printchar
+    add al, 10                  ; convert A-F (=0-5) to 0A-0F
+digitok:
+    mov cl, [si+bx]             ; get the byte to be edited from the buffer
+    cmp [bHL], 0                ; low or high nibble to be changed?
+    jne @F
+    and cl, 0Fh
+    shl al, 4
+    jmp donehex
+@@:
+    and cl, 0F0h                ; remove the bottom nibble
+donehex:
+    or al, cl                   ; set new high/low nibble
 
-;modifybuffer:
-    mov dx, bx
-    call aspotcalc
-    mov [scrn_xy], dx
+modascii:
+    mov [si+bx], al             ; store the modified value
+    jmp displaybyte
 
-    mov dl, byte ptr [si+bx]    ; get the byte to be edited from
-                                ; the buffer
-
-    cmp [bHL], 0
-    jne lowmodify
-    and dl, 0Fh                         ; remove the top nibble, set the typed in
-    shl al, 4                           ; value in place to be the new top nibble
-    jmp donemodify
-
-lowmodify:
-    and dl, 0F0h                        ; remove the bottom nibble
-donemodify:
-    or dl, al                           ; set new high/low nibble
-
-    mov byte ptr [si+bx], dl            ; display the new character
-    call printchar                      ; on the right side of the screen
-    jmp moveright
-skipkey:
-    pop ax                              ; skip view update
-    ret
-handle_esc:
-    cmp [menustackidx],0
-    jz quit
-    dec [menustackidx]
-    ret
-
-main endp
-
-;--- main menu: character entered in ascii mode
-;--- AL=character
-;--- SI=buffer offset
-;--- BX=spot
-
-modascii proc
-    mov byte ptr [si+bx], al
-    mov dx, bx
-    call spotcalc
-    mov [scrn_xy], dx
-
-    cmp [displaymode], DM_HEX
-    je dofixhex
-    call displaybinary
-    jmp donefixscreen
-dofixhex:
-    mov dl,2
-    call rendernumhex
-    call printstring
-donefixscreen:
-    mov dx, bx
-    call aspotcalc
-    mov [scrn_xy], dx
-
-    mov cl, 1
-    call fillchar
-    jmp moveright
-
-modascii endp
-
-;--- main menu: key entered in binary mode
-;--- AL=character
-;--- BX=buffer offset
-
-modbinary proc
+modbinary:                      ; "binary" mode, just '0', '1' or SPACE accepted
     mov cl, [bHL]
-    cmp cl, 5                     ; if we're over the space between nibbles
-    jb skipbinadjust              ; decrement so that the position matches
-    dec cl                        ; incrementally to bits 0-7
-skipbinadjust:
-    mov dl, 10000000b             ; this byte gets shifted as a mask
-    shr dl, cl                    ; to work with the bit we're editing
+    cmp cl, 5                   ; if we're over the space between nibbles
+    jb @F                       ; decrement so that the position matches
+    dec cl                      ; incrementally to bits 0-7
+@@:
+    mov dl, 10000000b           ; this byte gets shifted as a mask
+    shr dl, cl                  ; to work with the bit we're editing
 
     cmp al, '1'
     je onebin
     cmp al, SPACE
     je reversebin
     cmp al, '0'
-    jne done
+    jne skipkey
     not dl
-    and byte ptr [si+bx], dl      ; clearing a bit
+    and [si+bx], dl             ; clearing a bit
     jmp donefixbin
 reversebin:
-    xor byte ptr [si+bx], dl      ; changing a bit
-    mov al, '0'
-    test byte ptr [si+bx], dl
-    jz donefixbin
-    mov al, '1'
+    xor [si+bx], dl             ; changing a bit
     jmp donefixbin
 onebin:
-    or byte ptr [si+bx], dl       ; setting a bit
+    or [si+bx], dl              ; setting a bit
 donefixbin:
+    mov al, [si+bx]
 
-    mov dl, al                    ; print binary
-    call printchar
-
-    mov dx, bx                    ; set [scrn_xy] to the next bit
+displaybyte:                    ; display AL both in hex/binary and ascii
+    mov dx, bx
+    call spotcalc
+    mov [scrn_xy], dx
+    cmp [displaymode], DM_HEX   ; hex or binary?
+    je @F
+    call rendernumbin
+    jmp done_render
+@@:
+    mov dl, 2
+    call rendernumhex
+done_render:
+    call printstring            ; display rendered number
+    mov dx, bx
     call aspotcalc
     mov [scrn_xy], dx
-    mov dl, byte ptr [si+bx]      ; replace the ascii on the screen
-    call printchar
+    mov cl, 1
+    call fillchar               ; display ascii value
     jmp moveright
-done:
+
+skipkey:
+    pop ax                      ; skip view update
+    ret
+handle_esc:
+    cmp [menustackidx], 0       ; in main menu?
+    jz quit                     ; then ask to quit;
+    dec [menustackidx]          ; else pop one menu level
     ret
 
-modbinary endp
+main endp
 
+options proc
+    cmp ah, '?'
+    jz printhelp
+    cmp ah, '?'
+    jz printhelp
+    or ah,20h
+    cmp ah,'s'
+    jnz printhelp
+    mov [bSecure], 1            ;deactivate all write access
+    ret
+options endp
 
-;    .const
+;--- handle control keys
+;--- these are supposed to work in all menus
+
+CKey macro x,y
+    .const
+    db x
+    .code
+    dw y
+endm
+
+    .const
+ckc label byte
+    .code
     align 2
+ck  label word
+    CKey PAGEDOWN_KEY,     nextsect
+    CKey PAGEUP_KEY,       prevsect
+    CKey CTRLPAGEDOWN_KEY, nextsect1000
+    CKey CTRLPAGEUP_KEY,   prevsect1000
+    CKey CTRLLEFT_KEY,     recursechain
+    CKey CTRLRIGHT_KEY,    jumpcluster
+    CKey CTRLUP_KEY,       jumpstkpop
+    CKey CTRLHOME_KEY,     jumptobootsector
+    CKey CTRLEND_KEY,      jumptolastsect
+    CKey TAB_SCAN,         changemode
+lck1 equ ($ - ck) shr 1
+    CKey LEFT_KEY,         moveleft
+    CKey RIGHT_KEY,        moveright
+    CKey UP_KEY,           moveup
+    CKey DOWN_KEY,         movedown
+    CKey HOME_KEY,         movefirst
+    CKey END_KEY,          movelast
+lck equ ($ - ck) shr 1
 
-initialcmds label word
-    dw savetodisk
-    dw submenu_file
-    dw submenu_jumpto
-    dw submenu_view
-    dw submenu_find
-    dw submenu_functions
-    dw select_disk
-filecmds label word
-    dw submenu_fileoptions
-    dw submenu_fileoptions
-;    .code
+;--- in: dx=clean SP
+
+ctrlkeys proc
+    push ax
+    push ds
+    pop es
+    mov al, ah
+    mov di, offset ckc
+    mov cx, lck
+    repnz scasb
+    pop ax
+    jz @F
+    ret
+@@:
+    pop cx         ; skip return address
+    dec di
+    sub di, offset ckc
+    cmp di, lck1
+    jnb @F
+    mov sp, dx     ; clean stack ( skip calls meant for "simple" control keys )
+@@:
+    shl di, 1
+    jmp word ptr cs:[di][ck]  ; function tables are in the code segment
+
+ctrlkeys endp
 
 ;--- check if function key is for current menu
 ;--- ax must be preserved
@@ -1134,37 +1177,45 @@ checkmenu proc
     shl bx, 2
     add bx, offset menustack
     mov cl, F1_KEY
-    mov si, [bx+0]  ; starts with the "spaces between items" member
+    mov si, [bx].MENULVL.wMenuOfs  ; starts with the "spaces between items" member
 nextitem:
     inc si
-    cmp byte ptr [si],-1
+    cmp byte ptr [si], -1
     jz @F
-    cmp ah,cl
+    cmp ah, cl
     jz found
     inc cl
     jmp nextitem
 @@:
     ret
 found:
-    mov bx,[bx+2]
+    cmp byte ptr [si], -2 ; item deactivated?
+    jz @B
+    mov bx, [bx].MENULVL.wCmdOfs
     sub cl, F1_KEY
-    movzx cx,cl
-    shl cx,1
-    add bx,cx
-    pop cx          ; skip return address
-;    jmp word ptr [bx]
-    jmp word ptr cs:[bx]
+    movzx cx, cl
+    shl cx, 1
+    add bx, cx
+    pop cx                ; skip return address
+    jmp word ptr cs:[bx]  ; function tables are in the code segment
 
 checkmenu endp
 
+;--- push a new level onto the menu stack
+;--- there's room for 4 levels ( all are used )
+;--- example: 0=initialcmds, 1=funccmds, 2=fillcmds, 3=incdeccmds
+;--- in: CX=offset cmd table
+;---     DX=offset menu table
+
 pushmenustack proc
     inc [menustackidx]
-    movzx bx,[menustackidx]
-    shl bx,2
+    movzx bx, [menustackidx]
+    shl bx, 2
     add bx, offset menustack
-    mov [bx+0], dx
-    mov [bx+2], cx
+    mov [bx].MENULVL.wMenuOfs, dx
+    mov [bx].MENULVL.wCmdOfs, cx
     ret
+
 pushmenustack endp
 
 
@@ -1277,11 +1328,11 @@ iscdrom:
 trydevice endp
 
 ;--- enter a disk/drive/image filename
-;--- exit: C if ESC pressed or a ""-filename was entered
+;--- exit: C if ESC pressed or a blank filename was entered
 ;---       NC, then drive in AL, drvtype in BH
 
 setdrive proc
-    cmp [driveflag], 0
+    cmp [driveflag], 0          ; drive or filename to enter?
     jne fnreq
     mov dx, offset szDrive      ; prompt
     call printbottom            ; print on the bottom of the screen
@@ -1366,7 +1417,7 @@ done:
     ret
 setdrive endp
 
-;--- enter new "disk"
+;--- main menu, item "disk"
 
 select_disk proc
 @@:
@@ -1378,6 +1429,18 @@ select_disk proc
 done:
     ret
 select_disk endp
+
+
+    align 2
+
+initialcmds label word      ; main menu cmd table
+    dw savetodisk
+    dw submenu_file
+    dw submenu_jumpto
+    dw submenu_view
+    dw submenu_find
+    dw submenu_functions
+    dw select_disk
 
 ;--- main menu, item "save": rewrite current sector 
 
@@ -1402,7 +1465,7 @@ rsgetkeys:
     call cursorgetkey
     cmp al, ESCAPE_KEY
     je done
-    or al,20h
+    or al, 20h
     cmp al, 'a'
     je restrictabove
     cmp al, 'b'
@@ -1441,27 +1504,13 @@ restrictsectors endp
 
 submenu_functions proc
 
-    mov dx, offset funcmenu0
-
-ifndef ?BASIC
+    mov al, -2
     cmp [ioreq.drvtype], DT_FAT
-    jne nlfdf
-    call bufferinsi
-    xor bx, bx
-    call finddirectory 
-    mov dx, offset funcmenu1
-    jc nlfdf                    ; no directory found
-    mov bx, [spot]              ; if a directory is found, check to see if
-    and bl, 11100000b           ; the first char of the current entry
-                                ; we're in (cur_byte / 32) is equal to
-                                ; E5h, if so, we should display the option
-                                ; to undelete
-
-    cmp byte ptr [si+bx], 0E5h
-    jne nlfdf
-    mov dx, offset funcmenu2
-nlfdf:
-endif
+    jnz @F
+    mov al, MENUF_UNFORMAT
+@@:
+    mov [funcmf3], al             ; set/remove "unformat"
+    mov dx, offset funcmenu
     mov cx, offset funccmds
     jmp pushmenustack
 
@@ -1513,10 +1562,10 @@ fillcmds label word
 
 fillincr:
     mov [fillflag+1], FL_INCREMENT
-    jmp submenu_id
+    jmp submenu_incdec
 filldecr:
     mov [fillflag+1], FL_DECREMENT
-    jmp submenu_id
+    jmp submenu_incdec
 fillinverse:
     mov [fillflag], FL_INVERSE
     jmp fillinvrand
@@ -1529,16 +1578,16 @@ submenu_fill endp
 
 ;--- items "decremental", "incremental" of submenu "fill"
 
-submenu_id proc
+submenu_incdec proc
 
-    mov dx, offset idmenu
-    mov cx, offset idcmds
+    mov dx, offset incdecmenu
+    mov cx, offset incdeccmds
     jmp pushmenustack
 
 ;    .const
     align 2
 
-idcmds label word
+incdeccmds label word
     dw fillbit8
     dw fillbit12
     dw fillbit16
@@ -1549,12 +1598,12 @@ idcmds label word
 fillbit8:
     mov [fillflag], FL_BIT8
     mov cl, 0FFh
-    movzx ecx,cl
+    movzx ecx, cl
     jmp fillamount
 fillbit12:
     mov [fillflag], FL_BIT12
     mov cx, 0FFFh                         ; ECX=0FFFh
-    movzx ecx,cx
+    movzx ecx, cx
     jmp fillamount
 fillbit16:
     mov [fillflag], FL_BIT16
@@ -1566,7 +1615,7 @@ fillbit32:
     mov ecx, 0FFFFFFFFh
     jmp fillamount
 
-submenu_id endp
+submenu_incdec endp
 
 ;--- fill region with 8,12,16 or 32 bit value.
 ;--- in: ecx=0FF, 0FFF, 0FFFF or 0FFFFFFFF0
@@ -1579,7 +1628,6 @@ fillamount proc
     mov eax, ecx
     call gethexvalue                    ; get hex value in ebx
     jc exit
-;    dec [menustackidx]                  ; exit incr/decr submenu
 
 ;---
 
@@ -1758,7 +1806,7 @@ dfs:                  ;sector copied
 
 fillamount endp
 
-;--- this routine must not modify EAX!
+;--- this routine must not modify EAX or CX!
 ;--- decrements [dwValue] (=number of sectors)
 ;--- out: C if ESC pressed or error
 ;---      Z set if no more sectors to fill
@@ -1774,9 +1822,11 @@ fillcommon proc
     call checkabort
     je abort
     push eax
+    push cx
     mov eax, [dwValue]
     mov cx, offset writetodiskmsg
     call printprogress
+    pop cx
     pop eax
 @@:
     inc [dwCurSector]
@@ -1828,14 +1878,14 @@ changemode endp
 ;--- main menu ctrl-up
 
 jumpstkpop proc
-    call popstack
+    call popsecstack            ; pop saved sector# from sector stack
     ret
 jumpstkpop endp
 
-;--- main menu ctrl-enter
+;--- handle ctrl-enter key
 ;--- jump to cluster entry in FAT
 
-retfat proc
+handle_ctlenter proc
     cmp [ioreq.drvtype], DT_FAT ; won't work with non-logical drives
     jne done
     mov eax, [dwCurSector]
@@ -1846,7 +1896,7 @@ retfat proc
     jz done
 
 ;retcluster:
-    call pushstack
+    call pushsecstack           ; push sector# in eax onto sector stack
     call sector2cluster         ; convert sector# to cluster#
     call go2entry               ; convert cluster# to location inside FAT
     call rwsect                 ; read that FAT sector
@@ -1858,7 +1908,7 @@ done:
 ;--- won't work for ramdisks.
 log2phys:
     mov al, [hdnumber]
-    and al,al
+    and al, al
     jz @F
     mov bh, DT_PHYSICAL
     call trydevice
@@ -1866,44 +1916,43 @@ log2phys:
 @@:
     ret
 
-retfat endp
+handle_ctlenter endp
 
+;--- push/pop items on/from sector stack
 
-popstack proc
+popsecstack proc
     push bx
-    movzx bx,[secstk_top]
+    movzx bx, [secstk_top]
     dec bl
-    and bl,7
-    shl bx,3
+    and bl, 7
+    shl bx, 3
     xor eax, eax
-    xchg eax, dword ptr [bx+offset secstk+0]
+    xchg eax, [bx][secstk].dwSector
     cmp eax, 0
     jz done
     dec [secstk_top]
     mov [dwCurSector], eax
     call rwsect
-    mov ax,  word ptr [bx+offset secstk+4]
-    mov dl,0
+    mov ax, [bx][secstk].wSpot
+    mov dl, 0
     call movecursor
 done:
     pop bx
     ret
-popstack endp
+popsecstack endp
 
-pushstack proc
+pushsecstack proc
     push bx
-    movzx bx,[secstk_top]
-    and bl,7
-    shl bx,3
-    mov dword ptr [bx+offset secstk+0], eax
-    push ax
-    mov ax,[spot]
-    mov  word ptr [bx+offset secstk+4], ax
-    pop ax
+    movzx bx, [secstk_top]
+    and bl, 7
+    shl bx, 3
+    mov [bx][secstk].dwSector, eax
+    push [spot]
+    pop [bx][secstk].wSpot
     inc [secstk_top]
     pop bx
     ret
-pushstack endp
+pushsecstack endp
 
 ;--- main menu ctrl-left
 
@@ -1990,16 +2039,16 @@ done:
     ret
 jumpcluster endp
 
-;--- main menu enter key
+;--- handle ctrl-key ENTER
 ;--- in FAT area: jump to data area of cluster at current offset
 ;--- in DIR area: jump to starting cluster of dir entry
 
-entercluster proc
-    cmp [ioreq.drvtype], DT_FAT
+handle_enter proc
+    cmp [ioreq.drvtype], DT_FAT         ; FAT disk?
     jne done
 
     cmp [viewmode], VM_DIRECTORY
-    je enterfiledir
+    je do_direntry
 
     cmp [bRegion], RG_FAT
     jne done
@@ -2015,7 +2064,7 @@ jumptoeax::                             ; <--- used by  ctrl-right code
     cmp eax,[dwCurSector]               ; don't store if sectors are identical.
     jz @F                               ; (will happen for "." entries, for example.
     mov eax,[dwCurSector]               ; store current sector onto stack.
-    call pushstack
+    call pushsecstack                   ; push sector# in eax onto sector stack
 @@:
     call rwsectx
     mov ax,0
@@ -2028,12 +2077,14 @@ error:
     invoke sprintf, dx, offset invalclustmsg, ebx
     jmp nuprinterror
 
-enterfiledir:
+do_direntry:
 
 ;--- get the cluster# of the dir entry
 
     call bufferinsi
-    mov bx,[spot]
+    mov bx, [spot]
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh   ; lfn entry?
+    jz done
     and bl, 11100000b
     mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
     shl eax, 16
@@ -2048,7 +2099,7 @@ enterfiledir:
     jz jumptoroot
     ret
 
-entercluster endp
+handle_enter endp
 
 ;--- submenu view
 
@@ -2093,7 +2144,7 @@ submenu_view endp
 
 submenu_find proc
 
-    mov [handling], QUERY_SKIP
+    mov [handling], QUERY_SKIP    ; useless to do here, it's reset in main
     mov dx, offset searchmenu
     mov cx, offset searchcmds
     jmp pushmenustack
@@ -2278,9 +2329,9 @@ findmbr2:
 ;--- find next occurence of (hex) string
 
 findnext:
-    mov al,1
+    mov al, 1
     mov cx, word ptr [stringbuffer+74]
-    and cx,cx
+    and cx, cx
     jnz stringsearch
     mov dx, offset nosearchstring
     jmp nuprinterror
@@ -2292,7 +2343,7 @@ findhex:
     call gethexstring   ;fills stringbuffer
     jc @F
 findstring_hs:
-    xor al,al
+    xor al, al
     test cx, cx
     jnz stringsearch
 @@:
@@ -2308,7 +2359,7 @@ updatescreen proc
     call printsector
 
     cmp [viewmode2], VM2_STATIC       ; forced view?
-    je printview
+    je updateview
 
 ;--- detect the view type
 
@@ -2372,7 +2423,7 @@ choosefatview:
     mov [dwFat12start], eax
 setDLview:
     call checksetview                 ; set viewmode to DL
-    jmp printview
+    jmp updateview
 
 updatescreen endp
 
@@ -2534,23 +2585,26 @@ abort:
     pop [ioreq.dwSector]
     call rwsectx
     call updatescreen
-    add sp,2                  ; skip findcommon return address
+    add sp, 2                 ; skip findcommon return address
     ret
 findcommon endp
-
 
 ;--- file submenu
 
 submenu_file proc
 
-    mov [srflag], SR_SAVE
-;--- for CDROMs, there's no "restore", so skip this menu
-    cmp [ioreq.drvtype], DT_CDROM
+    mov ah, F1_KEY                     ; default for CDROM ( see submenu_fileoptions )
+    cmp [ioreq.drvtype], DT_CDROM      ; for CDROMs, there's no "restore"; skip this level!
     je submenu_fileoptions
-
     mov dx, offset filemenu
     mov cx, offset filecmds
     jmp pushmenustack
+
+    align 2
+
+filecmds label word         ; file menu cmd table
+    dw submenu_fileoptions
+    dw submenu_fileoptions
 
 submenu_file endp
 
@@ -2697,7 +2751,7 @@ restchain proc
     mov [fromfat], 1
     call bufferinsi
     call getfilesize            ; store size in [dwFilesize]
-    mov bx,[spot]
+    mov bx, [spot]
     and bl, 11100000b
 
 if 0                            ; chain is restored even if file isn't big enough
@@ -2819,7 +2873,7 @@ srskip:
     add sp,2                  ; skip srcommon return address
     ret
 sr_ok:
-    mov [menustackidx],0      ; when done with file op, go back to main menu
+    mov [menustackidx], 0     ; when done with file op, go back to main menu
     ret
 srcommon endp
 
@@ -2862,39 +2916,7 @@ submenu_fileoptions proc
 
     mov dx, offset ldfileoptmenu ; menu "input, boot sector, fat1, ..."
     mov cx, offset ldfileoptcmds
-    mov eax, [dwReserved]
-    cmp [dwCurSector], eax
-    jb setxxfileopt
 
-;--- currently within a FAT?
-
-    mov eax, [dwSpf]
-    movzx ebx, [bFats]
-    push dx
-    mul ebx
-    pop dx
-    add eax, [dwReserved]
-    cmp [dwCurSector], eax
-    jb dochain
-
-;--- currently in a directory?
-
-    cmp [viewmode], VM_DIRECTORY
-    jnz setxxfileopt
-
-    call bufferinsi
-
-    mov bx, [spot]               ; check the first char of the current entry
-    and bl, 11100000b
-    cmp byte ptr [si+bx],0       ; dir entry empty?
-    jz setxxfileopt
-    mov [chainflag], FILE_CHAIN  ; we're in a directory
-    jmp dochain2
-dochain:
-    mov [chainflag], FAT_CHAIN   ; we're in a FAT
-dochain2:
-    mov dx, offset ldchainmenu   ; that's ldfileoptmenu + "chain"
-;    jmp setxxfileopt
 setxxfileopt:
     jmp pushmenustack
 
@@ -3171,17 +3193,17 @@ donejump:
     jb @F
     mov [ioreq.dwSector], ebx
     call rwsectx
-    mov [menustackidx],0  ; return to main menu
+    mov [menustackidx], 0  ; return to main menu
 @@:
 done:
     ret
 ;-------------------------------------------------------
 jumptosector:
     mov eax, [dwDataend]
-    mov dx,offset sprintfbuffer
-    invoke sprintf, dx, offset szSector2, eax
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, offset szSector2, eax    ; "sector (0-x): "
     call getdecvalue
-    jc submenu_jumpto
+    jc done
     mov ebx, ecx
     jmp donejump
 
@@ -3202,25 +3224,25 @@ submenu_jumpto endp
 ;--- csr-right
 
 movefirst:
-    mov ax,[spot]
+    mov ax, [spot]
     neg ax
     mov dl, 0
     jmp domove
 
 movelast:
-    mov ax,512
+    mov ax, 512
     dec ax
     sub ax,[spot]
     mov dl, 0
     jmp domove
 
 moveup:
-    mov ax,-16
-    mov cx,-4
+    mov ax, -16
+    mov cx, -4
     jmp moveupdn
 movedown:
-    mov ax,16
-    mov cx,4
+    mov ax, 16
+    mov cx, 4
 moveupdn:
     mov dl, [bHL]
     cmp [editmode], EM_ASCII
@@ -3231,12 +3253,12 @@ moveupdn:
     jmp domove
 
 moveleft:
-    mov ax,-1
-    mov cl,8
+    mov ax, -1
+    mov cl, 8
     jmp moveleftright
 moveright:
-    mov ax,1
-    mov cl,0
+    mov ax, 1
+    mov cl, 0
 moveleftright:
     mov dl, [bHL]
     cmp [editmode], EM_ASCII
@@ -3256,16 +3278,16 @@ moveleftright:
 @@:
     popf
     jnb domove
-    xor ax,ax
+    xor ax, ax
     jmp domove
 dohexadd:     ; hex move left/right
-    add dl,al
-    cmp dl,2
+    add dl, al
+    cmp dl, 2
     pushf
-    and dl,1
+    and dl, 1
     popf
     jnb domove
-    xor ax,ax
+    xor ax, ax
 ;    jmp domove
 
 ;--- common code for up,down,left,right
@@ -3298,7 +3320,7 @@ domove endp
 ;           this function is called for every key press in main menu,
 ;           so don't do lengthy things here!
 
-printview:
+updateview proc
 
     mov al,[viewmode]
     cmp al, VM_BOOTSECTOR
@@ -3320,10 +3342,10 @@ ifdef _DEBUG
     cmp al, VM_DEBUG
     je debugviewmode
 endif
-
 ;    call clearview
-
     ret
+
+updateview endp
 
 ;--- filesystem info view
 
@@ -3348,93 +3370,336 @@ nextitem:
     call bshighlight
     mov dx, offset unknownmsg
     call printstring
-    mov al, ' '
+    mov ax, DEFAULTCOLOR*100h + ' '
     mov cl, 3
-    call fillchar
+    call fillcell
     jmp dtsc
 vbik:
-    call bshighlight
-    mov dl,8
     call word ptr [di+2]
-    call printstring
 dtsc:
     add [highlight_ofs], sizeof dword
-    mov [highlight_scsiz], 10
     call printcrlf
-    add di,2*2
+    add di, 2*2
     pop cx
     loop nextitem
     ret
+printhex_hl::
+    mov [highlight_scsiz], 8
+    call bshighlight
+    mov dl, 8
+    call rendernumhex
+    jmp printstring
 
 fsinfoviewmode endp
 
-SIZEDIRENT equ 32
+;--- display directory LFN entry
+;--- actually this may span multiple entries
+;--- in: si=buffer
+;---     bx=start entry
+
+lfnview proc
+
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov cl, 78
+    call fillcell
+
+    mov dx, CStr('LFN entry "')
+    call printstring
+
+    .const
+
+lfntab label byte
+    db 1,5
+    db 14,6
+    db 28,2
+
+    include oemchars.inc
+
+    .code
+
+    push bx
+@@:
+    mov cl, [si+bx]
+    and cl, 3Fh
+    cmp cl, 1
+    jz foundfirst
+    cmp bx, 512-32
+    jz foundfirst
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES+32], 0Fh
+    jnz foundfirst
+    add bx, 32
+    jmp @B
+foundfirst:
+
+nextentry:
+    push bp
+    mov bp, offset lfntab
+    mov ch, 3
+nextti:
+    movzx di, byte ptr [bp+0]
+    mov cl, [bp+1] 
+    mov ax, bx
+    add ax, di
+    mov [highlight_ofs], ax
+    add di, si
+    add di, bx
+    push bx
+    mov bx, offset sprintfbuffer
+nextchar:
+    mov ax, [di]
+    and ax, ax      ; end of string reached?
+    jnz @F
+    mov ch, 1
+    jmp namedone
+@@:
+    call translatechar
+    mov [bx], al
+    inc bx
+    add di, 2
+    dec cl
+    jnz nextchar
+namedone:
+    mov byte ptr [bx], 0
+    mov ax, bx
+    pop bx
+    mov dx, offset sprintfbuffer
+    sub ax, dx
+    mov ah, RIGHTCOL-1
+    sub ah, al
+    mov [highlight_scsiz], al
+    shl al, 1
+    mov [highlight_size], al
+    jz noprint
+    sub ah, [scrn_col]
+    jnc @F
+    call printeol
+@@:
+    call bshighlight
+    call printstring
+noprint:
+    add bp, 2
+    dec ch
+    jnz nextti
+    pop bp
+
+    mov al, [si+bx]
+    and al, 0C0h
+    cmp al, 40h      ; last entry?
+    jz done
+    cmp bx, 0
+    jz done
+    sub bx, 32
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    jz nextentry
+done:
+    mov dl, '"'
+    call printchar
+
+@@:
+    cmp [scrn_row], VIEWROW+5
+    jz @F
+    call printcrlf
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov cl, 78
+    call fillcell
+    jmp @B
+@@:
+    pop bx
+    test byte ptr [si+bx], 80h
+    jz @F
+    mov [scrn_xy], (VIEWROW+1) * 100h + 1
+    mov dx, CStr('(deleted)')
+    call printstring
+@@:
+    ret
+translatechar:
+    and ah, ah
+    jnz qmark
+    and al,al
+    jns @F
+    push si
+    mov si, offset oemchars
+    mov dl, al
+    and dx, 7fh
+    add si, dx
+    mov dl, [si]
+    pop si
+    and dl, dl
+    jz @F
+    mov al, dl
+@@:
+    ret
+qmark:
+    mov al,'?'
+    ret
+
+printeol:
+    pusha
+    mov dl, '"'
+    call printchar
+    call printcrlf
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov cl, 78
+    call fillcell
+    mov [scrn_col], 11
+    mov dl, '"'
+    call printchar
+    popa
+    ret
+
+lfnview endp
 
 ;--- directory view
+;--- displaying just the spot entry
 
 dirview proc
-    mov [scrn_xy], VIEWROW * 100h + 1
 
     call bufferinsi
+    mov bx,[spot]
+    and bl, 0E0h
 
-    mov cx, [spot]
+;--- adjust menus.
+;--- (the menu adjustment is currently a bit silly implemented, too complicated )
 
-    xor bx, bx
+    xor dx, dx                   ; dl and dh used as flags if the menu has to be printed
 
-    cmp cx, 2 * SIZEDIRENT
-    jb dirviewok
-dirviewnotok:
-    sub cx, SIZEDIRENT
-    add bx, SIZEDIRENT
-    cmp bx, 13 * SIZEDIRENT  ; =416
-    jae dirviewok
-    cmp cx, 2 * SIZEDIRENT
-    jae dirviewnotok
-dirviewok:
+;--- de(activate) "chain" in "file options" menu.
 
-    mov ch, 7
+    cmp [menustackidx], 2        ; simple check if "file options" may be active.
+    jnz nochainadjust
+    mov al, -2
+    mov ah, NO_CHAIN
+    cmp byte ptr [si+bx], 0      ; dir entry empty?
+    jz @F
+    mov al, MENUF_CHAIN
+    mov ah, FILE_CHAIN
+@@:
+    cmp al, [ldfileoptf7]
+    setnz dl
+    mov [ldfileoptf7], al
+    mov [chainflag], ah
+nochainadjust:
 
-processentry:            ; <--- next view line
+;--- (de)activate "undelete" in "functions" menu depending on current entry status
 
-    cmp bx, 512          ; when we're looking at the very last entry in
-    jb @F                ; a directory...a line remains that needs wiping.
-    cmp ch, 1
-    jne @F
-    mov al, SPACE
+    cmp [menustackidx], 1        ; simple check if "functions" may be active
+    jnz noundeleteadjust
+    mov al, -2
+    cmp byte ptr [si+bx], 0E5h
+    jnz @F
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    jz @F
+    mov al, MENUF_UNDELETE
+@@:
+    cmp al, [funcmf4]
+    setnz dh
+    mov [funcmf4], al
+noundeleteadjust:
+
+    and dx, dx         ; only reprint the current menu if a menu has been changed above
+    jz @F
+    pusha
+    call printmenu
+    popa
+@@:
+
+    mov [scrn_xy], VIEWROW * 100h + 1
+
+;--- attribute value of 0Fh (R/O+hidden+system+volume) indicates a LFN entry
+
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    jz lfnview
+
     mov cl, 78
-    call fillchar
-    jmp doneentry
-@@:
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    call fillcell
+    mov [scrn_col], 5
 
-if 1                     ; mark the current entry in the view
-    mov dx, "  "
-    mov ax, [spot]
-    and al, 0E0h
-    cmp bx, ax
+    mov dx, CStr("Name: ")
+    call printstring
+    mov di, offset sprintfbuffer
+    push ds
+    pop es
+    push si
+    add si, bx
+    mov cx, 8
+    rep movsb
+    mov cl, 7
+@@:
+    dec di
+    cmp byte ptr [di], SPACE
+    loopz @B
+    inc di
+    cmp word ptr [si],"  "
+    jz @F
+    mov al,'.'
+    stosb
+@@:
+    mov cl, 3
+    rep movsb
+    pop si
+    mov [di], cl
+    mov dx, offset sprintfbuffer
+    call printstring
+
+    cmp byte ptr [si+bx],0E5h
+    jnz @F
+    mov [scrn_col], 40+12
+    mov dx, CStr("(deleted)")
+    call printstring
+@@:
+    call printcrlf
+
+    mov cl, 78
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    call fillcell
+
+    inc [scrn_col]
+
+;--- print created date+time
+
+    mov dx, offset createdmsg
+    call printstring
+
+    push bx
+    add bx, 10h
+    call printdate
+
+;--- minute+second
+
+    movzx dx, byte ptr [si+bx-03h]
+    cmp dl, 199
     jb @F
-    add ax, SIZEDIRENT
-    cmp bx, ax
-    jae @F
-    mov dx, "<>"
+    mov dl, 199
 @@:
-    push [scrn_xy]
 
-    mov [scrn_col],0
-    call printchar
-    inc [scrn_row]
-    mov [scrn_col],0
-    call printchar
-    dec [scrn_row]
+    sub bx, 02h
+    call printtime
+    pop bx
 
-    mov [scrn_col],79
-    mov dl,dh
-    call printchar
-    inc [scrn_row]
-    mov [scrn_col],79
+    mov dl, '.'
     call printchar
 
-    pop [scrn_xy]
-endif
+    mov [highlight], 0101000Dh
+    add [highlight_ofs], bx
+    call bshighlight
+
+    movzx ax, byte ptr [si+bx+0Dh]
+    cmp al, 199
+    jbe @F
+    mov al, 199
+@@:
+    xor dx, dx
+    push bx
+    mov bx, 10
+    div bx
+    pop bx
+    add dl, 48
+    call printchar
+
+    mov [scrn_col], 40
+
+;--- print attributes
 
     mov dx, offset attributesmsg
     call printstring
@@ -3463,74 +3728,13 @@ endif
     mov dx, 'R' + (100h * READONLY)
     call testattrib
 
-    add [scrn_col], 9
-
-    mov dx, offset createdmsg
-    call printstring
-
-    push bx
-    add bx, 10h
-    call printdate
-
-    movzx dx, byte ptr [si+bx-03h]
-    cmp dl, 199
-    jb msok
-    mov dl, 199
-msok:
-
-    sub bx, 02h
-    call printtime
-    pop bx
-
-    mov dl, '.'
-    call printchar
-
-    mov [highlight], 0101000Dh
-    add [highlight_ofs], bx
-    call bshighlight
-
-    movzx ax, byte ptr [si+bx+0Dh]
-    cmp al, 199
-    jbe msecok
-    mov al, 199
-msecok:
-    xor dx, dx
-    push bx
-    mov bx, 10
-    div bx
-    pop bx
-    add dl, 48
-    call printchar
-
-    add [scrn_col], 5
-
-    mov dx, offset szCluster
-    call printstring
-
-    mov [highlight], 03020014h
-    add [highlight_ofs], bx
-    call bshighlight
-
-    mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
-    mov dl,3
-    call rendernumhex
-    call printstring
-
-    mov [highlight_scsiz], 04
-    add [highlight_ofs], 6
-    call bshighlight
-
-    mov dl,4
-    mov ax, word ptr [si+bx+DIR_CLUST_LOW]
-    call rendernumhex
-    call printstring
-
-    dec ch
-    jz doneentry
-
     call printcrlf
 
-halfdir:
+    mov cl, 78
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    call fillcell
+
+;--- print last access date
 
     mov dx, offset accessedmsg    ; last accessed
     call printstring
@@ -3540,7 +3744,39 @@ halfdir:
     call printdate
     pop bx
 
-    add [scrn_col], 5
+;--- print cluster
+
+    mov [scrn_col], 40+3
+
+    mov dx, offset szCluster
+    call printstring
+
+    mov [highlight], 03020014h
+    add [highlight_ofs], bx
+    call bshighlight
+
+    mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
+    mov dl, 3
+    call rendernumhex
+    call printstring
+
+    mov [highlight_scsiz], 4
+    add [highlight_ofs], 6
+    call bshighlight
+
+    mov dl, 4
+    mov ax, word ptr [si+bx+DIR_CLUST_LOW]
+    call rendernumhex
+    call printstring
+
+
+    call printcrlf
+
+;--- print last modified date
+
+    mov cl, 78
+    mov ax, DEFAULTCOLOR*100h+SPACE
+    call fillcell
 
     mov dx, offset modifiedmsg    ; last modified
     call printstring
@@ -3553,32 +3789,18 @@ halfdir:
     call printtime
     pop bx
 
-    add [scrn_col], 7
+;--- print size
+
+    mov [scrn_col], 40+3+3
 
     mov dx, offset sizemsg
     call printstring
 
     mov [highlight], 0A04001Ch
     add [highlight_ofs], bx
-;    call bshighlight
-
     mov eax, dword ptr [si+bx+DIR_FILESIZE]
     call printvalue_hl
-;    call rendernumdec
-;    call printstring
-
-;--- the rest must be cleared
-    mov cl,RIGHTCOL
-    sub cl,[scrn_col]
-    jbe @F
-    mov ax, DEFAULTCOLOR * 100h + SPACE
-    call fillcell
 @@:
-    call printcrlf
-    add bx, SIZEDIRENT
-    dec ch
-    jnz processentry
-doneentry:
     ret
 
 ;-------------------------------------------------------
@@ -3594,6 +3816,16 @@ testattrib:
 
 dirview endp
 
+
+chainmenuitem proc
+
+    mov [ldfileoptf7], MENUF_CHAIN
+    mov [chainflag], FAT_CHAIN   ; we're in a FAT
+    ret
+
+chainmenuitem endp
+
+
 ;--- FAT32 view - 7 rows and 9 clusters/row are shown.
 ;--- in total that fits in 15 lines: 0,36,72,108,144,180,216,252,288,324,360,396,432,468,504
 ;--- ( the last line has 2 items only )
@@ -3602,6 +3834,8 @@ CLUSTER_PER_ROW = 9
 CLBYTES_PER_ROW = CLUSTER_PER_ROW * sizeof dword
 
 fat32viewmode proc
+
+    call chainmenuitem
 
     mov [scrn_xy], VIEWROW * 100h + 4
     mov [highlight], 07040000h
@@ -3664,6 +3898,9 @@ CLUSTER_PER_ROW = 15
 CLBYTES_PER_ROW = CLUSTER_PER_ROW * sizeof word
 
 fat16viewmode proc
+
+    call chainmenuitem
+
     mov [scrn_xy], VIEWROW * 100h + 3
     mov [highlight], 04020000h
 
@@ -3727,6 +3964,8 @@ CLBYTES_PER_ROW = 27 ; that's 18 * 1.5 (12 bits/entry)
 ;--- although there might be less valid clusters.   
 
 fat12viewmode proc
+
+    call chainmenuitem
 
     mov [highlight], 03020000h
 
@@ -4108,7 +4347,7 @@ bsview proc
     mov ax, word ptr [si+bx]
     test ax, ax
     jnz @F
-    mov bx,BPB.sectors_fat1632
+    mov bx, BPB.sectors_fat1632
     mov dx, 0A04h
 @@:
     mov word ptr [bs_psec+0], bx
@@ -4120,7 +4359,7 @@ bsview proc
     mov bx, BPB.sec_per_fat1x
     mov dx, 0502h
     mov ax, EBPB.phys_drive
-    cmp [si].BPB.sec_per_fat1x,0
+    cmp [si].BPB.sec_per_fat1x, 0
     jnz @F
     add cl, 3
     mov bx, EBPB_FAT32.sec_per_fat32
@@ -4143,7 +4382,7 @@ nextitem:
 
     pop cx
     mov [scrn_col], 40
-    test ch,1
+    test ch, 1
     jz @F
     call printcrlf
 @@:
@@ -4158,13 +4397,13 @@ basicbs:
     mov cx, [di+4]
 
     mov eax, [si+bx]
-    cmp cl,2
+    cmp cl, 2
     jnz @F
-    movzx eax,ax
+    movzx eax, ax
 @@:
-    cmp cl,1
+    cmp cl, 1
     jnz @F
-    movzx eax,al
+    movzx eax, al
 @@:
     mov word ptr [highlight_ofs], bx
     mov word ptr [highlight_size], cx
@@ -4373,13 +4612,15 @@ setlogvars endp
 setphysvars proc
 
     mov dl, [ioreq.bDrive]              ; check if int 13h extensions are implemented
-    mov bx,55AAh
-    mov ah,41h
+    test dl, 80h
+    jz use1308
+    mov bx, 55AAh
+    mov ah, 41h
     call int13
     jc use1308
-    cmp bx,0AA55h
+    cmp bx, 0AA55h
     jnz use1308
-    test cl,1                           ; AH=42h/43h supported?
+    test cl, 1                          ; AH=42h/43h supported?
     jz use1308
 
     mov si, offset diskinfobuffer
@@ -4404,9 +4645,9 @@ endif
     mov ax,word ptr [si].DINFO1.cyls
     mov bl,byte ptr [si].DINFO1.heads
     mov cl,byte ptr [si].DINFO1.secs
-    mov [cylinders],ax
-    mov [heads],bl
-    mov [sectors],cl
+    mov [cylinders], ax
+    mov [heads], bl
+    mov [sectors], cl
     mov [ioreq.rwfunc], RWF_NEWINT13
     jmp done
 use1308:
@@ -4415,6 +4656,8 @@ use1308:
     mov es, di
     mov ah, 08h
     call int13
+    jc done
+    cmp dl,1
     jc done
     inc dh
     mov [heads], dh
@@ -5078,8 +5321,8 @@ donevalue:
     cmp ebx, [dwMaxvalue]
     ja invalvalue
     mov ecx, ebx
-    mov [dwValue],ecx
-    add sp,80-8
+    mov [dwValue], ecx
+    add sp, 80-8
     ret
 abort:
     add sp,80-8
@@ -5089,7 +5332,7 @@ invalkey:
     dec si
 @@:               ; skip trailing blanks
     lodsb
-    cmp al,' '
+    cmp al, ' '
     loopz @B
     jz donevalue
 invalvalue:
@@ -5113,8 +5356,8 @@ printtopline proc
     invoke sprintf, dx, CStr("%lu"), eax
     call printstring
 
-    mov cl,36
-    sub cl,[scrn_col]
+    mov cl, 36
+    sub cl, [scrn_col]
     mov al, ' '
     call fillchar
     add [scrn_col], cl
@@ -5173,7 +5416,7 @@ abortdc:
     mov eax, [dwCurSector]
     cmp [ioreq.rwfunc], RWF_NEWINT13
     jnz @F
-    test [diskinfobuffer.flags],2   ;CHS valid?
+    test [diskinfobuffer.flags], 2   ;CHS valid?
     jz done
 @@:
     call getchs      ;returns cyl in cl[6-7]+ch, heads in dh, secs in cl[0-5]
@@ -5181,7 +5424,7 @@ abortdc:
     mov ah, cl
     shr ah, 6
     movzx bx, dh
-    and cx,3Fh
+    and cx, 3Fh
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("CHS: %3u/%3u/%2u"), ax, bx, cx
     call printstring
@@ -5252,7 +5495,7 @@ dispclust:
 
     mov eax, [dwCurSector]
     call sector2cluster
-    mov dl,7                          ; cluster has max. 7 hex digits
+    mov dl, 7                         ; cluster has max. 7 hex digits
     call rendernumhex
     jmp continuecount
 
@@ -5280,7 +5523,7 @@ rendernumdec proc
     mov dx, si
 ;    cmp si, offset valuebuffer-1
 ;    jnz @B
-;    lea dx,[si+1]
+;    lea dx, [si+1]
     pop eax
     pop ebx
     pop si
@@ -5293,38 +5536,62 @@ rendernumdec endp
 ;---      valuebuffer: holds string
 
 rendernumhex proc
-
     push si
-    push dx
-    mov si, offset valuebuffer+1
-nextchar:
-    rol eax, 4
-    mov dl, al
-    and dl, 0Fh
-
-    add dl, '0'
-    cmp dl, '9'                         ; if AL was less than 10
-    jbe @F                              ; then it's a hex number
-    add dl, 7                           ; otherwise it's a letter
-@@:
-    mov [si], dl
-    inc si
-    cmp si,offset valuebuffer+9
-    jnz nextchar
+    push eax
+    mov si, offset valuebuffer+9
     mov byte ptr [si], 0
-    pop dx
-    mov dh,0
-    neg dx
-    add dx,si
+nextchar:
+    dec si
+    mov dh, al
+    and dh, 0Fh
+    ror eax, 4
+    add dh, '0'
+    cmp dh, '9'                         ; if AL was less than 10
+    jbe @F                              ; then it's a hex number
+    add dh, 7                           ; otherwise it's a letter
+@@:
+    mov [si], dh
+    dec dl
+    jnz nextchar
+    mov dx, si
+    pop eax
     pop si
     ret
 rendernumhex endp
+
+;--- in: AL = bits to display
+;--- out: DX=start of string
+;---      valuebuffer: holds string
+
+rendernumbin proc
+    push bx
+    mov bx, offset valuebuffer
+    push bx
+    mov dh, 8
+nextbit:
+    cmp dh, 4                           ; 4th bit?  put a space.
+    jne @F
+    mov byte ptr [bx], SPACE
+    inc bx
+@@:
+    mov dl, '0'
+    rol al, 1
+    adc dl, 0
+    mov [bx], dl
+    inc bx
+    dec dh
+    jnz nextbit
+    mov [bx], dh
+    pop dx
+    pop bx
+    ret
+rendernumbin endp
 
 ;--- turn cursor on, get a key, then turn cursor off again
 
 cursorgetkey proc
     pusha
-    mov bp,sp
+    mov bp, sp
     mov bh, [vidpg]
     mov dx, [scrn_xy]
     mov ah, 02h                   ; set cursor pos
@@ -5333,7 +5600,7 @@ cursorgetkey proc
     mov ah, 01h
     int 10h
     call getkey
-    mov [bp+14],ax
+    mov [bp+14], ax
     mov cx, 2000h                 ; hide cursor again
     mov ah, 01h
     int 10h
@@ -5363,7 +5630,7 @@ done:
     ret
 printstring endp
 
-;--- this routine prints out 512
+;--- this routine prints out 512/128
 ;--- bytes in the read buffer at current sectofs
 
 printsector proc
@@ -5375,27 +5642,25 @@ printsector proc
 
     cmp [spot], dx
     jb notsignificant
-
     dec dx
     mov ax, dx
     mov dl, [bHL]
-
 notsignificant:
 
     xor eax, eax
     xor cx, cx
 
-displaynextchar:
-    lodsb
+nextchar:
 
+    lodsb
     mov dx, cx
     call aspotcalc
     mov [scrn_xy], dx
     mov dl, al
     cmp cx, [rembytes]
-    jb nntps
+    jb @F
     mov dl, SPACE
-nntps:
+@@:
     call printchar
 
     mov dx, cx
@@ -5404,33 +5669,32 @@ nntps:
 
     cmp [displaymode], DM_BINARY
     je displaybinval
+
     cmp cx, [rembytes]
-    jb pscontinue
+    jb @F
     mov dl, '-'
     call printchar
     call printchar
-    jmp donextdispbyte
-
-pscontinue:
-
+    jmp donechar
+@@:
     mov dl,2
     call rendernumhex
     call printstring
-    jmp donextdispbyte
+    jmp donechar
 
 displaybinval:
     mov dx, [spot]
     and dl, 10000000b
     add dx, 128
     cmp cx, dx
-    jae donextdispbyte
+    jae donechar
     mov dx, [spot]
     and dl, 10000000b
     cmp cx, dx
-    jb donextdispbyte
+    jb donechar
 
     cmp cx, [rembytes]
-    jb pscontinue2
+    jb @F
     mov al, '-'
     push cx
     mov cl, 4
@@ -5438,17 +5702,14 @@ displaybinval:
     add [scrn_col], 5
     call fillchar
     pop cx
-    jmp donextdispbyte
-
-pscontinue2:
-
-    call displaybinary
-
-donextdispbyte:
-
+    jmp donechar
+@@:
+    call rendernumbin
+    call printstring
+donechar:
     inc cx
     cmp cx, 512
-    jne displaynextchar
+    jne nextchar
 
 ;--- display the 32 offsets at position 1 (6 digits)
 
@@ -5583,10 +5844,10 @@ printchar:
 
 ;--- clear sector area (lines 1-32, colums 9-61)
 clearsecarea proc
-    les di,[vidaddr]
-    mov bx,[vidcolsize]
-    add di,bx
-    add di,2*9
+    les di, [vidaddr]
+    mov bx, [vidcolsize]
+    add di, bx
+    add di, 2*9
     mov ax, DEFAULTCOLOR*100h+SPACE
     mov dl, 32
 @@:
@@ -5594,7 +5855,7 @@ clearsecarea proc
     push di
     rep stosw
     pop di
-    add di,bx
+    add di, bx
     dec dl
     jnz @B
     ret
@@ -5610,39 +5871,16 @@ clearsecarea endp
 
 init proc
 
-;--- init small memory model
-
-    cld
-    mov dx,@data
-    mov ds,dx
-    mov [_psp], es
-    mov ax,ss
-    sub ax,dx
-    shl ax,4
-    mov ss,dx
-    add sp,ax
-    mov es,dx
-
-;--- now ds=es=ss
-;--- clear uninitialized vars
-
-    mov di, offset startbss
-    mov cx, sp
-    sub cx, di
-    shr cx,1
-    xor ax,ax
-    rep stosw
-
 ;--- check if video mode suits, else set 43x80 mode.
-    mov di, 0B800h
+    mov di, _B800H
     push ds
-    push 0
+    push _0000H
     pop ds
-    mov ax,ds:[44Ah] ;cols
-    add ax,ax
-    mov bx,ds:[44Eh] ;start offset video page
-    mov ch,ds:[484h] ;rows
-    mov dl,ds:[462h] ;video page
+    mov ax, ds:[44Ah] ;cols
+    add ax, ax
+    mov bx, ds:[44Eh] ;start offset video page
+    mov ch, ds:[484h] ;rows
+    mov dl, ds:[462h] ;video page
     inc ch
     pop ds
     cmp ch,43
@@ -5660,7 +5898,7 @@ init proc
     mov ax, 3
     or bh, bh
     jz skipacd
-    mov di,0B000h
+    mov di, _B000H
     mov al, 7
 skipacd:
     int 10h                               ; set video mode 3/7
@@ -5671,15 +5909,15 @@ fth:
     mov ax, 80*2
     mov ch, 43
     xor bx, bx
-    mov dl,0
+    mov dl, 0
 clrscn:
-    mov [vidcolsize],ax
-    mov [vidrows],ch
-    mov [vidpg],dl
-    mov ch,43
-    mov word ptr [vidaddr+0],bx
-    mov word ptr [vidaddr+2],di
-    les di,[vidaddr]
+    mov [vidcolsize], ax
+    mov [vidrows], ch
+    mov [vidpg], dl
+    mov ch, 43
+    mov word ptr [vidaddr+0], bx
+    mov word ptr [vidaddr+2], di
+    les di, [vidaddr]
 @@:
     push cx
     push di
@@ -5688,7 +5926,7 @@ clrscn:
     rep stosw
     pop di
     pop cx
-    add di,[vidcolsize]
+    add di, [vidcolsize]
     dec ch
     jnz @B
 
@@ -5726,6 +5964,33 @@ if ?VDD
 endif
     ret
 init endp
+
+    .const
+helptext label byte
+    db 13,10
+    db "usage: wde [ option ] [ disk ]",13,10
+    db "   where <disk> may be:",13,10
+    db "     logical drive: a letter followed by a colon ( C:|D:|... )",13,10
+    db "     hard disk:     a digit ( 0|1|... )",13,10
+    db "     floppy disk:   a digit followed by a 'f' ( 0f|1f|... )",13,10
+    db "   if no (valid) disk is given, the user will be prompted for one.",13,10
+    db "   <option> may be:",13,10
+    db "     -?: display this help text and exit",13,10
+    db "     -s: safe mode; no write access to disk",13,10
+    db '$'
+    .code
+
+printhelp proc
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("%s %s$"), offset introtext, offset copyright
+    mov ah, 9
+    int 21h
+    mov dx, offset helptext
+    mov ah, 9
+    int 21h
+    mov ax, 4C00h
+    int 21h
+printhelp endp
 
 ;--- translate sector# in eax to 
 ;--- cylinder in cl[6.7]+ch, head in DH, sector in cl[0..5]
@@ -5808,8 +6073,15 @@ readsect:
     ret
 endif
 
+dummywrite:
+    mov [ioreq.pBuffer], offset sectbuffer
+    ret
 writesect:
-    mov [ioreq.bRW],RW_WRITE
+if 1
+    cmp [bSecure], 1   ;clears CF
+    jz dummywrite
+endif
+    mov [ioreq.bRW], RW_WRITE
 
 rwsect proc
 
@@ -6133,6 +6405,7 @@ validpathchar endp
 ;---      AH=last key scan code (check for TAB)
 ;---      [filenamebuffer]
 ;---      ax/di/dx/cx modified
+
 getfilename proc
     mov dx, offset szFilename
     call printbottom
@@ -6142,17 +6415,14 @@ getfilename proc
 getkeyagain:
     call cursorgetkey
 
-    cmp al, BACKSPACE_KEY
-    je backspace
-
     cmp al, ENTER_KEY
     je done
-
     cmp al, ESCAPE_KEY
     je abort
-
+    cmp ah, BACKSPACE_SCAN
+    je backspace
     cmp ah, TAB_SCAN
-    je abort
+    je handle_tab
 
     cmp cx, 68
     je getkeyagain
@@ -6174,6 +6444,9 @@ backspace:
     call backcommon
     dec di
     jmp getkeyagain
+handle_tab:
+    cmp [menustackidx],0                ; TAB exits only if called by setdrive
+    jnz getkeyagain
 abort:
     xor cx, cx
 done:
@@ -6428,23 +6701,23 @@ label2:
     int 10h
 doneset:
 else
-    mov ah,[vidrows]
+    mov ah, [vidrows]
     dec ah
-    mov al,0
-    mov [scrn_xy],ax
+    mov al, 0
+    mov [scrn_xy], ax
     push ax
 
     call cbuffer_offset
-    mov ax,07*100h+SPACE;07=white on black
-    mov cx,RIGHTCOL+1
+    mov ax, 07*100h+SPACE;07=white on black
+    mov cx, RIGHTCOL+1
     rep stosw
   
     mov cx, 0808h       ;make cursor visible and set shape
     mov ah, 01h
     int 10h
     pop dx
-    mov bh,[vidpg]
-    mov ah,2            ;set cursor pos to bottom line
+    mov bh, [vidpg]
+    mov ah, 2           ;set cursor pos to bottom line
     int 10h
 endif
 
@@ -6518,8 +6791,8 @@ printmenu proc
     push ds
     pop es
     movzx bx, [menustackidx]
-    shl bx,2
-    mov si,[bx+0][menustack]
+    shl bx, 2
+    mov si,[bx][menustack].wMenuOfs
     mov dl, byte ptr [si]       ; number of spaces between each item
     mov dh, '1'
     mov bx, offset sprintfbuffer
@@ -6528,7 +6801,9 @@ nextmenuitem:
     inc si
     mov ah, byte ptr [si]       ; load menu string index
     cmp ah, -1
-    jz printmenu_done
+    jz done
+    cmp ah, -2
+    jz skipitem
     mov di, offset menustrings  ; scan menu string table
     inc ah
     jmp checkbl
@@ -6540,27 +6815,28 @@ checkbl:
     dec ah
     jnz nextitem
 
-    xchg di,bx                  ; store "Fx-" prefix
+    xchg di, bx                 ; store "Fx-" prefix
     mov al,'F'
     mov ah, dh
     stosw
     mov al, '-'
     stosb
 @@:                             ; store the menu string
-    mov al,[bx]
+    mov al, [bx]
     stosb
     inc bx
-    cmp al,0
+    cmp al, 0
     jnz @B
     dec di
     mov al, SPACE               ; store spaces between menu items
     movzx cx, dl
     rep stosb
     xchg bx, di
+skipitem:
     inc dh                      ; increase function key number
     jmp nextmenuitem
-printmenu_done:
-    mov byte ptr [bx],0
+done:
+    mov byte ptr [bx], 0
     pop dx
     jmp printbottom             ; and finally print the menu
 
@@ -6591,7 +6867,7 @@ getstring2::                         ;<--- if string is to be edited - DI,CX mus
 getkeyagain:
     call cursorgetkey
 
-    cmp al, BACKSPACE_KEY
+    cmp ah, BACKSPACE_SCAN
     je backspace
     cmp al, ESCAPE_KEY
     je abort
@@ -6665,12 +6941,14 @@ checkabort:             ; sets equal flag if escape key was pressed
 ; sets viewmode to DL
 checksetview:
     cmp [viewmode], dl              ; check if the "view" mode
-    je abortviewmode0               ; is already set.
+    je no_viewmode_change           ; is already set.
+    mov [funcmf4], -2               ; hack: remove "undelete"
+    mov [ldfileoptf7], -2           ; hack: remove "chain"
     mov [viewmode], dl              ; set new view
-
-    les di,[vidaddr]
-    mov cx,[vidcolsize]
-    mov ax,VIEWROW                  ; start of "view" area
+clearviewarea:
+    les di, [vidaddr]
+    mov cx, [vidcolsize]
+    mov ax, VIEWROW                 ; start of "view" area
     mul cx
     add di,ax
     mov dl,8
@@ -6685,7 +6963,7 @@ checksetview:
     add di,cx
     dec dl
     jnz @B
-abortviewmode0:
+no_viewmode_change:
     ret
 ;-------------------------------------------------------
 getnos:                               ; 'get number of sectors' from the
@@ -6702,23 +6980,6 @@ getnos:                               ; 'get number of sectors' from the
     clc
 @@:
     popad
-    ret
-;-----------------------------------------------------
-displaybinary:                          ; AL = bits to display
-    mov dh, 8
-printbitsloop:
-    cmp dh, 4                           ; 4th bit?  put a space.
-    jne dontaddspace
-    inc [scrn_col]
-dontaddspace:
-    rol al, 1
-    mov dl, '0'
-    jnc bitnotone
-    inc dl
-bitnotone:
-    call printchar
-    dec dh
-    jnz printbitsloop
     ret
 ;-------------------------------------------------------
 getfilesize:                            ; out: eax & [filesize] = filesize
@@ -6782,7 +7043,7 @@ writefileloop:
     jc wfl1
     call checkabort
     je abort
-    and di,di
+    and di, di
     jz @F
     call di
     jmp wfl1
@@ -6838,10 +7099,10 @@ openfile proc
 screatefile::    ;<- used by createfile
     mov [wFilehandle],-1
 if ?LFN
-    mov ax,716Ch
+    mov ax, 716Ch
     call tryLFN
     pushf
-    cmp ax,7100h
+    cmp ax, 7100h
     jz @F
     popf
     ret
@@ -6880,7 +7141,7 @@ getaoc:
     call cursorgetkey
     cmp al, ESCAPE_KEY
     je doabortf
-    or al,20h
+    or al, 20h
     cmp al, 'c'
     je doabortf
     cmp al, 'o'
@@ -6937,34 +7198,34 @@ gethexstring proc
     mov di, offset stringbuffer
     call dogethex
     jc done
-    mov bx,sp
+    mov bx, sp
     test cl,1
     jz @F
     push 0
 @@:
 nextdigit2:
     lodsb
-    sub al,'0'
-    cmp al,9
+    sub al, '0'
+    cmp al, 9
     jbe @F
-    or al,20h
-    sub al,31h-10
+    or al, 20h
+    sub al, 31h-10
 @@:
     push ax
     loop nextdigit2
-    mov si,bx
-    mov di,offset stringbuffer
+    mov si, bx
+    mov di, offset stringbuffer
     push ds
     pop es
 nextnibble:
-    sub si,4
-    mov al,[si+2]
-    shl al,4
-    or al,[si+0]
+    sub si, 4
+    mov al, [si+2]
+    shl al, 4
+    or al, [si+0]
     stosb
-    cmp si,sp
+    cmp si, sp
     jnz nextnibble
-    mov sp,bx
+    mov sp, bx
     mov cx, bx
     sub cx, si
     shr cx, 2
@@ -6990,27 +7251,27 @@ nexttry:
     xor ebx, ebx
 nextdigit:
     lodsb
-    sub al,'0'
-    cmp al,9
+    sub al, '0'
+    cmp al, 9
     jb @F
-    or al,20h
-    sub al,31h-10
+    or al, 20h
+    sub al, 31h-10
 @@:
-    test ebx,0f0000000h
+    test ebx, 0f0000000h
     jnz invalvalue
-    shl ebx,4
-    or bl,al
+    shl ebx, 4
+    or bl, al
     loop nextdigit
     cmp ebx, [dwMaxvalue]                 ; value smaller or equal to maximum?
     ja invalvalue
-    add sp,80
+    add sp, 80
     ret
 done2:
-    add sp,80
+    add sp, 80
     stc
     ret
 invalvalue:
-    mov si,sp
+    mov si, sp
     push offset nexttry
     jmp inval
 
@@ -7033,14 +7294,14 @@ tryagain:
     push si
 nextchar:
     lodsb
-    cmp al,'0'
+    cmp al, '0'
     jb invalchar
-    cmp al,'9'
+    cmp al, '9'
     jbe validchar
-    or al,20h
-    cmp al,'a'
+    or al, 20h
+    cmp al, 'a'
     jb invalchar
-    cmp al,'f'
+    cmp al, 'f'
     ja invalchar
 validchar:
     loop nextchar
@@ -7053,9 +7314,9 @@ invalchar:
     pop si
     pop cx
 inval:
-    mov ax,0e07h
+    mov ax, 0e07h   ; beep!
     int 10h
-    mov cx,dx
+    mov cx, dx
     call getstring2
     jmp tryagain
 
@@ -7221,22 +7482,24 @@ storedebugdata:
     ret
 
 endif
-;-------------------------------------------------------
-;-------------------------------------------------------
+
+;--- in lengthy operations, check if some timer interrupts have passed
+;--- to avoid too many displays. Currently at least 5 ticks should be passed,
+;--- which results in about 4 display updates per second.
 
 checktime proc
     push ax
     push ds
-    xor ax,ax
-    mov ds,ax
-    mov ax,ds:[46Ch]
+    push _0000H
+    pop ds
+    mov ax, ds:[46Ch]
     pop ds
     push ax
-    sub ax,[lasttick]
-    cmp ax,5
+    sub ax, [lasttick]
+    cmp ax, 5
     pop ax
     jc @F
-    mov [lasttick],ax
+    mov [lasttick], ax
 @@:
     pop ax
     ret

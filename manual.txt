@@ -90,23 +90,17 @@ WDe User Manual
 
   1.0 - Initial Screen and Commandline
 
-    When starting, WDe accepts an argument that may be either a drive letter,
-    followed by a colon (i.e. "c:"), or a disk number, followed by either
-    a 'h' (hard disk) or a 'f' (floppy disk) (i.e. "0h" or "0f"). If no such
-    argument is given, the user will be prompted to enter a valid drive/disk:
+    When starting, WDe accepts a command line argument that may be either a
+    drive letter, followed by a colon (i.e. "c:"), or a disk number (i.e. "0").
+    If the disk number is followed by a 'f', access will be to the corresponding
+    floppy disk instead of the hard disk.If no (valid) argument is given, the
+    user will be prompted ("Drive: ") to specify the drive/disk:
 
-    A physical drive number can be entered (0/1/2...etc) which will
-    bring up the "Floppy/Hard Disk [F/H]" prompt.  Press "F" to load
-    the matching floppy disk and "H" will load the matching hard disk,
-    respectively. (80h is added to the drive number to get hard disks)
-
-    A logical drive letter can also be entered (A/B/C...etc) which will
-    load the respective drive the operating system is providing.
-
-    If TAB is pressed; the "Filename:" prompt will replace the drive
-    prompt and a full file/path name can be entered to load it into
-    the editor and treat it as a physical drive.  The sector restriction
-    function can then be used to set it as another type of drive.
+    If TAB is pressed, the "Drive: " prompt will be replaced by a "Filename: "
+    prompt and a full file/path name can be entered. WDe will interpret this
+    file as a physical device, so the file must be a so-called image file. The
+    sector restriction  function can then be used to make WDe interpret the
+    content as a logical drive.
 
 
 
@@ -136,9 +130,10 @@ WDe User Manual
     When in the data area, Ctrl+Enter will jump to the corresponding
     fat entry.  Hitting Ctrl+Right will jump directly to the cluster
     connected to it within the fat. Hitting Enter while in a directory
-    will jump to the beginning of the first cluster of that entry; the
-    current sector will be saved on the sector stack and can be popped
-    by Ctrl-Up.
+    will jump to the beginning of the first cluster of that entry. Hitting
+    Enter, Ctrl-Enter or Ctrl-Right key will push the current sector#
+    on a stack; using Ctrl-Up will pop the information from this stack and
+    thus go back to the saved sector ( and cursor ) position.
 
     Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
     to edit the physical drive that partition belongs to.
@@ -426,6 +421,10 @@ WDe User Manual
       in use by another file on the drive, therefore at least the first
       portion of the file is overwritten.  Users should manually delete
       a file when this occurs.
+       The error message will also occur if one has manually edited the
+      first byte of a directory entry to E5h and then tries to "undelete"
+      the corresponding file. In this case just change the byte back to a
+      valid filename char.
 
     5.5 - "Error Reading File"
 

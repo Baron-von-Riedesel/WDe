@@ -76,7 +76,7 @@ sector2cluster endp
 ;
 ;               IN:   eax       cluster number to get
 ;               OUT:  eax       data stored in the fat
-;                     C if cluster# is invalid
+;                     C if cluster# given in eax is invalid
 ;-------------------------------------------------------
 getfatentry proc
     push ebx
@@ -86,7 +86,7 @@ getfatentry proc
 ;   and eax, 0FFFFFFFh            ; ignore highest nibble
     mov ebx, eax
     call locatefatentry
-    jc abortgfe
+    jc abort
     mov si, offset sectbuffer
     cmp [fattype], FT_FAT12
     jne fat1632
@@ -114,15 +114,15 @@ fat1632:
 f16gfd:
     movzx eax, ax                     ; clear top word for fat12/fat16
     cmp ax, 0FFF7h
-    cmc
-    jnc abortgfe
+    cmc                               ; should be NC when jumping!
+    jnc done
 
 filltopbits:                          ; for ease/compatibility, all fat 
     or eax, 0FFFF000h                 ; oddities (full/bad cluster) are
 f32gfd:                               ; set as FFFFFFxh
     and eax, 0FFFFFFFh
-    cmp eax, 2
-abortgfe:
+done:
+abort:
     pop si
     pop ebx
     pushf

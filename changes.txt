@@ -1,8 +1,11 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
-WDe V0.41 []
+WDe V0.50 [??.??.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )
-    will now work in all menus, not just in the main menu.
+    will work in all menus, not just in the main menu.
+  - directory view changed, displays 1 item only, detects and shows
+    LFN entries.
+  - option -s ( safe mode ) added.
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.

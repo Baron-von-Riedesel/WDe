@@ -11,15 +11,6 @@ res1    dd ?
 res2    dd ?
 EXECRM ends
 
-_0000H   equ 0054h
-_B800H   equ 005Ch
-_B000H   equ 0064h
-
-    .data
-
-csalias dw 0
-_CSALIAS equ <[csalias]>
-
     .const
 
 szPath db 'PATH='
@@ -32,79 +23,27 @@ errInit   db "DPMI initialization failed",13,10,'$'
 
     .code
 
-;--- alloc descriptors for _0000H, _B800H, _B000H and _CSALIAS
-
-getdescriptors proc
-
-    mov ax, 000Dh           ; alloc specific descriptor
-    mov bx,_0000H
-    int 31h
-    jc done
-    xor dx, dx
-    xor cx, cx
-    mov ax, 7
-    int 31h
-    mov dx, -1
-    xor cx, cx
-    mov ax, 8
-    int 31h
-
-    mov ax, 000Dh
-    mov bx, _B800H
-    int 31h
-    jc done
-    mov dx, lowword  0B8000h
-    mov cx, highword 0B8000h
-    mov ax, 7
-    int 31h
-    mov dx, -1
-    xor cx, cx
-    mov ax, 8
-    int 31h
-
-    mov ax, 000Dh
-    mov bx, _B000H
-    int 31h
-    jc done
-    mov dx, lowword  0B0000h
-    mov cx, highword 0B0000h
-    mov ax, 7
-    int 31h
-    mov dx, -1
-    xor cx, cx
-    mov ax, 8
-    int 31h
-
-    mov ax, 000Ah           ; alloc CS alias
-    mov bx, cs
-    int 31h
-    jc done
-    mov [csalias], bx
-done:
-    ret
-getdescriptors endp
-
 ;--- DPMI initialization
 
 initpm16 proc
 
     mov ax, 1687h           ; DPMI host installed?
     int 2fh
-    and ax,ax
+    and ax, ax
     jz @F
     call loadserver
-    mov ax,1687h            ; try again
+    mov ax, 1687h           ; try again
     int 2fh
-    and ax,ax
+    and ax, ax
     jnz nodpmi              ; still no host, exit
 @@:        
     push es
     push di
-    and si,si
+    and si, si
     jz @F
                             ; alloc memory for dpmi host
-    mov ah,48h
-    mov bx,si
+    mov ah, 48h
+    mov bx, si
     int 21h
     jc memerr
     mov es, ax
@@ -114,18 +53,14 @@ initpm16 proc
     call dword ptr [bp]
     jc initerr
     add sp, 4
-    mov [_psp], es
-    call getdescriptors
-    jc initerr2
     ret
 
 nodpmi:
-    mov dx,offset errNoHost
+    mov dx, offset errNoHost
     jmp errexit
 memerr:
 initerr:
-initerr2:
-    mov dx,offset errInit
+    mov dx, offset errInit
 errexit:
     mov ah, 9
     int 21h
@@ -172,11 +107,7 @@ local pgmname[80]:byte
     lea bx, parmblock
     mov ax, 4B00h                    ; execute dpmi host executable
     int 21h
-    jb error
-    mov ax, 1
-    ret
 error:
-    mov ax, 0
     ret
 
 ;*** search HDPMI16 in current directory and directories of PATH
@@ -195,16 +126,16 @@ searchpgm:
 nxtc:
     lodsb
     stosb
-    cmp al,'\'
+    cmp al, '\'
     jnz @F
-    mov dx,di
+    mov dx, di
 @@:
-    cmp al,0
+    cmp al, 0
     jnz nxtc
     pop ds
-    mov di,dx
+    mov di, dx
     pop si
-    mov bl,0
+    mov bl, 0
 nexttry:                             ; <----
     push si
     mov si, offset szHDPMI
@@ -230,7 +161,7 @@ nexttry:                             ; <----
 @@:
     lodsb
     stosb
-    cmp al,';'
+    cmp al, ';'
     jz @f
     cmp al, 00
     jnz @b

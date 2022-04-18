@@ -6,7 +6,7 @@ WDe V0.50 [??.??.2022]
   - directory view changed, displays 1 item only, detects and shows
     LFN entries.
   - option -s ( safe mode ) added.
-  - optionally build WDe as 16-bit DPMI client.
+  - optionally build wdex.com, a WDe running as 16-bit DPMI client.
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.

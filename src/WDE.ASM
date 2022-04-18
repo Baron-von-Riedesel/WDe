@@ -521,6 +521,8 @@ funcmf3         db -2    ; "unformat"
 funcmf4         db -2    ; "undelete"
 endif
                 db -1
+    align 2
+
     .const
 
 introtext       db 'WDe V0.50',0
@@ -836,15 +838,16 @@ _BSS ends
 
     .code
 
-;--- segments that might need translation if run in pm
-
 if ?PM
     include initpm16.inc
+    include wdepm16.inc
 else
+;--- segments _0000H & _B000H will need translation in pm ( see wdepm16.inc )
 _0000H equ 0
 _B000H equ 0B000h
-_B800H equ 0B800h
+ if ?VDD
 _CSALIAS equ <cs>
+ endif
 endif
 
 ;--- code to access WDEVDD on NT platforms.
@@ -900,12 +903,13 @@ endif
     xor ax, ax
     rep stosw
 
-    mov [stackbot], sp
-    mov [_mem], sp       ;set start of heap (currently used by unformat only)
-
 if ?PM
     call initpm16
+    call wdepm16
 endif
+
+    mov [stackbot], sp
+    mov [_mem], sp       ;set start of heap (currently used by unformat only)
 
 ;--- scan command line
 
@@ -960,6 +964,7 @@ maybedrive:
 inval_cmd:
     mov al, -1
 donecmdline:
+
     pusha
     call init            ; check & set video mode, init screen
     popa
@@ -5891,13 +5896,16 @@ clearsecarea endp
 init proc
 
 ;--- check if video mode suits, else set 43x80 mode.
-    mov di, _B800H
     push ds
     push _0000H
     pop ds
     mov ax, ds:[44Ah] ;cols
     add ax, ax
     mov bx, ds:[44Eh] ;start offset video page
+    test byte ptr ds:[465h],4             ; monochrome mode?
+    jnz @F
+    add bx, 8000h
+@@:
     mov ch, ds:[484h] ;rows
     mov dl, ds:[462h] ;video page
     inc ch
@@ -5916,10 +5924,9 @@ init proc
 
     mov ax, 3
     or bh, bh
-    jz skipacd
-    mov di, _B000H
+    jz @F
     mov al, 7
-skipacd:
+@@:
     int 10h                               ; set video mode 3/7
     mov ax, 1112h
     mov bl, 0
@@ -5927,7 +5934,7 @@ skipacd:
 fth:
     mov ax, 80*2
     mov ch, 43
-    xor bx, bx
+    mov bx, 8000h
     mov dl, 0
 clrscn:
     mov [vidcolsize], ax
@@ -5935,7 +5942,7 @@ clrscn:
     mov [vidpg], dl
     mov ch, 43
     mov word ptr [vidaddr+0], bx
-    mov word ptr [vidaddr+2], di
+    mov word ptr [vidaddr+2], _B000H
     les di, [vidaddr]
 @@:
     push cx
@@ -6013,6 +6020,7 @@ printhelp endp
 
 ;--- translate sector# in eax to 
 ;--- cylinder in cl[6.7]+ch, head in DH, sector in cl[0..5]
+;--- modifies ecx, ebx, edx, eax
 
 getchs proc
     movzx ecx, [heads]
@@ -6260,8 +6268,9 @@ newint13_access:
 ;--- DL=drive, DH & CX cylinder/head/sector
 
 oldint13_access:
-    mov bx, dx
+    push dx
     call getchs                 ; translate sector to c/h/s in dh/cx
+    pop bx
     mov dl, [ioreq.bDrive]
     mov ax, 0201h
     cmp [ioreq.bRW], RW_WRITE

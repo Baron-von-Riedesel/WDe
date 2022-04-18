@@ -1,15 +1,15 @@
 
   1. About
 
-  WDe is designed to be a modular disk editor capable of allowing users
+   WDe is designed to be a modular disk editor capable of allowing users
   to manipulate data stored in various ways on different kinds of storage
   mediums.
 
-  WDe is currently capable of editing logical, physical and CD-Rom drives
+   WDe is currently capable of editing logical, physical and CD-Rom drives
   on MS-DOS V4.0+ or compatible.  It should be able to edit drives up to
   2 TB in size.
 
-  Please be aware that a disk editor, if used inappropriately, might easily
+   Please be aware that a disk editor, if used inappropriately, might easily
   cause severe data losses, if the user doesn't know what he/she is doing.
   So be careful and, before doing any real work, get accustomed to WDe by 
   experimenting with storage devices that don't hold important data.
@@ -17,12 +17,12 @@
 
   2. User Interface
 
-  WDe has a text mode interface. It needs at least 43 rows and 80 columns.
+   WDe has a text mode interface. It needs at least 43 rows and 80 columns.
   If the current text mode has less than 43 rows, WDE will switch to the
   standard text mode, but loads the 8x8 font instead of the usual 8x16 one
   and restricts the scan lines to 350, thus achieving the needed 43 rows.
 
-  There's a small tool, SETM43, supplied. This may allow WDE to use a better
+   There's a small tool, SETM43, supplied. This may allow WDE to use a better
   looking font (8x14) with still 43 lines, but SETM43 won't run with all
   graphics cards - it uses a heavily modified VESA mode 0x102, something
   that may work or not.
@@ -30,7 +30,7 @@
 
   3. Environment
 
-  WDe is supposed to run in DOS. There's a support dll supplied (WDEVDD.DLL),
+   WDe is supposed to run in DOS. There's a support dll supplied (WDEVDD.DLL),
   that may allow to run WDe in Windows XP or Vista as administrator, but this
   is unsupported and won't work with newer versions of Windows. Also note that
   WDe needs at least a 80386 cpu to run.
@@ -40,12 +40,20 @@
 
   In case one wants to create the binaries from the source:
 
-  WDe and the optional tools ( SETM43 and WDEVDD.DLL ) are written in
+   WDe and the optional tools ( SETM43 and WDEVDD.DLL ) are written in
   Masm-style assembly language. They are supposed to be created by JWasm;
   Masm may also be used, but this additionally requires an OMF linker for
-  WDe ( and SETM43 ) and a COFF linker for WDEVDD.DLL. A simple batch file
-  (build.bat) is supplied that does the job. The source can be copied from
-  https://github.com/Baron-von-Riedesel/WDe
+  WDe ( and SETM43 ) and a COFF linker for WDEVDD.DLL. Both a simple batch
+  file ( build.bat ) and a Makefile are supplied that will do the job.
+  The source can be found at https://github.com/Baron-von-Riedesel/WDe.
+
+   The build tools will also create wdex.com, a version of WDe that runs
+  in protected-mode as 16-bit DPMI client. There is currently no benefit in
+  using this binary, it may even be slightly slower than wde.com. However,
+  since protected-mode offers access to huge amounts of memory, it may allow
+  things that the real-mode wde.com can't do, for example, read in the whole
+  FAT ( or directory structure ) of a drive and thus speed up certain functions
+  significantly.
 
 
   5. License

@@ -3,7 +3,7 @@
 odir=build
 idir=src
 
-incfiles=$(idir)\undelete.inc $(idir)\unformat.inc $(idir)\fatfs.inc $(idir)\sprintf.inc
+incfiles=$(idir)\undelete.inc $(idir)\unformat.inc $(idir)\fatfs.inc
 
 all: $(odir)\wde.com $(odir)\setm43.exe $(odir)\wdevdd.dll
 

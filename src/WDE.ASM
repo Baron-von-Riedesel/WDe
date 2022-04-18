@@ -138,17 +138,15 @@
     .stack 4096
     .386
 
-;--- segments that might need translation if run in pm
-
-_0000H equ 0
-_B000H equ 0B000h
-_B800H equ 0B800h
-
-
 ;        _DEBUG           EQU 1 ; uncomment to assemble in debug mode
 ;        ?BASIC           EQU 1 ; uncomment to disable extended functionality
         UNDEFINED        EQU 0
+ifndef ?PM
+        ?PM              EQU 0  ; 1=running as 16-bit DPMI client
+endif
+ifndef ?VDD
         ?VDD             EQU 1  ; 1=winXP VDD supported
+endif
         ?LFN             EQU 0  ; try to use LFN functions (not yet)
         VIEWROW          equ 34 ; start of "view" area
         BOTTOMROW        equ 42 ; last row (menu, messages)
@@ -342,18 +340,6 @@ local sym
 sym db text,0
     .data
     exitm <offset sym>
-endm
-
-;--- display string on the windows debug terminal.
-;--- this works only if running in a WinXP/Vista DOS-Box.
-@DbgOut macro text
-local xxx
-ifdef _DEBUG
-    call dbgout
-    jmp xxx
-    db text,0
-xxx:
-endif
 endm
 
 ;--- struct BPB, located in boot sector
@@ -850,6 +836,35 @@ _BSS ends
 
     .code
 
+;--- segments that might need translation if run in pm
+
+if ?PM
+    include initpm16.inc
+else
+_0000H equ 0
+_B000H equ 0B000h
+_B800H equ 0B800h
+_CSALIAS equ <cs>
+endif
+
+;--- code to access WDEVDD on NT platforms.
+
+if ?VDD
+    include wdent.inc
+else
+@int13 equ <int 13h>
+@int21 equ <int 21h>
+@int2F equ <int 2Fh>
+@int25 macro
+    int 25h
+    pop dx
+endm
+@int26 macro
+    int 26h
+    pop dx
+endm
+endif
+
 Start proc
 
 ;--- setup small memory model
@@ -887,6 +902,10 @@ endif
 
     mov [stackbot], sp
     mov [_mem], sp       ;set start of heap (currently used by unformat only)
+
+if ?PM
+    call initpm16
+endif
 
 ;--- scan command line
 
@@ -4616,7 +4635,7 @@ setphysvars proc
     jz use1308
     mov bx, 55AAh
     mov ah, 41h
-    call int13
+    @int13
     jc use1308
     cmp bx, 0AA55h
     jnz use1308
@@ -4627,7 +4646,7 @@ setphysvars proc
     mov [si].DINFO1._size, sizeof DINFO1
     mov dl, [ioreq.bDrive]
     mov ah, 48h                         ; get drive parameters
-    call int13
+    @int13
     jc use1308
 
     mov eax, dword ptr [si].DINFO1.totalsec+0
@@ -4655,7 +4674,7 @@ use1308:
     xor di, di                          ; ES:DI=0000:0000 (bios bug)
     mov es, di
     mov ah, 08h
-    call int13
+    @int13
     jc done
     cmp dl,1
     jc done
@@ -6139,10 +6158,10 @@ oldlog_access:
     mov al, [ioreq.bDrive]
     cmp [ioreq.bRW], RW_WRITE
     je @F
-    call int25
+    @int25
     ret
 @@:
-    call int26
+    @int26
     ret
 
 ;--- use new DOS 7 function
@@ -6151,7 +6170,7 @@ newlog_access:
     mov dl, [ioreq.bDrive]
     inc dl
     mov ax, 7305h                       ; extended sector read/write
-    call int21
+    @int21
     ret
 
 ;--- file image access
@@ -6203,7 +6222,7 @@ cdrom_access:
     clc                               ; fixes bug in Win9x
     movzx cx, [ioreq.bDrive]
     mov ax, 1510h                     ; cd-rom send device driver request in ES:BX
-    call int2F
+    @int2F
     jc ca_error                       ; device driver has not been called
     test byte ptr [bx].CDREQ.status+1, 80h ; check status word for error
     jnz ca_error
@@ -6232,7 +6251,7 @@ newint13_access:
     mov ax, 4300h + NEWINT13_WRITE_FLAG
 @@:
     stc                         ; bug circumvention
-    call int13
+    @int13
     sti                         ; interrupt flag sometimes disabled
     ret
 
@@ -6249,7 +6268,7 @@ oldint13_access:
     jne @F
     mov ah,03h
 @@:
-    call int13
+    @int13
     ret
 
 rwsect endp
@@ -7385,13 +7404,6 @@ rand:
     and eax, 0FFFFh
     add eax, ecx
     ret
-;-----------------------------------------------------------------
-
-;--- code to access WDEVDD on NT platforms.
-
-if ?VDD
-    include wdent.inc
-endif
 
 ;-------------------------------------------------------
 ifdef _DEBUG

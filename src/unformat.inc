@@ -353,7 +353,7 @@ checkDirValidity:
     push cx
     mov eax, [dwCluster]          ; get cluster number for this directory
     call cluster2sector
-    mov [dwCurSector], eax           ; get matching sector number
+    mov [dwCurSector], eax        ; get matching sector number
 
     mov dh, [bSpc]                ; number of sectors per cluster
             
@@ -376,7 +376,7 @@ processNextEntry:
     je skipThisEntry
 
     cmp byte ptr [sectbuffer+si+DIR_ATTRIBUTES], 0Fh
-    je skipThisEntry            ; skip long filenames.
+    je skipThisEntry                            ; skip long filenames.
 
   ; acquire the cluster number of the file/directory entry
     mov ax, word ptr [sectbuffer+si+DIR_CLUST_HIGH]

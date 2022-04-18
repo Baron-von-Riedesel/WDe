@@ -6,40 +6,40 @@
 
 ltob PROC stdcall uses bx di number:dword, outb:word, base:word
 
-    mov ch,0
+    mov ch, 0
     movzx edi, base
     mov eax, number
-    cmp di,-10
+    cmp di, -10
     jne @F
-    mov di,10
+    mov di, 10
     and eax,eax
     jns @F
     neg eax
-    mov ch,'-'
+    mov ch, '-'
 @@:
-    mov bx,outb
-    add bx,10
-    mov BYTE PTR [bx],0
+    mov bx, outb
+    add bx, 10
+    mov BYTE PTR [bx], 0
     dec bx
 @@nextdigit:
     xor edx, edx
     div edi
-    add dl,'0'
-    cmp dl,'9'
+    add dl, '0'
+    cmp dl, '9'
     jbe @F
-    add dl,7+20h
+    add dl, 7+20h
 @@:
-    mov [bx],dl
+    mov [bx], dl
     dec bx
     and eax, eax
     jne @@nextdigit
-    cmp ch,0
+    cmp ch, 0
     je @F
-    mov [bx],ch
+    mov [bx], ch
     dec bx
 @@:
     inc bx
-    mov ax,bx
+    mov ax, bx
     ret
 
 ltob ENDP
@@ -60,10 +60,10 @@ local szTmp[12]:byte
     lea bx, [fmt+2]
     mov di, buffer
 reloadfmt:
-    mov si,[fmt]
+    mov si, [fmt]
 nextchar:
     lodsb
-    cmp al,'%'
+    cmp al, '%'
     je formatitem
 done:
     stosb
@@ -75,8 +75,8 @@ done:
 formatitem:
     push reloadfmt
     mov al, 1
-    mov cl,' '
-    cmp BYTE PTR [si],'-'
+    mov cl, ' '
+    cmp BYTE PTR [si], '-'
     jne @F
     mov al, 0
     inc si
@@ -87,19 +87,19 @@ formatitem:
     mov cl,'0'
     inc si
 @@:
-    mov [fill],cl
+    mov [fill], cl
     xor dx, dx
     jmp chkdigit
 nextdigit:
-    sub al,'0'
+    sub al, '0'
     cbw
-    imul dx,dx,10       ;dx = dx * 10
-    add dx,ax
+    imul dx, dx, 10      ; dx = dx * 10
+    add dx, ax
 chkdigit:
     lodsb
-    cmp al,'0'
+    cmp al, '0'
     jb @F
-    cmp al,'9'
+    cmp al, '9'
     jbe nextdigit
 @@:
     mov [size_], dx
@@ -111,21 +111,21 @@ chkdigit:
 @@:
     lodsb
     mov [fmt], si
-    cmp al,'x'
+    cmp al, 'x'
     je handle_x
-    cmp al,'X'
+    cmp al, 'X'
     je handle_x
-    cmp al,'c'
+    cmp al, 'c'
     je handle_c
-    cmp al,'d'
+    cmp al, 'd'
     je handle_d
-    cmp al,'i'
+    cmp al, 'i'
     je handle_i
-    cmp al,'s'
+    cmp al, 's'
     je handle_s
-    cmp al,'u'
+    cmp al, 'u'
     je handle_u
-    cmp al,0
+    cmp al, 0
     jnz storeal
     pop cx
     jmp done

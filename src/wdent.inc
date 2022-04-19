@@ -70,6 +70,7 @@ int2F:
     Dispatch
     ret
 
+;--- this routine must run before (optionally) switching to protected-mode
 
 initvdd proc
     mov ax, 3306h
@@ -87,7 +88,7 @@ initvdd proc
     jz @F
     push ds
     mov [hVdd], ax
-    push _CSALIAS
+    push cs
     pop ds
     assume ds:_TEXT
     mov ax, 06A50h               ; push AX, push XX

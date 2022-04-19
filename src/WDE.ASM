@@ -620,7 +620,7 @@ restoremsg      db 'Restoring...',0
 writingmsg      db 'Writing File...',0
 
 readingdrive    db 'Reading Drive...',0
-recursemsg      db 'Recursing Chain...',0
+recursemsg      db 'Recursing Chain... %s, curr. cluster %lX / %lX',0
 
 searcherror     db 'No (more) Matches Found',0
 abortfmsg       db 'Aborted Writing File',0
@@ -679,8 +679,9 @@ attributesmsg   db 'Attributes: ',0
 
     .data
 
-_psp dw 0
-_mem dw 0   ;current top of memory
+_psp   dw 0
+_mem   dw 0   ;current top of memory
+_0000H dw 0
 
 fifields label word
     dw DStr('Total Free Clusters: '), offset printvalue_hl
@@ -841,13 +842,6 @@ _BSS ends
 if ?PM
     include initpm16.inc
     include wdepm16.inc
-else
-;--- segments _0000H & _B000H will need translation in pm ( see wdepm16.inc )
-_0000H equ 0
-_B000H equ 0B000h
- if ?VDD
-_CSALIAS equ <cs>
- endif
 endif
 
 ;--- code to access WDEVDD on NT platforms.
@@ -903,13 +897,19 @@ endif
     xor ax, ax
     rep stosw
 
+if ?VDD
+    call initvdd         ; init vdd on nt platforms ( works in V86 only, not in PM )
+endif
+
+    call vinit           ; init video mode, init screen
+
 if ?PM
     call initpm16
     call wdepm16
 endif
 
     mov [stackbot], sp
-    mov [_mem], sp       ;set start of heap (currently used by unformat only)
+    mov [_mem], sp       ; set start of heap ( currently used by unformat only )
 
 ;--- scan command line
 
@@ -966,8 +966,20 @@ inval_cmd:
 donecmdline:
 
     pusha
-    call init            ; check & set video mode, init screen
+    mov ax, 3524h               ; back up old int 24h
+    int 21h
+    mov word ptr [old24h+0], bx
+    mov word ptr [old24h+2], es
+    push ds
+    mov dx, offset int24h       ; new address in DS:DX
+    push cs
+    pop ds
+    mov ah, 25h                 ; set up new int 24h
+    int 21h
+    pop ds
+    call setseeds1
     popa
+
     cmp al, -1
     jnz disk_entered
 enter_disk:
@@ -982,6 +994,10 @@ disk_entered:
 
 drive_ok::
     call setvariables           ; set all obtainable parameter variables
+
+    xor dx, dx
+    call spotcalc
+    mov [crsr_xy], dx           ; set cursor to spot 0
     call printoffset            ; print current offset
 
     mov menustack.wMenuOfs, offset initialmenu
@@ -1922,8 +1938,8 @@ handle_ctlenter proc
 ;retcluster:
     call pushsecstack           ; push sector# in eax onto sector stack
     call sector2cluster         ; convert sector# to cluster#
-    call go2entry               ; convert cluster# to location inside FAT
-    call rwsect                 ; read that FAT sector
+    call go2entry               ; convert cluster# to [ioreq.dwSector] + [spot] (location inside FAT)
+    call rwsectx                ; read that FAT sector
 done:
     ret
 
@@ -1989,28 +2005,45 @@ recursechain proc
     jbe done                            ; no where to recurse from
     mov eax, ebx
 
-    push [scrn_xy]
-    mov dx, offset recursemsg
-    call printbottom
-    pop [scrn_xy]
+;--- the old code assumed that the cluster that we search and that links to the
+;--- current one is "below" ( hence it starts decrementing from the current
+;--- cluster# ). This assumption was incorrect.
 
-recurse:
+    mov edi,-1                          ; begin with decending from current entry#
+    mov cx, CStr("descending")
+nextentry:
+    call checktime
+    jc @F
     call checkabort
     je done
-
-    dec eax                             ; go back one fat entry
-    cmp eax, 1                          ; past first entry in fat?
-    je chainnotfound                    ; yes, link not found
+    push eax
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, offset recursemsg, cx, eax, [dwLastcluster]
+    call printbottom
+    pop eax
+@@:
+    add eax, edi                        ; go back/forward one fat entry
+    cmp eax, 2                          ; past first entry in fat?
+    jb loop_done
+    cmp eax, [dwLastcluster]            ; past last entry in fat?
+    ja chainnotfound
 
     push eax
-    call getfatentry                    ; read the fat entry
+    call getfatentry                    ; read the fat entry in EAX
     cmp ebx, eax                        ; match the one we want?
     pop eax
+    je dochainjump                      ; found
 
-    jne recurse                         ; no...keep recursing
-    jmp dochainjump
+    jmp nextentry                       ; no...keep recursing
+
+loop_done:
+    mov edi, 1                          ; no predecessor found "below"
+    mov eax, ebx                        ; so the region "above" is to be scanned
+    mov cx, CStr("ascending")
+    jmp nextentry
+
 chainnotfound:
-    mov dx, offset nochainmsg
+    mov dx, offset nochainmsg           ; "recursive link not found"
     call printerror
 done:
     ret
@@ -2038,7 +2071,7 @@ jumpfatcluster:
 
     call getcurrententry
 
-dochainjump::
+dochainjump::             ; <--- for recurse ( Ctrl-left in FAT )
 
     cmp eax, 2            ; disregard ebx, which is the current entry #
     jb done               ; we only care about eax, the value stored there.
@@ -2047,18 +2080,11 @@ dochainjump::
 
     cmp eax, [dwLastcluster]
     ja done
-    push [dwCurSector]
-    call go2entry
-    pop edx
-    cmp edx, [dwFatend]           ; bad coding.  doesn't support 3+ fats
-    jb nsf
-    mov ecx, [dwSpf]
-    add [dwCurSector], ecx
-nsf:
-    cmp [dwCurSector], edx        ; don't read the same sector twice
-    je done
-    mov [ioreq.dwSector], edx
-    call rwsectx
+    call go2entry                 ; will set [dwCurSector] + [spot]=0
+    mov eax, [dwCurSector]
+    cmp eax, [ioreq.dwSector]
+    jz done
+    call rwsectx                  ; read the sector set by go2entry
 done:
     ret
 jumpcluster endp
@@ -5875,8 +5901,8 @@ clearsecarea proc
     mov ax, DEFAULTCOLOR*100h+SPACE
     mov dl, 32
 @@:
-    mov cx, 52
     push di
+    mov cx, 52
     rep stosw
     pop di
     add di, bx
@@ -5884,34 +5910,31 @@ clearsecarea proc
     jnz @B
     ret
 clearsecarea endp
-;-------------------------------------------------------
-; init: - check/set video mode
-;       - set default byte to edit
-;       - print copyright info
-;       - seed random timer
-;       - wipe variables
-;       - set some defaults
-;       - replace int24h
 
-init proc
+;-------------------------------------------------------
+; vinit: - check/set video mode, print copyright info.
+; runs in real-mode even for wdex.
+
+vinit proc
 
 ;--- check if video mode suits, else set 43x80 mode.
+    mov di, 0B800h
     push ds
-    push _0000H
+    push 0
     pop ds
     mov ax, ds:[44Ah] ;cols
     add ax, ax
     mov bx, ds:[44Eh] ;start offset video page
-    test byte ptr ds:[465h],4             ; monochrome mode?
+    cmp byte ptr ds:[463h],0b4h           ; monochrome mode?
     jnz @F
-    add bx, 8000h
+    mov di, 0B000h
 @@:
-    mov ch, ds:[484h] ;rows
+    mov ch, ds:[484h] ;rows-1
     mov dl, ds:[462h] ;video page
     inc ch
     pop ds
-    cmp ch,43
-    jae clrscn
+    cmp ch,43                             ; current mode compatible?
+    jae vmode_ok
     mov ax, 1200h                         ; EGA or better present?
     mov bl, 10h
     xor cx, cx
@@ -5921,11 +5944,11 @@ init proc
     mov bl, 30h
     mov ax, 1201h                         ; AL=01: 350 scan lines in next mode set
     int 10h
-
     mov ax, 3
-    or bh, bh
+    or bh, bh                             ; bit 0=1 -> mono mode in effect
     jz @F
     mov al, 7
+    mov di, 0B000h
 @@:
     int 10h                               ; set video mode 3/7
     mov ax, 1112h
@@ -5934,62 +5957,42 @@ init proc
 fth:
     mov ax, 80*2
     mov ch, 43
-    mov bx, 8000h
+    xor bx, bx
     mov dl, 0
-clrscn:
+vmode_ok:
     mov [vidcolsize], ax
     mov [vidrows], ch
     mov [vidpg], dl
-    mov ch, 43
     mov word ptr [vidaddr+0], bx
-    mov word ptr [vidaddr+2], _B000H
+    mov word ptr [vidaddr+2], di
+
+;--- clear screen
+
+    mov dl, 43
     les di, [vidaddr]
+    mov ax, DEFAULTCOLOR*100h+SPACE
 @@:
-    push cx
     push di
     mov cx,RIGHTCOL+1
-    mov ax, DEFAULTCOLOR*100h+SPACE
     rep stosw
     pop di
-    pop cx
     add di, [vidcolsize]
-    dec ch
+    dec dl
     jnz @B
 
-;--- hide cursor
     mov cx, 2000h
-    mov ah, 01h
+    mov ah, 01h                           ; hide cursor
     int 10h
 
-    mov [scrn_xy], 1423h                  ; print out version
+    mov [scrn_xy], 1423h                  ; print version
     mov dx, offset introtext
     call printstring
-    mov [scrn_xy], 1612h                  ; print out copyright
+    mov [scrn_xy], 1612h                  ; print copyright
     mov dx, offset copyright
     call printstring
 
-    mov ax, 3524h                       ; back up old int 24h
-    int 21h
-    mov word ptr [old24h+0], bx
-    mov word ptr [old24h+2], es
-    push ds
-    mov dx, offset int24h               ; new address in DS:DX
-    push cs
-    pop ds
-    mov ah, 25h                         ; set up new int 24h
-    int 21h
-    pop ds
-
-    call setseeds1
-
-    xor dx, dx                            ; y = (spot-1)/16
-    call spotcalc
-    mov [crsr_xy], dx
-if ?VDD
-    call initvdd                          ; init vdd on nt platforms
-endif
     ret
-init endp
+vinit endp
 
     .const
 helptext label byte
@@ -7510,11 +7513,8 @@ endif
 
 checktime proc
     push ax
-    push ds
-    push _0000H
-    pop ds
-    mov ax, ds:[46Ch]
-    pop ds
+    mov es,[_0000H]
+    mov ax, es:[46Ch]
     push ax
     sub ax, [lasttick]
     cmp ax, 5

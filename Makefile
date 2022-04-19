@@ -21,6 +21,6 @@ $(odir)\setm43.exe: $(idir)\setm43.asm
 $(odir)\wdevdd.dll: $(idir)\wdevdd.asm
 	jwasm -pe -nologo -zze -I $(idir)\INCLUDE -Fl=$(odir)\wdevdd.lst -Fo $(odir)\wdevdd.dll $(idir)\wdevdd.asm
 
-$(odir)\wdex.com: $(idir)\wde.asm  $(incfiles)
-	jwasm -mz -nologo -Sg -D?PM=1 -D?VDD=0 -Fl=$(odir)\wdex.lst -Fo=$(odir)\wdex.com $(idir)\wde.asm
+$(odir)\wdex.com: $(idir)\wde.asm  $(incfiles) $(idir)\wdepm16.inc
+	jwasm -mz -nologo -Sg -D?PM=1 -Fl=$(odir)\wdex.lst -Fo=$(odir)\wdex.com $(idir)\wde.asm
 

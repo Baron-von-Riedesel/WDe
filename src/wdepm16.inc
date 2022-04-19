@@ -1,17 +1,7 @@
 
 ;*** WDe specific protected-mode initialization
 
-;--- the following segments need translation
-
-_0000H   equ 0054h    ; alloc a specific descriptor to get access to segment 0000h
-_B000H   equ 005Ch    ; alloc a specific descriptor to get access to segment B000h
-if ?VDD
-_CSALIAS equ <[csalias]>
-endif
-
-;--- dpmi real-mode call struct
-
-RMCS    struct
+RMCS    struct  ; dpmi real-mode call struct
 rDI     dw ?,?
 rSI     dw ?,?
 rBP     dw ?,?
@@ -29,21 +19,19 @@ rCSIP   dd ?
 rSSSP   dd ?
 RMCS    ends
 
-    .data
-
-oldint13 dd 0
-oldint2f dd 0
-if ?VDD
-csalias dw 0
-endif
-
-    .code
-
-IRETS struct
+IRETS struct    ; structure of registered saved by INT
 wIP    dw ?
 wCS    dw ?
 wFlags dw ?
 IRETS ends
+
+
+    .data
+
+oldint13 dd 0
+oldint2f dd 0
+
+    .code
 
 ;--- int 13h interception
 ;--- There's no translation for extended int 13h
@@ -61,59 +49,58 @@ myint13 proc
 
 is42:
 is43:
-    mov word ptr [si+6], DGROUP   ; translate transfer buffer selector to segment
+    mov [si].DAP.wBufferSeg, DGROUP ; set segment of transfer buffer
 is48:
     push di
     sub sp, sizeof RMCS
     mov di, sp
     push ss
     pop es
-    mov [di].RMCS.rAX, ax
-    mov [di].RMCS.rBX, bx
-    mov [di].RMCS.rCX, cx
-    mov [di].RMCS.rDX, dx
+    mov [di].RMCS.rAX, ax           ; ah=function code, al=write flags
+    mov [di].RMCS.rDX, dx           ; dl=drive
     mov [di].RMCS.rSI, si
     mov [di].RMCS.rFlags, 302h
-    mov [di].RMCS.rDS, DGROUP     ; request is in DS:SI
+    mov [di].RMCS.rDS, DGROUP       ; request ptr is in DS:SI
     mov [di].RMCS.rSSSP, 0
     push ax
+    push bx
+    push cx
     mov bx, 0013h
     xor cx, cx
     mov ax, 0300h
     int 31h
+    pop cx
+    pop bx
     pop ax
-    cmp ax, 48h
+    cmp ah, 48h
     jz @F
-    mov word ptr [si+6], ds
+    mov [si].DAP.wBufferSeg, ds     ; restore transfer buffer (for 42/43)
 @@:
     mov al, byte ptr [di].RMCS.rFlags
     mov byte ptr [di+sizeof RMCS+2].IRETS.wFlags, al
     mov ax, [di].RMCS.rAX
-    mov bx, [di].RMCS.rBX
-    mov cx, [di].RMCS.rCX
     add sp, sizeof RMCS
     pop di
     iret
 myint13 endp
 
 ;--- translate int 2Fh, ax=1510h (CD-ROM access)
-;--- what has to be done is to set the segment part of the transfer buffer
-
+;--- here also the segment part of the transfer buffer is to be set.
 
 myint2f proc
     cmp ax, 1510h
     jz is1510
     jmp dword ptr [oldint2f]
 is1510:
-    mov word ptr [bx+16], DGROUP   ; set transfer buffer segment part
+    mov [bx].CDREQ.bufseg, DGROUP  ; set transfer buffer segment part
     push di
     sub sp, sizeof RMCS
     mov di, sp
     push ss
     pop es
-    mov [di].RMCS.rAX, ax
+    mov [di].RMCS.rAX, ax          ; AX=function cod
     mov [di].RMCS.rBX, bx          ; ES:BX -> device driver request
-    mov [di].RMCS.rCX, cx          ; cx holds drive
+    mov [di].RMCS.rCX, cx          ; CX=drive#
     mov [di].RMCS.rFlags, 302h
     mov [di].RMCS.rES, DGROUP
     mov [di].RMCS.rSSSP, 0
@@ -126,49 +113,39 @@ is1510:
     mov ax, [di].RMCS.rAX
     mov bx, [di].RMCS.rBX
     mov cx, [di].RMCS.rCX
-    mov word ptr [bx+16], ds       ; restore selector of transfer buffer
+    mov [bx].CDREQ.bufseg, ds      ; restore selector of transfer buffer
     add sp, sizeof RMCS
     pop di
     iret
 myint2f endp
 
-;--- alloc descriptors for _0000H, _B000H ( and optionally _CSALIAS )
+;--- alloc descriptors for _0000H and vidseg
 
 getdescriptors proc
 
-    mov ax, 000Dh           ; alloc specific descriptor
-    mov bx,_0000H
+    mov cx, 2       ; alloc 2 descriptors
+    xor ax, ax
     int 31h
     jc done
+    mov _0000H, ax
+    mov bx, ax      ; set bases ( 00000000h, 000Bx000h )
     xor dx, dx
     xor cx, cx
     mov ax, 7
     int 31h
-    mov dx, -1
+    add bx, 8
+    movzx ecx, word ptr [vidaddr+2]
+    mov word ptr [vidaddr+2], bx
+    shl ecx, 4
+    mov dx, cx
+    shr ecx, 16
+    int 31h
+    mov dx, 7fffh   ; set limits to 07FFFh
     xor cx, cx
     mov ax, 8
     int 31h
-
-    mov ax, 000Dh
-    mov bx, _B000H
+    sub bx, 8
     int 31h
-    jc done
-    mov dx, lowword  0B0000h
-    mov cx, highword 0B0000h
-    mov ax, 7
-    int 31h
-    mov dx, -1
-    xor cx, cx
-    mov ax, 8
-    int 31h
-
-if ?VDD
-    mov ax, 000Ah           ; alloc CS alias
-    mov bx, cs
-    int 31h
-    jc done
-    mov [csalias], bx
-endif
 done:
     ret
 getdescriptors endp
@@ -178,8 +155,12 @@ getdescriptors endp
 
 wdepm16 proc
     mov [_psp], es                ; update PSP to a selector
-    call getdescriptors           ; get descriptors for _0000H, _B800H, _B000H, _CSALIAS
+    call getdescriptors           ; get descriptors for _0000H & vidseg
     jc error
+if ?VDD
+    cmp [hVdd], -1                ; wdevdd.dll can handle protected-mode
+    jnz done
+endif
     mov bl,13h                    ; intercept int 13h
     mov ax,0204h
     int 31h
@@ -190,7 +171,7 @@ wdepm16 proc
     mov al, 5
     int 31h
     mov bl,2Fh                    ; intercept int 2Fh
-    mov ax,0204h
+    mov al, 4
     int 31h
     mov word ptr [oldint2f+0], dx
     mov word ptr [oldint2f+2], cx
@@ -198,6 +179,7 @@ wdepm16 proc
     mov dx, offset myint2f
     mov al, 5
     int 31h
+done:
     ret
 error:
     mov ax,4cffh

@@ -280,14 +280,18 @@ local	secsize:dword
 local	cdmode:byte
 local	szDrv[8]:byte
 local	tmppkt:DPACKET
+local	bMode:dword
 if ?RAWMODE
 local	rri:RAW_READ_INFO
 endif
 
+	invoke getMSW
+	and eax,1
+	mov bMode, eax
 	invoke getEBX
 	movzx edi,ax	;16bit offset!
 	invoke getDS
-	invoke VdmMapFlat, eax, edi, VDM_V86
+	invoke VdmMapFlat, eax, edi, bMode
 	mov ebx, eax
 	.if ( bType == 1 )
 		movzx eax, byte ptr wAX
@@ -310,7 +314,7 @@ endif
 		invoke getEBX
 		movzx edi,ax
 		invoke getES
-		invoke VdmMapFlat, eax, edi, VDM_V86
+		invoke VdmMapFlat, eax, edi, bMode
 		mov edi, eax
 		cmp byte ptr [edi+2],134	;134=write long
 		jnz @F
@@ -339,7 +343,7 @@ endif
 
 	movzx ecx,[ebx].DPACKET.bufofs
 	movzx eax,[ebx].DPACKET.bufseg
-	invoke VdmMapFlat, eax, ecx, VDM_V86
+	invoke VdmMapFlat, eax, ecx, bMode
 	mov dwBuffer, eax
 
 	cmp bType, 2
@@ -513,10 +517,14 @@ local	drive:dword
 local	hDisk:dword
 local	dwRead:dword
 local	dwBuffer:dword
+local	bMode:dword
 local	szDrv[24]:byte
 local	tmppkt:I13PACKET
 local	drvparam:I13DPARAM
 
+	invoke getMSW
+	and eax,1
+	mov bMode, eax
 	mov bWrite, 0
 	invoke getEDX
 	movzx eax, al
@@ -550,7 +558,7 @@ local	drvparam:I13DPARAM
 		push ecx
 		invoke getES
 		pop ecx
-		invoke VdmMapFlat, eax, ecx, VDM_V86
+		invoke VdmMapFlat, eax, ecx, bMode
 		mov dwBuffer, eax
 	.elseif ( ah == 8 )
 		invoke GetDiskParameters, addr szDrv, addr drvparam, 0
@@ -575,11 +583,11 @@ local	drvparam:I13DPARAM
 		invoke getESI
 		movzx edi,ax	;16bit offset!
 		invoke getDS
-		invoke VdmMapFlat, eax, edi, VDM_V86
+		invoke VdmMapFlat, eax, edi, bMode
 		mov edi, eax	;EDI -> I13PACKET
 		movzx eax, word ptr [edi].I13PACKET.dwBuffer+0
 		movzx edx, word ptr [edi].I13PACKET.dwBuffer+2
-		invoke VdmMapFlat, edx, eax, VDM_V86
+		invoke VdmMapFlat, edx, eax, bMode
 		mov dwBuffer, eax
 	.elseif ( ah == 48h )
 		invoke getESI
@@ -587,7 +595,7 @@ local	drvparam:I13DPARAM
 		push eax
 		invoke getDS
 		pop ecx
-		invoke VdmMapFlat, eax, ecx, VDM_V86
+		invoke VdmMapFlat, eax, ecx, bMode
 		invoke GetDiskParameters, addr szDrv, eax, 1
 		and eax, eax
 		jz diskerror
@@ -695,13 +703,17 @@ disk_access endp
 
 Dispatch proc stdcall export uses ebx esi edi
 
+local bMode:dword
+
 	@DbgOutC <"WDEVDD.Dispatch enter",13,10>
+	invoke getMSW
+	and eax,1
+	mov bMode, eax
 	invoke getESP
-	movzx ebx,ax
+	movzx ebx, ax
 	invoke getSS
 	movzx eax, ax
-	shl eax, 4
-	add eax, ebx
+	invoke VdmMapFlat, eax, ebx, bMode
 	movzx edi,word ptr [eax+0]	;int number
 	movzx esi,word ptr [eax+2]	;VDM value of AX
 	@DbgOut <"WDEVDD.Dispatch: emulate INT %02Xh, ax=%04X, sp=%04X",13,10>, edi, esi, ebx

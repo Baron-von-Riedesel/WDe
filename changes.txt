@@ -7,6 +7,14 @@ WDe V0.50 [??.??.2022]
     LFN entries.
   - option -s ( safe mode ) added.
   - optionally build wdex.com, a WDe running as 16-bit DPMI client.
+  - fixed: recursing a chain searched "below" the current cluster only;
+    this didn't guarantee that the linking cluster ( the predecessor )
+    was found. OTOH, this fix has the effect that the recurse scan will
+    take quite a bit longer if the current cluster is the start of a
+    chain.
+  - wdevdd.dll: adjusted to also work with protected-mode apps ( wdex.com ).
+  - fixed: ctrl-left inside FAT didn't work in v0.40 if a new sector had
+    to be read in.
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.

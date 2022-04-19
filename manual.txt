@@ -130,13 +130,14 @@ WDe User Manual
     When in the data area, Ctrl+Enter will jump to the corresponding
     fat entry.  Hitting Ctrl+Right will jump directly to the cluster
     connected to it within the fat. Hitting Enter while in a directory
-    will jump to the beginning of the first cluster of that entry. Hitting
-    Enter, Ctrl-Enter or Ctrl-Right key will push the current sector#
-    on a stack; using Ctrl-Up will pop the information from this stack and
-    thus go back to the saved sector ( and cursor ) position.
+    will jump to the beginning of the first cluster of that entry.
+    
+    Hitting Enter, Ctrl-Enter or Ctrl-Right key will save the current sector#
+    on a stack; using Ctrl-Up will retrieve this information and thus allow
+    to go back to the saved position.
 
     Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
-    to edit the physical drive that partition belongs to.
+    to change to the physical drive that partition belongs to, if it exists.
 
     Hitting TAB will switch between hex & ascii editing.
 

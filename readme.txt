@@ -11,7 +11,7 @@
 
    Please be aware that a disk editor, if used inappropriately, might easily
   cause severe data losses, if the user doesn't know what he/she is doing.
-  So be careful and, before doing any real work, get accustomed to WDe by 
+  So be careful and, before doing any real work, get accustomed to WDe by
   experimenting with storage devices that don't hold important data.
    
 
@@ -51,9 +51,9 @@
   in protected-mode as 16-bit DPMI client. There is currently no benefit in
   using this binary, it may even be slightly slower than wde.com. However,
   since protected-mode offers access to huge amounts of memory, it may allow
-  things that the real-mode wde.com can't do, for example, read in the whole
-  FAT ( or directory structure ) of a drive and thus speed up certain functions
-  significantly.
+  to implement things that the real-mode wde.com can't efficiently do, for
+  example, read in the whole FAT ( or directory structure ) of a drive and
+  thus speed up certain functions significantly.
 
 
   5. License

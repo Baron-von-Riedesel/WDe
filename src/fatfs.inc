@@ -77,13 +77,15 @@ sector2cluster endp
 ;               IN:   eax       cluster number to get
 ;               OUT:  eax       data stored in the fat
 ;                     C if cluster# given in eax is invalid
+; this function may be called quite a few times if
+; "recursing" ( ctrl-left ) within a FAT.
 ;-------------------------------------------------------
 getfatentry proc
     push ebx
     push [dwCurSector]
     push si
 
-;   and eax, 0FFFFFFFh            ; ignore highest nibble
+;   and eax, 0FFFFFFFh                ; ignore highest nibble
     mov ebx, eax
     call locatefatentry
     jc abort
@@ -94,12 +96,11 @@ getfatentry proc
     call fat12pad
 
     test al, 00000001b
-    jnz method2
-method1:
+    jnz @F
     mov ax, word ptr [si+bx]
     and ah, 0Fh
     jmp f12gfs
-method2:
+@@:
     mov ax, word ptr [si+bx]
     shr ax, 4
 f12gfs:
@@ -126,8 +127,8 @@ abort:
     pop si
     pop ebx
     pushf
-    cmp [dwCurSector], ebx
-    je @F
+    cmp [dwCurSector], ebx            ; don't reread current sector if it
+    je @F                             ; hasn't changed
     mov [ioreq.dwSector], ebx
     call rwsectx
 @@:
@@ -214,33 +215,32 @@ locatefatentry proc
     push eax
     push ecx
                                         
-    cmp ebx, [dwLastcluster]    ; past the last cluster on the drive
+    cmp ebx, [dwLastcluster]    ; past the last cluster on the drive?
     stc
-    ja nntri                    ; so abort with an error
+    ja done                     ; so abort with an error
 
-    mov cl, [fattype]           ; convert cluster number to # of bytes
-    shr cl, 1                   ; since the start of the fat table
-    shl ebx, cl
-    cmp cl, 0
-    jne donelfe13
-    mov eax, ebx                ; adjustment for fat12
-    shr eax, 1
+    mov cl, [fattype]           ; convert cluster number to FAT offset
+    shr cl, 1                   ; FAT32: 4->2, FAT16: 2->1, FAT12: 1->0
+    jnz @F
+    mov eax, ebx                ; adjustment for fat12 -
+    shr eax, 1                  ; we must multiply with 1.5
     add ebx, eax
-donelfe13:
-
-                                ; ebx = # of bytes since fat start
-    movzx ecx, [wBps]
+@@:
+    shl ebx, cl                 ; ebx = FAT offset
+                                ; divides ebx by bps in order to find
+    movzx ecx, [wBps]           ; sector# of the entry
     push cx
-    shr cx, 9
+    shr cx, 9                   ; 0x200 / 0x200 + 8 = 9; 0x400 / 0x200 + 8 = 10
     add cl, 8
-                                ; divides ebx by bps in order to find what
-    mov eax, ebx                ; sector the fat entry is in
+    mov eax, ebx
     shr eax, cl
     pop cx
 
-    shr ch, 1
-    or cx, 111111111b
-    and ebx, ecx 
+;    shr ch, 1                   ; ???
+;    or cx, 1ffh                 ; ???
+    dec cx
+
+    and ebx, ecx
 
     add eax, [dwReserved]
 
@@ -250,12 +250,11 @@ donelfe13:
     je locationinfirstfat
     add eax, [dwSpf]
 locationinfirstfat:
-
-    cmp [dwCurSector], eax      ; sets [dwCurSector] to that sector
-    je nntri
+    cmp [dwCurSector], eax      ; read that FAT sector if necessary
+    je done
     mov [ioreq.dwSector], eax
     call rwsectx
-nntri:
+done:
     pop ecx
     pop eax
     ret
@@ -325,10 +324,10 @@ getentrynumber proc
 
     mov [fromfat], 1
     cmp eax, [dwSpf]
-    jb getfromfirstfat
+    jb @F
     sub eax, [dwSpf]
     inc [fromfat]
-getfromfirstfat:
+@@:
 
 ;---  here eax contains relative sector# within FAT
 
@@ -365,7 +364,7 @@ getentrynumber endp
 ; go2entry jumps to an entry in the fat
 ;
 ;               IN:   eax       cluster number
-;               OUT:  [dwCurSector]  corresponding sector within a fat
+;               OUT:  [ioreq.dwSector]  corresponding sector within a fat
 ;                     [spot]    byte offset within the sector
 ;
 ;-----------------------------------------------------------------
@@ -399,7 +398,7 @@ loopfindsect:
 donesub:
 
     add ecx, [dwReserved]
-    mov [dwCurSector], ecx
+    mov [ioreq.dwSector], ecx
 
     xor dl, dl
     jmp movecursor

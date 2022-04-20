@@ -2,59 +2,60 @@ WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
 WDe User Manual
 
-  0.0 - Hot-Key Quick Reference
-  1.0 - Initial Screen and Commandline
-  2.0 - Editing
-  3.0 - Drive Support
-    3.1 - Physical Disks
-      3.1.1 - BIOS Notes
-    3.2 - Logical Drives
-    3.3 - CD-Rom Drives
-    3.4 - Disk Images
+  0.0       Hot-Key Quick Reference
+  1.0       Initial Screen and Commandline
+  2.0       Editing
+  3.0       Drive Support
+  3.1       Physical Disks
+  3.1.1     BIOS Notes
+  3.2       Logical Drives
+  3.3       CD-Rom Drives
+  3.4       Disk Images
 
-  4.0 - Menu System
-    4.1 - Basics
-    4.2 - Menu Items & Submenus
-      4.2.1 - Item "Save"
-      4.2.2 - Menu "File Ops"
-        4.2.2.1 - Item "Input"
-        4.2.2.2 - Item "MBR/Boot Sector"
-        4.2.2.3 - Item "Partition 1/2/3/4"
-        4.2.2.4 - Item "Fat1/Fat2"
-        4.2.2.5 - Item "Root"
-        4.2.2.6 - Item "Partition"
-        4.2.2.7 - Item "Chain"
-      4.2.3 - Menu "Goto"
-      4.2.4 - Menu "View"
-        4.2.4.1 - View "Directory"
-      4.2.5 - Menu "Find"
-      4.2.6 - Menu "Functions"
-        4.2.6.1 - Item "Fill"
-        4.2.6.2 - Item "Restrict"
-        4.2.6.3 - Item "UnFormat"
-        4.2.6.4 - Item "UnDelete"
-      4.2.7 - Item "Disk"
+  4.0       Menu System
+  4.1       Basics
+  4.2       Menu Items & Submenus
+  4.2.1     Item "Save"
+  4.2.2     Menu "File"
+  4.2.2.1   Menus "Save Sectors" & "Restore Sectors"
+  4.2.2.1.1 Item "Input"
+  4.2.2.1.2 Item "MBR/Boot Sector"
+  4.2.2.1.3 Item "Partition 1/2/3/4"
+  4.2.2.1.4 Item "Fat1/Fat2"
+  4.2.2.1.5 Item "Root"
+  4.2.2.1.6 Item "Partition"
+  4.2.2.1.7 Item "Chain"
+  4.2.2.2   Item "Change Disk"
+  4.2.3     Menu "Goto"
+  4.2.4     Menu "View"
+  4.2.4.1   View "Directory"
+  4.2.5     Menu "Find"
+  4.2.6     Menu "Functions"
+  4.2.6.1   Item "Fill"
+  4.2.6.2   Item "Restrict"
+  4.2.6.3   Item "UnFormat"
+  4.2.6.4   Item "UnDelete"
 
-  5.0 - Error Messages
-    5.1 - "No (More) Matches Found"
-    5.2 - "File Chain Exceeds FAT"
-    5.3 - "File Too Small"
-    5.4 - "File Too Corrupt"
-    5.5 - "Error Reading File"
-    5.6 - "Error Writing File"
-    5.7 - "Error Creating File"
-    5.8 - "Invalid Sector Range"
-    5.9 - "Error Reading Sector"
-      5.9.1 - "Abort/Zero-Fill"
-      5.9.1 - "Abort/Skip/Ignore All"
-    5.10- "Error Writing Sector"
-    5.11- "File Not Found"
-    5.12- "Invalid Start Cluster"
-    5.13- "Recursive Link Not Found"
-    5.14- "Fat Table Not Blank"
-    5.15- "Root Not Blank"
-    5.16- "No Directories Found"
-    5.17- "No search string defined yet"
+  5.0       Error Messages
+  5.1       "No (More) Matches Found"
+  5.2       "File Chain Exceeds FAT"
+  5.3       "File Too Small"
+  5.4       "File Too Corrupt"
+  5.5       "Error Reading File"
+  5.6       "Error Writing File"
+  5.7       "Error Creating File"
+  5.8       "Invalid Sector Range"
+  5.9       "Error Reading Sector"
+  5.9.1     "Abort/Zero-Fill"
+  5.9.1     "Abort/Skip/Ignore All"
+  5.10      "Error Writing Sector"
+  5.11      "File Not Found"
+  5.12      "Invalid Start Cluster"
+  5.13      "Recursive Link Not Found"
+  5.14      "Fat Table Not Blank"
+  5.15      "Root Not Blank"
+  5.16      "No Directories Found"
+  5.17      "No search string defined yet"
 
 
   0.0 - Hot-Key Quick Reference
@@ -223,56 +224,62 @@ WDe User Manual
         This menu option saves any manual changes made to the sector
         currently being edited.
 
-      4.2.2 - Menu "File Ops"
+      4.2.2 - Menu "File"
 
-        This submenu gives two more submenus, "Save Sectors" and
-        "Restore Sectors".  The first is designed to save sectors
-        from the drive being edited to a file.  The second
-        restores sectors saved to file back to a drive.
+        This submenu gives two more submenus. The first is designed
+        to save sectors from the drive being edited to a file.  The
+        second restores sectors saved to file back to a drive. Note 
+        that currently, due to file size restrictions, files cannot
+        be saved that will exceed 2GB ( or 4GB-1, if the underlying
+        DOS allows that ).
 
-        Note that currently, due to the file size restrictions,
-        files cannot be saved that will exceed 2GB.  There are
-        plans to allow saving as multiple files.
 
-        4.2.2.1 - Item "Input"
+        4.2.2.1 - Menus "Save Sectors" & "Restore Sectors"
+
+          4.2.2.1.1 - Item "Input"
 
           Sectors are saved or restored beginning at the current
           position on the drive being edited; the user of WDe
           is prompted for the number of sectors to save/restore.
 
-        4.2.2.2 - Item "MBR/Boot Sector"
+          4.2.2.1.2 - Item "MBR/Boot Sector"
 
           The MBR/Boot Sector can be saved/restored from/to file.
           These are always considered to be at sector 0 and
           considered to take 1 sector.
 
-        4.2.2.3 - Item "Partition 1/2/3/4"
+          4.2.2.1.3 - Item "Partition 1/2/3/4"
 
           These functions will save/restore the entire partition
           selected to a file.  Note that files larger than 2gb's are
           not yet supported by WDe.
 
-        4.2.2.4 - Item "Fat1/Fat2"
+          4.2.2.1.4 - Item "Fat1/Fat2"
 
           The first and second fat may be saved/restored.
           Fat parameters are calculated from the bootsector.
 
-        4.2.2.5 - Item "Root"
+          4.2.2.1.5 - Item "Root"
 
           Saves or restores either the root for FAT12/FAT16 or the
           first cluster of it for FAT32 to/from file.
 
-        4.2.2.6 - Item "Partition"
+          4.2.2.1.6 - Item "Partition"
 
           Saves/restores the entire current partition to/from file.
 
-        4.2.2.7 - Item "Chain"
+          4.2.2.1.7 - Item "Chain"
 
           This option will appear when you're currently in the FAT table
           or in the 32 bytes belonging to a directory entry.  Using this
           option can save/restore the data in a fat or file chain to/from
-          a specified file. Note that the chain itself is never changed,
-          just the corresponding sector contents.
+          a specified file. Note that, when restoring, the chain itself is
+          never changed, just the corresponding sector contents.
+
+        4.2.2.2 - Item "Change Disk"
+
+         The third option in menu "File "is to change the current drive.
+         See the comments for the initial screen for more details.
 
       4.2.3 - Menu "Goto"
 
@@ -385,11 +392,6 @@ WDe User Manual
           is very picky about what a "directory" is; if no "UnDelete" option
           is coming up when in the 32-bytes of a deleted file, there is
           likely some sort of invalid data stored in the directory.
-
-      4.2.7 - Item "Disk"
-
-        Simply allows changing the drive being edited.
-        See "initial screen" at the top of this document for more details.
 
 
 

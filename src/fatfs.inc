@@ -27,7 +27,7 @@ cluster2sector proc
     add eax, [dwDatastart]
     jc errem2
 
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     jne skipfat32adjust
     cmp [dwRootcluster], 2
     ja skipfat32adjust
@@ -56,7 +56,7 @@ sector2cluster proc
     loop @B
 skipfats:
 
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     je dontsubroot
     mov cx, [wRootsectors]
     sub eax, ecx
@@ -90,7 +90,7 @@ getfatentry proc
     call locatefatentry
     jc abort
     mov si, offset sectbuffer
-    cmp [fattype], FT_FAT12
+    cmp [filesys], FS_FAT12
     jne fat1632
 
     call fat12pad
@@ -110,7 +110,7 @@ f12gfs:
                                       ; to 0FFFFFFxh
 fat1632:
     mov eax, dword ptr [si+bx]
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     je f32gfd
 f16gfd:
     movzx eax, ax                     ; clear top word for fat12/fat16
@@ -153,7 +153,7 @@ putfatentry proc
     call locatefatentry                 ; copy FAT sector into buffer
     jc abortpfe
     mov si, offset sectbuffer
-    cmp [fattype], FT_FAT12
+    cmp [filesys], FS_FAT12
     jne dof132
 
     call fat12pad
@@ -174,7 +174,7 @@ pmethod2:
 
     jmp dpfe2
 dof132:
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     jne dpfe2
 fat32pfe:
     and dword ptr [si+bx], 0F0000000h   ; preserve highest nibble in fat32
@@ -219,7 +219,7 @@ locatefatentry proc
     stc
     ja done                     ; so abort with an error
 
-    mov cl, [fattype]           ; convert cluster number to FAT offset
+    mov cl, [filesys]           ; convert cluster number to FAT offset
     shr cl, 1                   ; FAT32: 4->2, FAT16: 2->1, FAT12: 1->0
     jnz @F
     mov eax, ebx                ; adjustment for fat12 -
@@ -344,7 +344,7 @@ getentrynumber proc
 
 ;--- here eax contains relative offset of current spot within FAT
 
-    mov cl, [fattype]     ; 4=FAT32,2=FAT16,1=FAT12
+    mov cl, [filesys]     ; 4=FAT32,2=FAT16,1=FAT12
     shr cl, 1             ; 4->2, 2->1, 1->0
     shr eax, cl
 
@@ -369,7 +369,7 @@ getentrynumber endp
 ;
 ;-----------------------------------------------------------------
 go2entry proc
-    cmp [fattype], FT_FAT12
+    cmp [filesys], FS_FAT12
     jne nosmd
     mov ecx, 3
     mul ecx
@@ -381,7 +381,7 @@ noinc12:
     jmp sub512
 nosmd:
 
-    mov cl, [fattype]
+    mov cl, [filesys]
     shr cl, 1
     shl eax, cl
 

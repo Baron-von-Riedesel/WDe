@@ -59,7 +59,7 @@ is48:
     mov [di].RMCS.rAX, ax           ; ah=function code, al=write flags
     mov [di].RMCS.rDX, dx           ; dl=drive
     mov [di].RMCS.rSI, si
-    mov [di].RMCS.rFlags, 302h
+    mov [di].RMCS.rFlags, 202h
     mov [di].RMCS.rDS, DGROUP       ; request ptr is in DS:SI
     mov [di].RMCS.rSSSP, 0
     push ax
@@ -101,7 +101,7 @@ is1510:
     mov [di].RMCS.rAX, ax          ; AX=function cod
     mov [di].RMCS.rBX, bx          ; ES:BX -> device driver request
     mov [di].RMCS.rCX, cx          ; CX=drive#
-    mov [di].RMCS.rFlags, 302h
+    mov [di].RMCS.rFlags, 202h
     mov [di].RMCS.rES, DGROUP
     mov [di].RMCS.rSSSP, 0
     mov bx, 002Fh

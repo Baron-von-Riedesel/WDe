@@ -506,7 +506,7 @@ checkNextEntry:
                                         ; directory entries (dx)
     inc ebx                             ; increase sector #
 
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     jne maxEntryCheck
     dec ch                              ; spc processed < spc?
     jnz checkNextRootSect

@@ -13,8 +13,14 @@ WDe V0.50 [??.??.2022]
     take quite a bit longer if the current cluster is the start of a
     chain.
   - wdevdd.dll: adjusted to also work with protected-mode apps ( wdex.com ).
-  - fixed: ctrl-left inside FAT didn't work in v0.40 if a new sector had
-    to be read in.
+  - regression in v0.40: ctrl-left inside FAT didn't work if the entry
+    was located in a different sector.
+  - menu item "disk" moved to "file" submenu, new menu item "help" added
+    to main menu.
+  - wdevdd.dll got a significant speed-up, making lengthy operations 
+    under WinXP/Vista ( "find", "fill", "recurse", ... ) usable.
+  - fixed: logical disks with format NTFS and EXFAT are no longer handled
+    like FAT disks. 
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.
@@ -42,7 +48,7 @@ WDe V0.33 [01.04.2022]
   - ensure that displays are done in current video page.
   - fixed: switching between hex and binary mode didn't clear the first data
     line.
-  - fixed: if HD access had to use int 13h, ah=3 (old write function),
+  - fixed: if HD access had to use int 13h, ah=3 ("old" write function),
     a wrong address (read buffer instead of write buffer) was used.
   - added SETM43 tool. If it works with the graphics card, WDE's look
     might improve since a 8x14 font (instead of 8x8) is used then.

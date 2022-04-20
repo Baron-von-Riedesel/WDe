@@ -1,0 +1,118 @@
+
+; You might notice "\Fix/" in a few spots; this refers to my having
+; hard-coded 512 bytes for sector sizes, not necessarily a bug.  Often
+; I just need to go over the code and make sure it doesn't need to be fixed.
+;
+; for lfn/undelete:
+;  if (spot < 33), then a calculation needs to be done to check
+;  if it's the first sector of the current cluster or start of the root.
+;  for fat32, ((currentsector - datastart % spc) = 0) should be true if 
+;  at cluster start.  checksum needs to be calculated as well.
+;
+; for CD-rom drives/bootsector:
+; offset:
+;
+;  50 (4): total sectors on drive
+;  80 (2): bytes per sector
+;  8C (4): type L path table location
+;  94 (4): type M path table location
+;  9C (-): directory record for root (below)
+;
+; Directory records:
+;  0  (1): length of record
+;  1  (1): extended attribute record length
+;  2  (8): logical block number to entry's data
+;  10 (8): length of file in bytes
+;  18 (7?): recording date/time
+;  25 (1): attributes hidden/directory (______DH)
+;  32 (1): length of file identifier
+;  33+   : file identifier
+;  padding field byte at the end if file identifier length = even
+;  another byte after this?
+;
+; for NTFS partitions/bootsector:
+; offset:
+;
+;  0B (2): bytes per sector
+;  0D (1): sectors per cluster
+;  0E (1): reserved sectors
+;  10 (5): 0
+;  15 (1): media descriptor (F8h)
+;  16 (2): 0
+;  1C (4): LBA partition start
+;  18 (2): sectors per track
+;  1A (2): # of heads
+;  20 (4): 0
+;  28 (8): total number of sectors
+;  24 (1): drive # (80h)
+;  30 (8): logical cluster for file $MFT
+;  38 (8): logical cluster for file $MFTmirr
+;  40 (4): bytes per file record segment 2^(-1*this value, signed)
+;  44 (4): clusters per index block (ie directories)
+;  50 (4): checksum?
+;
+; MFT: first 16 entries are inaccessible to OS, known as metafiles
+; each entry is ~1k - the first one is the MFT itself. others:
+;
+; calculation in bootsector for bytes per file record is to negate the
+; value (two's complement), then shift the value 1 stored in eax left by
+; that value. eax = 10000000000 = 1024 - why is this needlessly complex?
+;
+;
+; $logfile:     list of steps used for file recovery
+; $volume:      volume info
+; $attrdef:     table of attribute names, numbers & descriptions
+; $:            root folder
+; $bitmap:      cluster bitmap?
+; $boot:        bpb copy?
+; $badclus:     bad cluster table
+; $secure:      security descriptors for all files
+; $upcase:      converts lowercase chars to matching unicode chars
+; $quota:       info like quotas, reparse point data, object identifiers?
+;
+; backup bootsector is in the middle of the drive
+;
+; possible future functions:
+;  - validcluster: clear/set carry flag depending on whether or not a
+;                  cluster stored in eax is within the boundaries of the
+;                  logical partition
+;  - validsector:  same as above but for sectors
+;
+; Notes for int 24h:
+;
+; AH = device error bits
+;       0:      error type
+;               0: read
+;               1: write
+;
+;       1-2:    location of error
+;               00: ms-dos area
+;               01: fat table
+;               10: root
+;               11: file area
+;
+;       7:      error type
+;               0: char device error
+;               1: block type error
+;
+;
+; if block type error, low byte of DI contains error code:
+;
+;      00:      write protection violation
+;      01:      unknown drive
+;      02:      drive not ready
+;      03:      invalid command
+;      04:      crc data error
+;      05:      length of request struct incorrect
+;      06:      seek error
+;      07:      unknown media (not formatted)
+;      08:      sector not found
+;      0A:      write error
+;      0B:      read error
+;      0C:      general failure
+;      0E:      lock violation
+;      0F:      disk changed at inappropriate time
+;      10:      uncertain media?
+;      11:      sharing buffer overflow?
+;      14:      insufficient disk space
+;

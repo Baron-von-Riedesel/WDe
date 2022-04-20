@@ -2,6 +2,8 @@
 ;*** startup code to run a small model program as 16-bit DPMI client
 ;*** will try to load HDPMI16.EXE if no DPMI host is active
 
+?LIMITCS equ 1  ;1=limit CS to real code size 
+
 EXECRM struct
 environ dw ?
 cmdline dd ?
@@ -48,10 +50,24 @@ initpm16 proc
     jc memerr
     mov es, ax
 @@:
+if ?LIMITCS
+    mov dx, ds
+    inc dx                  ; one paragraph more since start of DGROUP may be within code
+    mov cx, cs
+    sub dx, cx
+    shl dx, 4
+    dec dx
+endif
     mov bp, sp
     xor ax, ax              ; run as 16-bit client
     call dword ptr [bp]
     jc initerr
+if ?LIMITCS
+    mov bx, cs
+    xor cx, cx
+    mov ax, 8
+    int 31h
+endif
     add sp, 4
     ret
 

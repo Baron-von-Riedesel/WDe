@@ -1,136 +1,12 @@
 ;-------------------------------------------------------
 ;
-; WDe Copyright(C)2005 Ben Cadieux
+; WDe Copyright(C)2005 Ben Cadieux, japheth
 ;
 ;-------------------------------------------------------
-; Welcome to the code.  It's a bit of a mess still, but it's gradually
-; getting a little cleaner.  Some of the comments still around were
-; written back when I never intended anyone to see the source, so they
-; may not be particularly readable by anyone besides me for now.
-;
-; You might notice "\Fix/" in a few spots; this refers to my having
-; hard-coded 512 bytes for sector sizes, not necessarily a bug.  Often
-; I just need to go over the code and make sure it doesn't need to be fixed.
-;
+
 ; the binary was originally created with tasm32 5.3 and tlink 7.1.32.2,
 ; now it's done using jwasm; alternately, Masm + MS link may be used.
-;
-; for lfn/undelete:
-;  if (spot < 33), then a calculation needs to be done to check
-;  if it's the first sector of the current cluster or start of the root.
-;  for fat32, ((currentsector - datastart % spc) = 0) should be true if 
-;  at cluster start.  checksum needs to be calculated as well.
-;
-; Future Optimizations:
-;  - repne can possibly be used to optimize finding strings
-;
-; for CD-rom drives/bootsector:
-; offset:
-;
-;  50 (4): total sectors on drive
-;  80 (2): bytes per sector
-;  8C (4): type L path table location
-;  94 (4): type M path table location
-;  9C (-): directory record for root (below)
-;
-; Directory records:
-;  0  (1): length of record
-;  1  (1): extended attribute record length
-;  2  (8): logical block number to entry's data
-;  10 (8): length of file in bytes
-;  18 (7?): recording date/time
-;  25 (1): attributes hidden/directory (______DH)
-;  32 (1): length of file identifier
-;  33+   : file identifier
-;  padding field byte at the end if file identifier length = even
-;  another byte after this?
-;
-; for NTFS partitions/bootsector:
-; offset:
-;
-;  0B (2): bytes per sector
-;  0D (1): sectors per cluster
-;  0E (1): reserved sectors
-;  10 (5): 0
-;  15 (1): media descriptor (F8h)
-;  16 (2): 0
-;  1C (4): LBA partition start
-;  18 (2): sectors per track
-;  1A (2): # of heads
-;  20 (4): 0
-;  28 (8): total number of sectors
-;  24 (1): drive # (80h)
-;  30 (8): logical cluster for file $MFT
-;  38 (8): logical cluster for file $MFTmirr
-;  40 (4): bytes per file record segment 2^(-1*this value, signed)
-;  44 (4): clusters per index block (ie directories)
-;  50 (4): checksum?
-;
-; MFT: first 16 entries are inaccessible to OS, known as metafiles
-; each entry is ~1k - the first one is the MFT itself. others:
-;
-; calculation in bootsector for bytes per file record is to negate the
-; value (two's complement), then shift the value 1 stored in eax left by
-; that value. eax = 10000000000 = 1024 - why is this needlessly complex?
-;
-;
-; $logfile:     list of steps used for file recovery
-; $volume:      volume info
-; $attrdef:     table of attribute names, numbers & descriptions
-; $:            root folder
-; $bitmap:      cluster bitmap?
-; $boot:        bpb copy?
-; $badclus:     bad cluster table
-; $secure:      security descriptors for all files
-; $upcase:      converts lowercase chars to matching unicode chars
-; $quota:       info like quotas, reparse point data, object identifiers?
-;
-; backup bootsector is in the middle of the drive
-;
-; possible future functions:
-;  - validcluster: clear/set carry flag depending on whether or not a
-;                  cluster stored in eax is within the boundaries of the
-;                  logical partition
-;  - validsector:  same as above but for sectors
-;
-; Notes for int 24h:
-;
-; AH = device error bits
-;       0:      error type
-;               0: read
-;               1: write
-;
-;       1-2:    location of error
-;               00: ms-dos area
-;               01: fat table
-;               10: root
-;               11: file area
-;
-;       7:      error type
-;               0: char device error
-;               1: block type error
-;
-;
-; if block type error, low byte of DI contains error code:
-;
-;      00:      write protection violation
-;      01:      unknown drive
-;      02:      drive not ready
-;      03:      invalid command
-;      04:      crc data error
-;      05:      length of request struct incorrect
-;      06:      seek error
-;      07:      unknown media (not formatted)
-;      08:      sector not found
-;      0A:      write error
-;      0B:      read error
-;      0C:      general failure
-;      0E:      lock violation
-;      0F:      disk changed at inappropriate time
-;      10:      uncertain media?
-;      11:      sharing buffer overflow?
-;      14:      insufficient disk space
-;
+
 
     .model small        ; provides a full 64kB DGROUP just for data
     option casemap:none ; symbols are case sensitive
@@ -138,19 +14,45 @@
     .stack 4096
     .386
 
-;        _DEBUG           EQU 1 ; uncomment to assemble in debug mode
-;        ?BASIC           EQU 1 ; uncomment to disable extended functionality
-        UNDEFINED        EQU 0
+;--- _TEXT2 is an extra "code" segment for menu vectors, so they're always aligned
+;--- _DATA2 is an extra "data" segment for menus
+
+_TEXT2 segment word public 'CODE'
+startmenucmds label word
+_TEXT2 ends
+_DATA2 segment word public 'DATA'
+startmenudefs label near
+_DATA2 ends
+
+CGROUP group _TEXT, _TEXT2
+DGROUP group _DATA2
+
+ifndef ?DEBUG
+?DEBUG           EQU 0  ; 1=debug features on
+endif
+ifndef ?EXT
+?EXT             EQU 1  ; 1=enable "undelete" & "unformat" functions
+endif
 ifndef ?PM
-        ?PM              EQU 0  ; 1=running as 16-bit DPMI client
+?PM              EQU 0  ; 1=running as 16-bit DPMI client
 endif
 ifndef ?VDD
-        ?VDD             EQU 1  ; 1=winXP VDD supported
+?VDD             EQU 1  ; 1=winXP VDD supported
 endif
-        ?LFN             EQU 0  ; try to use LFN functions (not yet)
-        VIEWROW          equ 34 ; start of "view" area
+ifndef ?LFN
+?LFN             EQU 0  ; 1=prefer using LFN functions (not implemented yet)
+endif
+ifndef ?SN64
+?SN64            EQU 0  ; 1=support 64-bit sector access (not tested yet)
+endif
+
         BOTTOMROW        equ 42 ; last row (menu, messages)
         RIGHTCOL         equ 79 ; last col
+        ROWXXX           equ 1  ; row where all displays start
+        VIEWROW          equ 34 ; start of "view" area
+        COLHEX           equ 10 ; column where hex display starts
+        COLBIN           equ 11 ; column where binary display starts
+        COLASC           equ 63 ; column where ascii display starts
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
 
@@ -158,12 +60,17 @@ endif
         RW_READ          EQU 0
         RW_WRITE         EQU 1
 
-; "fattype" variable
-        FT_FAT32         EQU 4
-        FT_FAT16         EQU 2
-        FT_FAT12         EQU 1
+; "filesys" variable
+        FS_UNDEFINED     EQU 0
+        FS_FAT12         EQU 1
+        FS_FAT16         EQU 2
+        FS_FAT32         EQU 4
+        FS_FATXX         EQU FS_FAT12 or FS_FAT16 or FS_FAT32
+        FS_NTFS          EQU 8
+        FS_EXFAT         EQU 16
 
 ; "bRegion" variable for figuring out what section we're on in the drive
+        RG_UNDEFINED     EQU 0
         RG_RESERVED      EQU 00010000b
         RG_FAT           EQU 00100000b
         RG_ROOT          EQU 01000000b
@@ -181,7 +88,7 @@ endif
         VM_FAT16         EQU 4
         VM_FAT32         EQU 5
         VM_DIRECTORY     EQU 6
-ifdef DEBUG
+if ?DEBUG
         VM_DEBUG         EQU 7
         VM_LAST          EQU VM_DEBUG
 else
@@ -194,9 +101,18 @@ endif
         VM2_STATIC       EQU 1
 
 ; colors for the display
-        EDITCOLOR        EQU 0cah        ; light green on red
-        DEFAULTCOLOR     EQU 1fh         ; white on blue
-        HIGHLIGHTCOLOR   EQU 30h         ; black on dark cyan
+ifdef ?MONO
+        COL_EDIT         EQU 70h         ; just use black/white/grey
+        COL_DEFAULT      EQU 0fh
+        COL_INACTIVE     EQU 07h
+        COL_HIGHLIGHT    EQU 0F0h
+else
+;        COL_EDIT         EQU 0cah        ; light green on red
+        COL_EDIT         EQU 0B0h        ; black on light cyan
+        COL_DEFAULT      EQU 1fh         ; white on blue
+        COL_INACTIVE     EQU 17h         ; light grey on blue
+        COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
+endif
 
 ; "editmode" variable
         EM_DEFAULT       EQU 0
@@ -210,8 +126,8 @@ endif
 
 ; "drvtype" variable
         DT_PHYSICAL      EQU 0
-        DT_FAT           EQU 2
-        DT_CDROM         EQU 4
+        DT_LOGICAL       EQU 2
+        DT_CDROM         EQU 4           ; CD-ROM is actually also a "logical" drive
         DT_FILE          EQU 6
 
 ; "rwfunc" variable
@@ -257,7 +173,7 @@ endif
         PERIOD           EQU '.' ;2eh
         FORWARD_SLASH    EQU '/' ;2fh
         COLON            EQU ':' ;3ah
-        SEMICOLON        EQU ';' ;3bh
+        SEMICOLON        EQU 3bh; ';' ;3bh
         LESS_THAN        EQU '<' ;3ch
         GREATER_THAN     EQU '>' ;3eh
         QUESTION_MARK    EQU '?' ;3fh
@@ -288,7 +204,7 @@ endif
         PAGEDOWN_KEY     EQU 51h
         DEL_KEY          EQU 53h
 
-        CTRLENTER_KEY    EQU 1C0Ah	;check both AH & AL (so 0A can be entered by ctrl-j)
+        CTRLENTER_KEY    EQU 1C0Ah  ;check both AH & AL (so 0A can be entered by ctrl-j)
 
         CTRLLEFT_KEY     EQU 73h
         CTRLRIGHT_KEY    EQU 74h
@@ -340,6 +256,25 @@ local sym
 sym db text,0
     .data
     exitm <offset sym>
+endm
+
+;--- menu definition macros
+
+@mstart macro index
+_DATA2 segment
+index equ $ - startmenudefs
+endm
+
+@mend macro name_
+l&name_ equ ( $ - startmenudefs ) - name_
+_DATA2 ends
+endm
+
+@mitem macro stridx, cmdofs, name_
+name_  db stridx
+_TEXT2 segment
+    dw cmdofs
+_TEXT2 ends
 endm
 
 ;--- struct BPB, located in boot sector
@@ -457,8 +392,10 @@ pBuffer    dw ?
 IOREQ ends
 
 MENULVL struct  ; item for menu stack
-wMenuOfs dw ?
-wCmdOfs  dw ?
+bMenuStart db ?
+bMenuSize  db ?
+bSpaces    db ?
+           db ?
 MENULVL ends
 
 SECITEM struct  ; size must be 8
@@ -467,61 +404,8 @@ wSpot    dw ?
          dw ?
 SECITEM ends
 
-    .const
-
-initialmenu     db 3                    ; 3 spaces between each
-                db 0,1,2,3,4,5,6,-1
-
-filemenu        db 3
-                db 14,15,-1
-
-ldjumpmenu      db 2
-                db 7,8,9,10,11,12,13,-1
-
-cdjumpmenu      db 0
-                db 7,-1
-
-viewmenu        db 2
-                db 25,17,9,39,40,41,26,-1
-
-searchmenu      db 2
-                db 27,28,43,17,9,31,26,-1
-
-fillmenu        db 3
-                db 28,27,32,33,42,34,-1
-
-incdecmenu      db 3
-                db 35,36,37,38,-1
-
-cdfileoptmenu   db 3
-                db 14,24,-1
-
-
-pdfileoptmenu   label byte
-pdjumpmenu      db 2
-                db 16,17,18,19,20,21,-1
 
     .data  ; submenus "file options" & "functions" are dynamically modified
-
-MENUF_CHAIN equ 23
-
-ldfileoptmenu   db 2
-                db 16,9,10,11,12,22
-ldfileoptf7     db -2
-                db -1
-
-funcmenu        db 3
-                db 30,29
-ifndef ?BASIC
-
-MENUF_UNFORMAT equ 44
-MENUF_UNDELETE equ 45
-
-funcmf3         db -2    ; "unformat"
-funcmf4         db -2    ; "undelete"
-endif
-                db -1
-    align 2
 
     .const
 
@@ -531,7 +415,7 @@ copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
 owmsg           db 'File Exists - Append/Overwrite/Cancel [A/O/C]? ',0
 fhdmsg          db 'Floppy/Hard Disk [F/H]? ',0
 cdrcmsg         db 'Raw/Cooked Mode [R/C]? ',0
-plmsg           db 'Physical/Fat [P/F]? ',0
+plmsg           db 'Physical/Logical [P/L]? ',0
 abmsg           db 'Above/Below [A/B]? ',0
 ;fomsg           db 'New File/Abort [F/A]? ',0
 truncatemsg     db 'Truncate To Filesize',0
@@ -556,15 +440,15 @@ parthid         db 'Hid Fat',0 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B
 
 menustrings     label byte
                 db 'Save',0                             ; 0
-                db 'File Ops',0                         ; 1
+                db 'File',0                             ; 1
                 db 'Goto',0                             ; 2
                 db 'View',0                             ; 3
                 db 'Find',0                             ; 4
                 db 'Functions',0                        ; 5
-                db 'Disk',0                             ; 6
+                db 'Change Disk',0                      ; 6
                 db 'Sector',0                           ; 7
-                db 'Cluster',0                          ; 8
-                db 'Boot Sector',0                      ; 9
+                db 'Boot Sector',0                      ; 8
+                db 'Cluster',0                          ; 9
                 db 'Fat1',0                             ; 10
                 db 'Fat2',0                             ; 11
                 db 'Root',0                             ; 12
@@ -599,10 +483,17 @@ part04060E      db 'Fat16',0                            ; 40
 part0B0C        db 'Fat32',0                            ; 41
                 db 'Inverse',0                          ; 42
                 db 'Next',0                             ; 43
-        ifndef ?BASIC
-                db 'UnFormat',0                         ; 44
-                db 'UnDelete',0                         ; 45
-        endif
+                db 'Help',0                             ; 44
+
+MENUF_RESTORE equ 15
+MENUF_CHAIN   equ 23
+
+if ?EXT
+MENUF_UNFORMAT equ 45
+MENUF_UNDELETE equ 46
+                db 'UnFormat',0                         ; 45
+                db 'UnDelete',0                         ; 46
+endif
 
 
 startchs        db 'S-CHS ',0
@@ -716,7 +607,7 @@ bHL             db ? ; keeps track of whether we're editing high or low nibble
 
     align dword
 fromfat         db ? ; fat to use for getfatentry/putfatentry
-fattype         db ? ; type of fat
+filesys         db ? ; type of fat
 bSpc            db ? ; sectors per cluster
 bFats           db ? ; number of fats
 dwSpf           dd ? ; sectors per fat
@@ -797,13 +688,13 @@ lostdirs        dw ?            ; total lost directories found
 rootdirs        dw ?            ; total root directories found
 wDirs           dw ?            ; total dirs found
 
-ifdef _DEBUG
+if ?DEBUG
   storedeax     dd ?
   storedebx     dd ?
   storedecx     dd ?
   storededx     dd ?
-  storedsi      dd ?
-  storeddi      dd ?
+  storedsi      dw ?
+  storeddi      dw ?
 endif
 
 fat12fixsec     dd ?            ; sector # for fat12 fix
@@ -932,7 +823,7 @@ endif
     jb inval_cmd
     cmp al, '9'
     jbe maybedrive
-    mov bh, DT_FAT
+    mov bh, DT_LOGICAL
     or al, 20h
     cmp al, 'a'
     jb inval_cmd
@@ -996,13 +887,23 @@ drive_ok::
     call setvariables           ; set all obtainable parameter variables
 
     xor dx, dx
-    call spotcalc
+    call nspotcalc
     mov [crsr_xy], dx           ; set cursor to spot 0
     call printoffset            ; print current offset
 
-    mov menustack.wMenuOfs, offset initialmenu
-    mov menustack.wCmdOfs, offset initialcmds
-    mov menustackidx, 0
+    @mstart initialmenu      ; main menu definition
+    @mitem  0, savetodisk
+    @mitem  1, submenu_file
+    @mitem  2, submenu_jumpto
+    @mitem  3, submenu_view
+    @mitem  4, submenu_find
+    @mitem  5, submenu_functions
+    @mitem 44, helpscreen
+    @mend initialmenu
+
+    mov dx, initialmenu + linitialmenu shl 8
+    mov cl, 3
+    call initmenustack
 
 Start endp
 
@@ -1030,7 +931,7 @@ getkeyagain:
     cmp ax, CTRLENTER_KEY       ; jump to FAT entry for current cluster
     je handle_ctlenter
 
-    call checkmenu              ; check for menu (=function) keys
+    call checkmenukey           ; check for menu (=function) keys
 
     mov dx, sp                  ; set dx to "clean" stack
     push offset getkeyagain     ; default to 'no full screen update'
@@ -1107,7 +1008,7 @@ donefixbin:
 
 displaybyte:                    ; display AL both in hex/binary and ascii
     mov dx, bx
-    call spotcalc
+    call nspotcalc
     mov [scrn_xy], dx
     cmp [displaymode], DM_HEX   ; hex or binary?
     je @F
@@ -1209,51 +1110,45 @@ ctrlkeys proc
 ctrlkeys endp
 
 ;--- check if function key is for current menu
-;--- ax must be preserved
+;--- modifies cx, bx
 
-checkmenu proc
+checkmenukey proc
 
+    mov cl, ah
+    sub cl, F1_KEY
+    jb @F
     movzx bx, [menustackidx]
     shl bx, 2
     add bx, offset menustack
-    mov cl, F1_KEY
-    mov si, [bx].MENULVL.wMenuOfs  ; starts with the "spaces between items" member
-nextitem:
-    inc si
-    cmp byte ptr [si], -1
-    jz @F
-    cmp ah, cl
-    jz found
-    inc cl
-    jmp nextitem
+    cmp cl, [bx].MENULVL.bMenuSize
+    jb found
 @@:
     ret
 found:
-    cmp byte ptr [si], -2 ; item deactivated?
+    add cl, [bx].MENULVL.bMenuStart
+    movzx bx, cl
+    cmp [bx][startmenudefs], -2 ; item deactivated?
     jz @B
-    mov bx, [bx].MENULVL.wCmdOfs
-    sub cl, F1_KEY
-    movzx cx, cl
-    shl cx, 1
-    add bx, cx
-    pop cx                ; skip return address
-    jmp word ptr cs:[bx]  ; function tables are in the code segment
+    shl bx, 1
+    pop cx                      ; skip return address
+    jmp cs:[bx][startmenucmds]  ; function tables are in the code segment
 
-checkmenu endp
+checkmenukey endp
 
 ;--- push a new level onto the menu stack
 ;--- there's room for 4 levels ( all are used )
 ;--- example: 0=initialcmds, 1=funccmds, 2=fillcmds, 3=incdeccmds
-;--- in: CX=offset cmd table
-;---     DX=offset menu table
+;--- in: DL=start, DH=size menu
 
 pushmenustack proc
     inc [menustackidx]
+initmenustack::
     movzx bx, [menustackidx]
     shl bx, 2
     add bx, offset menustack
-    mov [bx].MENULVL.wMenuOfs, dx
-    mov [bx].MENULVL.wCmdOfs, cx
+    mov [bx].MENULVL.bMenuStart, dl
+    mov [bx].MENULVL.bMenuSize, dh
+    mov [bx].MENULVL.bSpaces, cl
     ret
 
 pushmenustack endp
@@ -1299,7 +1194,7 @@ trydevice proc
     jmp tryread
 @@:
     mov [ioreq.bDrive], al
-    cmp bh, DT_FAT
+    cmp bh, DT_LOGICAL
     jz trylogical
     call setphysvars              ; if ok, [ioreq.rwfuncs] and [wBps] are adjusted
     jnc tryread
@@ -1339,7 +1234,7 @@ driveerror:
 
 iscdrom:
     mov [ioreq.rwfunc], RWF_CDCOOKED
-    mov [ioreq.drvtype], DT_CDROM     ; overwrite DT_FAT
+    mov [ioreq.drvtype], DT_CDROM     ; overwrite DT_LOGICAL
 
 ;    mov [cdheader._size], 13          ; size of header
     mov [cdheader._size], sizeof CDREQ
@@ -1389,7 +1284,7 @@ getkeyagain:
     cmp al, 9                   ; if the value is <= 9, the key pressed was
     jbe hdphysical              ; a drive number, 0-9
 
-    mov bh, DT_FAT
+    mov bh, DT_LOGICAL
     sub al, 17                  ; 17 is the 65-48, so 'A' = 0, 'B' = 1, etc
     cmp al, 26                  ; if the value is > 26, a non-letter
     jbe done                    ; was pressed (non-valid drive letter)
@@ -1429,6 +1324,7 @@ handle_tabkey:
     jmp setdrive
 
 fnreq:
+    mov al,0
     call getfilename
     cmp ah, TAB_SCAN
     je handle_tabkey
@@ -1457,30 +1353,81 @@ done:
     ret
 setdrive endp
 
-;--- main menu, item "disk"
+;--- menuitem "disk"
 
 select_disk proc
 @@:
     call setdrive
     jc done
     call trydevice
-    jnc drive_ok
-    jmp @B
+    jc @B
+    call setvariables
 done:
     ret
 select_disk endp
 
 
-    align 2
+	.const
+quickhelptext label byte
+    db "Quick Key Reference",0
+    db 0
+    db "Escape        - Back out of a menu (Quit also)",0
+    db "Arrow Keys    - Change offset within data",0
+    db "Home/End      - Move cursor to start/end of data",0
+    db "PageUp        - Back 1 sector",0
+    db "PageDown      - Forward 1 sector",0
+    db "Ctrl+PageUp   - Back 100 sectors",0
+    db "Ctrl+PageDown - Forward 100 sectors",0
+    db "Tab           - Switch to/from ascii editing",0
+    db "Shift+Tab     - Switch between hex and binary",0
+    db "Ctrl+End      - Jump to last sector on drive",0
+    db "Ctrl+Home     - Jump to first sector on drive",0
+    db "Ctrl+Up       - pop sector from stack and jump to it",0
+    db 0
+    db "Keys in Fat of Fat32/Fat1x partitions:",0
+    db 0
+    db "Ctrl+Right    - Jump to linked fat entry",0
+    db "Ctrl+Left     - Recurse to find linking fat entry",0
+    db "Enter         - Jump to current entry's data",0
+    db 0
+    db "Keys in Data area of Fat32/Fat1x partitions:",0
+    db 0    
+    db "Ctrl+Right    - Jump to linked cluster in fat",0
+    db "Ctrl+Enter    - Jump to fat entry for this cluster",0
+    db "Enter         - If in directory, jump to first cluster of entry",0
+    db -1
 
-initialcmds label word      ; main menu cmd table
-    dw savetodisk
-    dw submenu_file
-    dw submenu_jumpto
-    dw submenu_view
-    dw submenu_find
-    dw submenu_functions
-    dw select_disk
+    .code
+
+helpscreen proc
+
+    call clearscreen
+    mov [scrn_xy],0205h
+    mov dx, offset quickhelptext
+nextline:
+    call printstring
+    mov si, dx
+nextchar:
+    lodsb
+    cmp al,0
+    jnz nextchar
+    cmp byte ptr [si],-1
+    jz done
+    inc [scrn_row]
+    mov [scrn_col],5
+    mov dx, si
+    jmp nextline
+done:
+    mov dx, CStr("ESC to return")
+    call printbottom
+nextkey:
+    call getkey
+    cmp al, ESCAPE_KEY
+    jnz nextkey
+    call clearscreen
+    call printoffset
+    ret
+helpscreen endp
 
 ;--- main menu, item "save": rewrite current sector 
 
@@ -1520,7 +1467,7 @@ restrictabove:
     sub [dwDataend], eax                ; [dwCurSector] for r/w, so adjust the
     xor eax, eax                        ; final sector accordingly
     mov [dwCurSector], eax
-    mov dx, offset plmsg                ; "physical/FAT?"
+    mov dx, offset plmsg                ; "physical/logical?"
     call printbottom
 rsgetkeys2:
     call cursorgetkey
@@ -1530,9 +1477,9 @@ rsgetkeys2:
     mov dl, DT_PHYSICAL
     cmp al, 'p'
     je donesetpl
-    cmp al, 'f'
+    cmp al, 'l'
     jne rsgetkeys2
-    mov dl, DT_FAT
+    mov dl, DT_LOGICAL
 donesetpl:
     mov [ioreq.drvtype], dl
     call setvariables
@@ -1544,34 +1491,30 @@ restrictsectors endp
 
 submenu_functions proc
 
+    @mstart funcmenu
+    @mitem 30, restrictsectors
+    @mitem 29, submenu_fill
+if ?EXT
+    @mitem -2, unformat, funcmf3    ; "unformat"
+    @mitem -2, undelete, funcmf4    ; "undelete"
+endif
+    @mend funcmenu
+
     mov al, -2
-    cmp [ioreq.drvtype], DT_FAT
-    jnz @F
+    test [filesys], FS_FATXX
+    jz @F
     mov al, MENUF_UNFORMAT
 @@:
     mov [funcmf3], al             ; set/remove "unformat"
-    mov dx, offset funcmenu
-    mov cx, offset funccmds
+    mov dx, funcmenu + lfuncmenu shl 8
+    mov cl, 3
     jmp pushmenustack
-
-;    .const
-    align 2
-
-funccmds label word
-    dw restrictsectors
-    dw submenu_fill
-ifndef ?BASIC
-    dw unformat
-    dw undelete
-endif
-
-;    .code
 
 submenu_functions endp
 
     include sprintf.inc
 
-ifndef ?BASIC
+if ?EXT
 ;------------------------------------------------------
     include UNDELETE.INC
 ;------------------------------------------------------
@@ -1583,22 +1526,18 @@ endif
 
 submenu_fill proc
 
-    mov dx, offset fillmenu
-    mov cx, offset fillcmds
+    @mstart fillmenu
+    @mitem 28, fillhex
+    @mitem 27, fillstring
+    @mitem 32, fillincr
+    @mitem 33, filldecr
+    @mitem 42, fillinverse
+    @mitem 34, fillrandom
+    @mend fillmenu
+
+    mov dx, fillmenu + lfillmenu shl 8
+    mov cl, 3
     jmp pushmenustack
-
-;    .const
-    align 2
-
-fillcmds label word
-    dw fillhex
-    dw fillstring
-    dw fillincr
-    dw filldecr
-    dw fillinverse
-    dw fillrandom
-
-;    .code
 
 fillincr:
     mov [fillflag+1], FL_INCREMENT
@@ -1615,25 +1554,20 @@ fillrandom:
 
 submenu_fill endp
 
-
 ;--- items "decremental", "incremental" of submenu "fill"
 
 submenu_incdec proc
 
-    mov dx, offset incdecmenu
-    mov cx, offset incdeccmds
+    @mstart incdecmenu
+    @mitem 35, fillbit8
+    @mitem 36, fillbit12
+    @mitem 37, fillbit16
+    @mitem 38, fillbit32
+    @mend incdecmenu
+
+    mov dx, incdecmenu + lincdecmenu shl 8
+    mov cl, 3
     jmp pushmenustack
-
-;    .const
-    align 2
-
-incdeccmds label word
-    dw fillbit8
-    dw fillbit12
-    dw fillbit16
-    dw fillbit32
-
-;    .code
 
 fillbit8:
     mov [fillflag], FL_BIT8
@@ -1903,13 +1837,13 @@ printprogress:
 changemode proc
   cmp al, 0                     ; shift+tab?
   je @F
-  xor [editmode], 1             ; switch between ascii/regular editing
+  xor [editmode], EM_ASCII      ; switch between ascii/regular editing
   call colorchar
   ret
 @@:
-  xor [displaymode], 1          ; switch between hex/binary editing
+  xor [displaymode], DM_BINARY  ; switch between hex/binary editing
   call clearsecarea
-  xor dl, dl
+  xor dl, dl                    ; reset bHL
   mov ax, [spot]
   call movecursor
   ret
@@ -1926,8 +1860,10 @@ jumpstkpop endp
 ;--- jump to cluster entry in FAT
 
 handle_ctlenter proc
-    cmp [ioreq.drvtype], DT_FAT ; won't work with non-logical drives
-    jne done
+;    cmp [ioreq.drvtype], DT_LOGICAL ; won't work with non-logical drives
+;    jne done
+    test [filesys], FS_FATXX    ; must be a FAT drive
+    je done
     mov eax, [dwCurSector]
     test eax, eax
     jz log2phys
@@ -1939,7 +1875,7 @@ handle_ctlenter proc
     call pushsecstack           ; push sector# in eax onto sector stack
     call sector2cluster         ; convert sector# to cluster#
     call go2entry               ; convert cluster# to [ioreq.dwSector] + [spot] (location inside FAT)
-    call rwsectx                ; read that FAT sector
+    call rwsectx                ; read FAT sector set by go2entry
 done:
     ret
 
@@ -2094,8 +2030,10 @@ jumpcluster endp
 ;--- in DIR area: jump to starting cluster of dir entry
 
 handle_enter proc
-    cmp [ioreq.drvtype], DT_FAT         ; FAT disk?
-    jne done
+;    cmp [ioreq.drvtype], DT_LOGICAL     ; FAT disk?
+;    jne done
+    test [filesys], FS_FATXX            ; FAT disk?
+    je done
 
     cmp [viewmode], VM_DIRECTORY
     je do_direntry
@@ -2155,23 +2093,19 @@ handle_enter endp
 
 submenu_view proc
 
-    mov dx, offset viewmenu
-    mov cx, offset viewcmds
+    @mstart viewmenu
+    @mitem 25, defaultview
+    @mitem 17, specview
+    @mitem  8, specview
+    @mitem 39, specview
+    @mitem 40, specview
+    @mitem 41, specview
+    @mitem 26, specview
+    @mend viewmenu
+
+    mov dx, viewmenu + lviewmenu shl 8
+    mov cl, 2
     jmp pushmenustack
-
-;    .const
-    align 2
-
-viewcmds label word
-    dw defaultview
-    dw specview
-    dw specview
-    dw specview
-    dw specview
-    dw specview
-    dw specview
-
-;    .code
 
 specview:
     sub ah, F1_KEY
@@ -2194,24 +2128,20 @@ submenu_view endp
 
 submenu_find proc
 
+    @mstart searchmenu
+    @mitem 27, findstring
+    @mitem 28, findhex
+    @mitem 43, findnext
+    @mitem 17, findmbr
+    @mitem  8, findbs
+    @mitem 31, findfat
+    @mitem 26, finddir
+    @mend searchmenu
+
     mov [handling], QUERY_SKIP    ; useless to do here, it's reset in main
-    mov dx, offset searchmenu
-    mov cx, offset searchcmds
+    mov dx, searchmenu + lsearchmenu shl 8
+    mov cl, 2
     jmp pushmenustack
-
-;    .const
-    align 2
-
-searchcmds label word
-    dw findstring
-    dw findhex
-    dw findnext
-    dw findmbr
-    dw findbs
-    dw findfat
-    dw finddir
-
-;    .code
 
 backupsector:
     push [dwCurSector]
@@ -2457,10 +2387,10 @@ setfsview:
 ;-------------------------------------------------------
 choosefatview:
     mov dl, VM_FAT32
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     je setDLview
     mov dl, VM_FAT16
-    cmp [fattype], FT_FAT16
+    cmp [filesys], FS_FAT16
     je setDLview
     mov dl, VM_FAT12
 
@@ -2643,18 +2573,21 @@ findcommon endp
 
 submenu_file proc
 
-    mov ah, F1_KEY                     ; default for CDROM ( see submenu_fileoptions )
-    cmp [ioreq.drvtype], DT_CDROM      ; for CDROMs, there's no "restore"; skip this level!
-    je submenu_fileoptions
-    mov dx, offset filemenu
-    mov cx, offset filecmds
+    @mstart filemenu               ; file menu cmd table
+    @mitem 14, submenu_fileoptions
+    @mitem 15, submenu_fileoptions, filemenu_restore
+    @mitem  6, select_disk
+    @mend filemenu
+
+    mov al, MENUF_RESTORE
+    cmp [ioreq.drvtype], DT_CDROM
+    jne @F
+    mov al,-2                      ; for CDROMs, remove "restore"
+@@:
+    mov [filemenu_restore], al
+    mov dx, filemenu + lfilemenu shl 8
+    mov cl, 3
     jmp pushmenustack
-
-    align 2
-
-filecmds label word         ; file menu cmd table
-    dw submenu_fileoptions
-    dw submenu_fileoptions
 
 submenu_file endp
 
@@ -2910,6 +2843,7 @@ restchain endp
 ;-------------------------------------------------------
 srcommon proc
     push ax
+    mov al,1
     call getfilename
     pop ax
     jcxz srskip
@@ -2944,55 +2878,62 @@ savefile endp
 
 submenu_fileoptions proc
 
+    @mstart cdfileoptmenu
+    @mitem 14, srfile
+    @mitem 24, dumpiso
+    @mend cdfileoptmenu
+
+    @mstart pdfileoptmenu
+    @mitem 16, srfile
+    @mitem 17, srsector0
+    @mitem 18, srhdcheck
+    @mitem 19, srhdcheck
+    @mitem 20, srhdcheck
+    @mitem 21, srhdcheck
+    @mend pdfileoptmenu
+
+
+    @mstart ldfileoptmenu
+    @mitem 16, srfile
+    @mitem  8, srsector0
+    @mitem 10, srfat1
+    @mitem 11, srfat2
+    @mitem 12, srroot
+    @mitem 22, srdisk
+    @mitem -2, srchain, ldfileoptf7 
+    @mend ldfileoptmenu
+
     cmp ah, F2_KEY
     setz [srflag]                  ; set SR_RESTORE for F2, else SR_SAVE
 
-    mov dx, offset cdfileoptmenu   ; F1=save file F2=dump cd as ISO
-    mov cx, offset cdfileoptcmds
+    mov cl, 3
+;--- set simple CD menu: F1=save file F2=dump cd as ISO
+    mov dx, cdfileoptmenu + lcdfileoptmenu shl 8
     cmp [ioreq.drvtype], DT_CDROM
     je  setxxfileopt
 
 ;--- print file option menu for non-CD devices.
 ;--- for physical devices, just print the corresponding menu
 
-    mov dx, offset pdfileoptmenu ; menu "input, MBR, partition1, ..."
-    mov cx, offset pdfileoptcmds
+    dec cx                         ; 2 spaces only
+;--- set menu "input, MBR, partition1, ..."
+    mov dx, pdfileoptmenu + lpdfileoptmenu shl 8
     cmp [ioreq.drvtype], DT_PHYSICAL
     je setxxfileopt
 
-;--- for logical devices, check if the menu item "chain" is to be added
+;--- for FAT drives, check if the menu item "chain" is to be added
 
-    mov [chainflag], NO_CHAIN    ; reset chain flag
+    mov [chainflag], NO_CHAIN      ; reset chain flag
 
-    mov dx, offset ldfileoptmenu ; menu "input, boot sector, fat1, ..."
-    mov cx, offset ldfileoptcmds
+;--- set menu "input, boot sector, fat1, ..."
+
+    mov dx, ldfileoptmenu + lldfileoptmenu shl 8
+    test [filesys], FS_FATXX       ; non-FAT drives?
+    jne setxxfileopt
+    mov dh, 2                      ; then just allow "sectors" & "boot sector"
 
 setxxfileopt:
     jmp pushmenustack
-
-;    .const
-    align 2
-
-ldfileoptcmds label word
-    dw srfile
-    dw srsector0
-    dw srfat1
-    dw srfat2
-    dw srroot
-    dw srdisk
-    dw srchain
-pdfileoptcmds label word
-    dw srfile
-    dw srsector0
-    dw srhdcheck
-    dw srhdcheck
-    dw srhdcheck
-    dw srhdcheck
-cdfileoptcmds label word
-    dw srfile
-    dw dumpiso
-
-;    .code
 
 srfile:
     cmp [srflag], SR_RESTORE
@@ -3043,7 +2984,7 @@ srroot:
     mov eax, [dwRoot]
     xor edx, edx
 
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     jne userootsects
     mov dl, [bSpc]       ;known bug: FAT32 root dir may be more than just 1 cluster!
     jmp dorootsr
@@ -3164,38 +3105,41 @@ restfile endp
 
 submenu_jumpto proc
 
-    mov dx, offset pdjumpmenu   ;menu "input, MBR, partition1, ..."
-    mov cx, offset pdjumpcmds
+    @mstart pdjumpmenu
+    @mitem 16, jumptosector
+    @mitem 17, jumptobootsector
+    @mitem 18, jumptop1
+    @mitem 19, jumptop2
+    @mitem 20, jumptop3
+    @mitem 21, jumptop4
+    @mend pdjumpmenu
+
+    @mstart ldjumpmenu
+    @mitem  7, jumptosector
+    @mitem  8, jumptobootsector
+    @mitem  9, jumptocluster
+    @mitem 10, jumptofat1
+    @mitem 11, jumptofat2
+    @mitem 12, jumptoroot
+    @mitem 13, jumptodata
+    @mend ldjumpmenu
+
+cdjumpmenu equ ldjumpmenu
+
+    mov cl, 2
+;--- set menu "input, MBR, partition1, ..."
+    mov dx, pdjumpmenu + lpdjumpmenu shl 8
     cmp [ioreq.drvtype], DT_PHYSICAL
     je @F
-    mov dx, offset ldjumpmenu
-    mov cx, offset ldjumpcmds
+    mov dx, cdjumpmenu + 1 shl 8
     cmp [ioreq.drvtype], DT_CDROM
-    jne @F
-    mov dx, offset cdjumpmenu
+    je @F
+    mov dh, 2                  ; for non-fat logical devices, allow jump to boot sector
+    test [filesys], FS_FATXX
+    jz @F
+    mov dx, ldjumpmenu + lldjumpmenu shl 8
 @@:
     jmp pushmenustack
-
-;    .const
-    align 2
-
-ldjumpcmds label word
-    dw jumptosector
-    dw jumptocluster
-    dw jumptobootsector
-    dw jumptofat1
-    dw jumptofat2
-    dw jumptoroot
-    dw jumptodata
-pdjumpcmds label word
-    dw jumptosector
-    dw jumptobootsector
-    dw jumptop1
-    dw jumptop2
-    dw jumptop3
-    dw jumptop4
-
-;    .code
 
 jumptop1:
     mov ebx, [partitions+0]
@@ -3388,7 +3332,7 @@ updateview proc
     cmp al, VM_FSINFO
     je fsinfoviewmode
 
-ifdef _DEBUG
+if ?DEBUG
     cmp al, VM_DEBUG
     je debugviewmode
 endif
@@ -3420,7 +3364,7 @@ nextitem:
     call bshighlight
     mov dx, offset unknownmsg
     call printstring
-    mov ax, DEFAULTCOLOR*100h + ' '
+    mov ax, COL_DEFAULT shl 8 or SPACE
     mov cl, 3
     call fillcell
     jmp dtsc
@@ -3449,7 +3393,7 @@ fsinfoviewmode endp
 
 lfnview proc
 
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     mov cl, 78
     call fillcell
 
@@ -3549,7 +3493,7 @@ done:
     cmp [scrn_row], VIEWROW+5
     jz @F
     call printcrlf
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     mov cl, 78
     call fillcell
     jmp @B
@@ -3588,7 +3532,7 @@ printeol:
     mov dl, '"'
     call printchar
     call printcrlf
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     mov cl, 78
     call fillcell
     mov [scrn_col], 11
@@ -3621,6 +3565,8 @@ dirview proc
     mov ah, NO_CHAIN
     cmp byte ptr [si+bx], 0      ; dir entry empty?
     jz @F
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
+    jz @F
     mov al, MENUF_CHAIN
     mov ah, FILE_CHAIN
 @@:
@@ -3637,7 +3583,7 @@ nochainadjust:
     mov al, -2
     cmp byte ptr [si+bx], 0E5h
     jnz @F
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
     jz @F
     mov al, MENUF_UNDELETE
 @@:
@@ -3661,7 +3607,7 @@ noundeleteadjust:
     jz lfnview
 
     mov cl, 78
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     call fillcell
     mov [scrn_col], 5
 
@@ -3701,7 +3647,7 @@ noundeleteadjust:
     call printcrlf
 
     mov cl, 78
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     call fillcell
 
     inc [scrn_col]
@@ -3781,7 +3727,7 @@ noundeleteadjust:
     call printcrlf
 
     mov cl, 78
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     call fillcell
 
 ;--- print last access date
@@ -3825,7 +3771,7 @@ noundeleteadjust:
 ;--- print last modified date
 
     mov cl, 78
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     call fillcell
 
     mov dx, offset modifiedmsg    ; last modified
@@ -4336,6 +4282,8 @@ mbrview endp
 
     .data
 
+;--- FAT BPB struct
+
 bsviewtab label word
     dw BPB.bytes_sector
     dw DStr('Bytes Per Sector')
@@ -4389,6 +4337,13 @@ bsview proc
     mov [scrn_xy], VIEWROW * 100h + 1
 
     call bufferinsi
+
+    test [filesys], FS_NTFS
+    jnz bsntfsview
+    test [filesys], FS_EXFAT
+    jnz bsexfatview
+
+;--- todo: check for NTFS and EXFAT filesystems
 
     mov di, offset bsviewtab
 
@@ -4492,6 +4447,132 @@ npldn2:
 
 bsview endp
 
+    .data
+
+;--- NTFS BPB struct
+
+bsntfsviewtab label word
+    dw BPB.bytes_sector
+    dw DStr('Bytes Per Sector')
+    dw 0502h
+    dw BPB.reserved_sectors
+    dw DStr('Reserved Sectors')
+    dw 0502h
+    dw BPB.media_byte
+    dw DStr('Media Descriptor')
+    dw 0301h
+    dw BPB.hidden_sectors
+    dw DStr('Partition Start')
+    dw 0A04h
+    dw 28h
+    dw DStr('Sectors In Partition')
+    dw 0A04h
+lbsntfsviewtab equ ($ - offset bsntfsviewtab) / ( 3 * sizeof word )
+
+    .code
+
+bsntfsview proc
+    mov di, offset bsntfsviewtab
+    mov cl,lbsntfsviewtab
+    mov ch,0
+nextitem:
+    push cx
+    call basicbs
+    add di,3*2
+
+    mov cl, 9
+    mov al, SPACE
+    call fillchar
+
+    pop cx
+    mov [scrn_col], 40
+    test ch, 1
+    jz @F
+    call printcrlf
+@@:
+    inc ch
+    dec cl
+    jnz nextitem
+    ret
+basicbs:
+    mov bx, [di+0]
+    mov dx, [di+2]
+    mov cx, [di+4]
+
+    mov eax, [si+bx]
+    cmp cl, 2
+    jnz @F
+    movzx eax, ax
+@@:
+    cmp cl, 1
+    jnz @F
+    movzx eax, al
+@@:
+    mov word ptr [highlight_ofs], bx
+    mov word ptr [highlight_size], cx
+    call printstring
+    call spaceandcolon
+    call printvalue_hl
+    ret
+bsntfsview endp
+
+;--- EXFAT BPB struct
+
+    .data
+
+bsexfatviewtab label word
+    dw 48h
+    dw DStr('Sectors In Partition')
+    dw 0A04h
+lbsexfatviewtab equ ($ - offset bsexfatviewtab) / ( 3 * sizeof word )
+
+    .code
+
+bsexfatview proc
+    mov di, offset bsexfatviewtab
+    mov cl,lbsexfatviewtab
+    mov ch,0
+nextitem:
+    push cx
+    call basicbs
+    add di,3*2
+
+    mov cl, 9
+    mov al, SPACE
+    call fillchar
+
+    pop cx
+    mov [scrn_col], 40
+    test ch, 1
+    jz @F
+    call printcrlf
+@@:
+    inc ch
+    dec cl
+    jnz nextitem
+    ret
+basicbs:
+    mov bx, [di+0]
+    mov dx, [di+2]
+    mov cx, [di+4]
+
+    mov eax, [si+bx]
+    cmp cl, 2
+    jnz @F
+    movzx eax, ax
+@@:
+    cmp cl, 1
+    jnz @F
+    movzx eax, al
+@@:
+    mov word ptr [highlight_ofs], bx
+    mov word ptr [highlight_size], cx
+    call printstring
+    call spaceandcolon
+    call printvalue_hl
+    ret
+bsexfatview endp
+
 ;--- "emulate" a cr,lf sequence
 
 printcrlf:
@@ -4525,7 +4606,7 @@ bshighlight proc
 
 ;--- check if current spot matches highlight.ofs
 
-    mov al, DEFAULTCOLOR
+    mov al, COL_DEFAULT
     mov cl, [highlight_scsiz]    ;no of chars on screen to highlight
     movzx bx, [highlight_size]
     mov dx, [highlight_ofs]
@@ -4534,7 +4615,7 @@ bshighlight proc
     add dx, bx
     cmp [spot], dx
     jae nextcell
-    mov al, HIGHLIGHTCOLOR
+    mov al, COL_HIGHLIGHT
     mov ch, cl
 nextcell:
     inc di
@@ -4628,6 +4709,7 @@ golastsect:
 ;--- and it's NOT remote ( CD-ROM / network ).
 ;--- What remains is to check if it's to be accessed
 ;--- via int 25h/26h or int 21h, ax=7305h
+;--- this is also true if FS is NTFS or EXFAT.
 
 setlogvars proc
     mov di, offset sprintfbuffer
@@ -4732,10 +4814,14 @@ done:
 setphysvars endp
 
 ;--- disk change. obtain all info
-;--- IN:   [ioreq.drvtype] & [ioreq.rwfunc]
+;--- IN:   [ioreq.drvtype], [ioreq.bDrive] & [ioreq.rwfunc]
+;--- sector 0 read in sectbuffer
+;--- for logical devices: disk type may be FAT, NTFS, EXFAT
 
 setvariables proc
     call setseeds2
+
+    mov [filesys], FS_UNDEFINED         ; reset FAT type
 
     cmp [ioreq.drvtype], DT_CDROM
     je setcdvar
@@ -4766,9 +4852,25 @@ setcdvar:
     ret
 
 logicalsetvars:
-    mov si, offset sectbuffer
+
     xor eax, eax
     mov [dwRootcluster], eax                  ; default root cluster = 0
+
+;--- get file system
+;--- no DOS functions can be used here, 
+;--- since under pure DOS we won't have a valid drive letter.
+;--- all information must be read from the boot sector
+
+    mov si, offset sectbuffer
+    mov eax, [si+3]
+    cmp eax, "SFTN"
+    jz isntfs
+    cmp eax, "AFXE"
+    jnz assumefat
+    mov eax, [si+7]
+    cmp eax, "   T"
+    jz isexfat
+assumefat:
     mov al, [si].BPB.sectors_cluster          ; sectors per cluster
     mov [bSpc], al
 
@@ -4779,7 +4881,7 @@ logicalsetvars:
     jnz @B
     mov [spcmd], dl
 
-    mov ax, [si].BPB.reserved_sectors         ; number of reserved sectors
+    movzx eax, [si].BPB.reserved_sectors      ; number of reserved sectors
     mov [dwReserved], eax
     mov al, [si].BPB.num_fats                 ; number of fat tables
     mov [bFats], al
@@ -4815,13 +4917,13 @@ skipsub2:
     mov cl, [spcmd]
     shr eax, cl
 
-    mov [fattype], FT_FAT32
+    mov [filesys], FS_FAT32
     cmp eax, 65525
     jae goodnumcluster                  ; jump if not fat16 or less
-    mov [fattype], FT_FAT16
+    mov [filesys], FS_FAT16
     cmp eax, 4085
     jae goodnumcluster                  ; jump if not fat12
-    mov [fattype], FT_FAT12
+    mov [filesys], FS_FAT12
 goodnumcluster:
     add eax, 2
     mov [dwLastcluster], eax
@@ -4832,7 +4934,7 @@ goodnumcluster:
     add eax, [dwReserved]               ; spf * fats + reserved = root
     mov [dwRoot], eax
 
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     jne not_fat32
 
     push eax
@@ -4881,7 +4983,7 @@ datastartiscorrect:
     mul ebx
     mov [dwBpc], eax
 
-    cmp [ioreq.drvtype], DT_FAT
+    cmp [ioreq.drvtype], DT_LOGICAL
     jnz donegetvars
 if ?VDD
 ;--- windows complains if drive is an USB memory stick.
@@ -4894,7 +4996,7 @@ endif
 ;--- there should be a corresponding unlock (86A/486A) when done with the drive
 
     mov cx, 084Ah       ; this is for FAT12/FAT16
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     jne @F
     mov ch, 48h
 @@:
@@ -4910,6 +5012,27 @@ endif
     int 21h             ; some sort of OS bug i guess
 donegetvars:
     ret
+
+isntfs:
+    mov [filesys], FS_NTFS
+    mov eax, [si+28h]
+    dec eax
+    mov [dwDataend], eax
+    mov [dwReserved], 1
+    jmp donegetvars
+
+isexfat:
+    mov [filesys], FS_EXFAT
+    mov [dwRoot], 0
+;    mov eax, [si+64]
+;    mov [???], eax
+    mov eax, [si+72]
+    dec eax
+    mov [dwDataend], eax
+    mov [dwReserved], 1
+    mov eax, [si+92]
+    mov [dwLastcluster], eax
+    jmp donegetvars
 
 setffparam:
     mov eax, [dwRwfilesize]
@@ -5319,8 +5442,9 @@ aspotcalc:
     and dh, 00000001b             ; max spot is 1FFh
     shl dx, 4                     ; set row pos in DH (0-15)
     shr dl, 4                     ; restore dl
-    add dl, 3Fh                   ; starts at col 63
-    inc dh                        ; lines start at 1
+    add dl, COLASC
+;    inc dh
+    add dh, ROWXXX                ; lines start at 1
     ret
 
 ;-------------------------------------------------------
@@ -5399,7 +5523,7 @@ getdecvalue endp
 printtopline proc
     pushad
     mov [scrn_xy], 0021           ; set row 0, col 21
-    mov [bRegion], UNDEFINED
+    mov [bRegion], RG_UNDEFINED
     mov eax, [dwCurSector]
 
     mov dx, offset sprintfbuffer
@@ -5421,9 +5545,12 @@ printtopline proc
     cmp [ioreq.drvtype], DT_CDROM
     je indata
 
-    mov edx, [dwReserved]
+    mov edx, [dwReserved]          ; [dwReserved] is initialized in FS_NTFS and FS_EXFAT
     cmp eax, edx
     jb inreserved
+
+    test [filesys], FS_FATXX
+    je indata
 
     movzx cx, [bFats]
     jcxz notinfat
@@ -5445,7 +5572,7 @@ notinfat:
     mov [bRegion], RG_ROOT
 
     mov dx, offset inrootmsg
-    cmp [fattype], FT_FAT32
+    cmp [filesys], FS_FAT32
     je dispclust
 continuecount:
     call printstring
@@ -5507,7 +5634,7 @@ firstfat:
     mov cl, 2
     call fillchar
 
-    cmp [fattype], UNDEFINED
+    test [filesys], FS_FATXX
     je abortdc
 
     mov [scrn_col], 2Dh
@@ -5535,8 +5662,10 @@ dispclust:
     mov dl, SPACE
     call printchar
 
-    cmp [ioreq.drvtype], DT_FAT
-    jne abortdc
+;    cmp [ioreq.drvtype], DT_LOGICAL
+;    jne abortdc
+    test [filesys], FS_FATXX
+    je abortdc
 
     or [bRegion], RG_DATA
 
@@ -5690,58 +5819,94 @@ printsector proc
     sub dx, [sectofs]
     mov [rembytes], dx
 
+if 0
     cmp [spot], dx
-    jb notsignificant
+    jb @F
     dec dx
     mov ax, dx
     mov dl, [bHL]
-notsignificant:
-
+@@:
     xor eax, eax
-    xor cx, cx
+endif
 
-nextchar:
-
+    mov [scrn_xy], COLASC or (ROWXXX shl 8)
+    xor cx, cx            ; cx=spot
+    push si
+nextchar1:
     lodsb
-    mov dx, cx
-    call aspotcalc
-    mov [scrn_xy], dx
     mov dl, al
     cmp cx, [rembytes]
     jb @F
     mov dl, SPACE
 @@:
     call printchar
-
-    mov dx, cx
-    call spotcalc
-    mov [scrn_xy], dx
+    inc cx
+    test cl, 0Fh
+    jnz @F
+    inc [scrn_row]
+    mov [scrn_col], COLASC
+@@:
+    cmp cx, 512
+    jnz nextchar1
+    pop si
 
     cmp [displaymode], DM_BINARY
     je displaybinval
 
+    xor cx, cx
+    mov [scrn_xy], COLHEX or ( ROWXXX shl 8 )
+nextchar2:
+    lodsb
     cmp cx, [rembytes]
     jb @F
     mov dl, '-'
     call printchar
     call printchar
-    jmp donechar
+    jmp donechar1
 @@:
-    mov dl,2
-    call rendernumhex
-    call printstring
-    jmp donechar
+    ror al, 4
+    call nibout
+    ror al, 4
+    call nibout
+donechar1:
+    inc cx
+    inc [scrn_col]
+    test cl, 03h
+    setz al
+    add [scrn_col], al
+    test cl, 0Fh
+    jnz @F
+    inc [scrn_row]
+    mov [scrn_col], COLHEX
+@@:
+    cmp cx, 512
+    jne nextchar2
+    jmp printaddresses
+nibout:
+    mov ah, al
+    and al, 0Fh
+    add al, 90h
+    daa
+    adc al, 40h
+    daa
+    mov dl, al
+    mov al, ah
+    jmp printchar
 
 displaybinval:
-    mov dx, [spot]
-    and dl, 10000000b
-    add dx, 128
-    cmp cx, dx
-    jae donechar
-    mov dx, [spot]
-    and dl, 10000000b
-    cmp cx, dx
-    jb donechar
+
+;--- just 128 bytes are displayed in binary
+
+    mov bx, [spot]
+    and bl, 80h
+    mov cx, bx
+    add si, bx
+    add bx, 128
+nextchar3:
+    lodsb
+    mov dx, cx
+    call nspotcalc
+    mov [scrn_xy], dx
 
     cmp cx, [rembytes]
     jb @F
@@ -5752,18 +5917,18 @@ displaybinval:
     add [scrn_col], 5
     call fillchar
     pop cx
-    jmp donechar
+    jmp donechar2
 @@:
     call rendernumbin
     call printstring
-donechar:
+donechar2:
     inc cx
-    cmp cx, 512
-    jne nextchar
+    cmp cx, bx
+    jne nextchar3
 
 ;--- display the 32 offsets at position 1 (6 digits)
 
-;printaddresses:
+printaddresses:
     mov [scrn_col], 1
     mov [scrn_row], 00h
     mov dx, offset offsetmsg
@@ -5816,7 +5981,7 @@ printoffset endp
 ;-------------------------------------------------------
 decolorchar:
     pusha
-    mov ax, DEFAULTCOLOR + (DEFAULTCOLOR*100h)    ; ah & al = DEFAULTCOLOR
+    mov ax, COL_DEFAULT or (COL_DEFAULT shl 8)    ; ah & al = COL_DEFAULT
     jmp startcolorchar
 
 ;--- set the 2 cursors hex/ascii part
@@ -5824,7 +5989,7 @@ decolorchar:
 
 colorchar proc
     pusha
-    mov ax, EDITCOLOR + (HIGHLIGHTCOLOR*100h)
+    mov ax, COL_EDIT or (COL_HIGHLIGHT shl 8)
 
 ; in: aL = color for character being edited
 ;     aH = color for character cursor is on
@@ -5898,7 +6063,7 @@ clearsecarea proc
     mov bx, [vidcolsize]
     add di, bx
     add di, 2*9
-    mov ax, DEFAULTCOLOR*100h+SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     mov dl, 32
 @@:
     push di
@@ -5966,19 +6131,7 @@ vmode_ok:
     mov word ptr [vidaddr+0], bx
     mov word ptr [vidaddr+2], di
 
-;--- clear screen
-
-    mov dl, 43
-    les di, [vidaddr]
-    mov ax, DEFAULTCOLOR*100h+SPACE
-@@:
-    push di
-    mov cx,RIGHTCOL+1
-    rep stosw
-    pop di
-    add di, [vidcolsize]
-    dec dl
-    jnz @B
+    call clearscreen
 
     mov cx, 2000h
     mov ah, 01h                           ; hide cursor
@@ -5993,6 +6146,22 @@ vmode_ok:
 
     ret
 vinit endp
+
+clearscreen proc
+    mov dl, 43
+    les di, [vidaddr]
+    mov ax, COL_DEFAULT shl 8 or SPACE
+@@:
+    push di
+    mov cx,RIGHTCOL+1
+    rep stosw
+    pop di
+    add di, [vidcolsize]
+    dec dl
+    jnz @B
+    ret
+clearscreen endp
+
 
     .const
 helptext label byte
@@ -6344,7 +6513,7 @@ checkskip:
     jmp itsS
 
 sectorerror2:    ;if ABORT_OPERATION is set
-ifdef _DEBUG
+if ?DEBUG
     push eax
     mov eax, [dwCurSector]
     call rendernumdec
@@ -6431,13 +6600,14 @@ invalidchar:
 validpathchar endp
 
 ;--- get a filename entered in menu line
-;--- IN:  nothing
+;--- IN:  AL=0: called by setdrive (TAB switches)
 ;--- OUT: CX=length of filename
 ;---      AH=last key scan code (check for TAB)
 ;---      [filenamebuffer]
 ;---      ax/di/dx/cx modified
 
 getfilename proc
+    mov bl, al
     mov dx, offset szFilename
     call printbottom
     mov di, offset filenamebuffer
@@ -6476,7 +6646,7 @@ backspace:
     dec di
     jmp getkeyagain
 handle_tab:
-    cmp [menustackidx],0                ; TAB exits only if called by setdrive
+    cmp bl, 0                           ; TAB exits only if called by setdrive
     jnz getkeyagain
 abort:
     xor cx, cx
@@ -6643,14 +6813,15 @@ printtime endp
 
 ;-------------------------------------------------------
 
-spotcalc:                       ; IN:  dx = [spot]
+nspotcalc proc                  ; IN:  dx = [spot]
     push ax                     ; OUT: dx = [scrn_xy]
     mov ax, dx
 
     cmp [displaymode], DM_BINARY
     je binaryspotcalc
     shr dx, 4                   ; for use with hex view
-    inc dl                      ; ---calculates where the current
+;    inc dl
+    add dl, ROWXXX              ; ---calculates where the current
     mov dh, dl                  ; hex byte should be put on the
                                 ; screen for the buffer offset ax
     and al, 00001111b
@@ -6660,22 +6831,24 @@ spotcalc:                       ; IN:  dx = [spot]
     add dl, al
     shr al, 2
     add dl, al
-    add dl, 10
-    jmp donespotcalc
+    add dl, COLHEX
+    pop ax
+    ret
 binaryspotcalc:
     shr dl, 2
     and dl, 00011111b
     mov dh, dl
-    inc dh
+;    inc dh
+    add dh, ROWXXX
     and al, 00000011b
 
     mov ah, 13
     mul ah
     mov dl, al
-    add dl, 11
-donespotcalc:
+    add dl, COLBIN
     pop ax
     ret
+nspotcalc endp
 ;-------------------------------------------------------
 getyn:                          ; prints [Y/N] on the screen
     mov dx, offset ynmsg        ; carry flag set if 'Y'
@@ -6819,20 +6992,21 @@ savedata endp
 ;--- menu to print is last item on menu stack.
 
 printmenu proc
+
     push ds
     pop es
     movzx bx, [menustackidx]
     shl bx, 2
-    mov si,[bx][menustack].wMenuOfs
-    mov dl, byte ptr [si]       ; number of spaces between each item
+    movzx si,[bx][menustack].bMenuStart
+    add si, offset startmenudefs
+    mov dl, [bx][menustack].bSpaces      ; number of spaces between each item
     mov dh, '1'
+    mov ch, [bx][menustack].bMenuSize
     mov bx, offset sprintfbuffer
     push bx
 nextmenuitem:
+    mov ah, [si]       ; load menu string index
     inc si
-    mov ah, byte ptr [si]       ; load menu string index
-    cmp ah, -1
-    jz done
     cmp ah, -2
     jz skipitem
     mov di, offset menustrings  ; scan menu string table
@@ -6860,12 +7034,15 @@ checkbl:
     jnz @B
     dec di
     mov al, SPACE               ; store spaces between menu items
+    push cx
     movzx cx, dl
     rep stosb
+    pop cx
     xchg bx, di
 skipitem:
     inc dh                      ; increase function key number
-    jmp nextmenuitem
+    dec ch
+    jnz nextmenuitem
 done:
     mov byte ptr [bx], 0
     pop dx
@@ -6951,7 +7128,7 @@ movecursor:             ; IN:   ax = new [spot]
     mov [spot], ax
     mov [bHL], dl
     mov dx, ax
-    call spotcalc
+    call nspotcalc
     add dl, [bHL]
     mov [crsr_xy], dx
     jmp printoffset       ; and print new offset & cursors
@@ -6968,15 +7145,17 @@ checkabort:             ; sets equal flag if escape key was pressed
     pop dx
     pop ax
     ret
+
 ;-------------------------------------------------------
 ; sets viewmode to DL
-checksetview:
+
+checksetview proc
     cmp [viewmode], dl              ; check if the "view" mode
     je no_viewmode_change           ; is already set.
     mov [funcmf4], -2               ; hack: remove "undelete"
     mov [ldfileoptf7], -2           ; hack: remove "chain"
     mov [viewmode], dl              ; set new view
-clearviewarea:
+;clearviewarea:
     les di, [vidaddr]
     mov cx, [vidcolsize]
     mov ax, VIEWROW                 ; start of "view" area
@@ -6986,7 +7165,7 @@ clearviewarea:
 @@:
     push di
     push cx
-    mov ax, DEFAULTCOLOR*100h + SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     mov cx, RIGHTCOL+1
     rep stosw
     pop cx
@@ -6996,6 +7175,8 @@ clearviewarea:
     jnz @B
 no_viewmode_change:
     ret
+checksetview endp
+
 ;-------------------------------------------------------
 getnos:                               ; 'get number of sectors' from the
     pushad                            ; user; don't allow 0 - if so
@@ -7418,13 +7599,13 @@ rand:
     ret
 
 ;-------------------------------------------------------
-ifdef _DEBUG
+if ?DEBUG
 
 debugviewmode:
     push edx
 
     mov [scrn_xy], (VIEWROW+0) * 100h + 1
-    mov dx, CStr("'EAX: ')
+    mov dx, CStr('EAX: ')
     call printregister
 
     mov [scrn_xy], (VIEWROW+1) * 100h + 1

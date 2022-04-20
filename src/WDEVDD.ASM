@@ -51,6 +51,10 @@ endif
 
 queried  dd 0
 cddrvs   dd 0
+hDisk    dd -1
+bOldDisk dd -1
+bOldAccess db -1
+bOldMode db -1
 
 	.data?
 
@@ -273,7 +277,7 @@ endif
 drive_access proc bType:byte, bWrite:byte, wAX:word
 
 local	drive:dword
-local	hDisk:dword
+;local	hDisk:dword
 local	dwRead:dword
 local	dwBuffer:dword
 local	secsize:dword
@@ -352,25 +356,35 @@ endif
 	and eax, eax
 	jnz typeerror
 @@:
+	@DbgOut <"WDEVDD.drive_access, drv=%s, packet=%X [cnt=%u, start=%X, buf=%X:%X], buffer=%X",13,10>,\
+		addr szDrv, ebx, [ebx].DPACKET.seccnt, [ebx].DPACKET.secsta, [ebx].DPACKET.bufseg, [ebx].DPACKET.bufofs
+
 	mov eax,[drive]
 	add al,'A'
 	mov ah,':'
 	movzx eax,ax
-	mov dword ptr szDrv+0,"\.\\"
-	mov dword ptr szDrv+4,eax
+	mov cl, bWrite
+	.if eax != [bOldDisk] || cl != [bOldAccess] || bOldMode != 0
+		mov [bOldDisk], eax
+		mov [bOldAccess], cl
+		mov bOldMode, 0
+		mov dword ptr szDrv+0,"\.\\"
+		mov dword ptr szDrv+4,eax
+		.if hDisk != -1
+			invoke CloseHandle, hDisk
+			mov hDisk, -1
+		.endif
 
-	@DbgOut <"WDEVDD.drive_access, drv=%s, packet=%X [cnt=%u, start=%X, buf=%X:%X], buffer=%X",13,10>,\
-		addr szDrv, ebx, [ebx].DPACKET.seccnt, [ebx].DPACKET.secsta, [ebx].DPACKET.bufseg, [ebx].DPACKET.bufofs
-
-	mov ecx, GENERIC_READ
-	.if (bWrite)
-		or ecx, GENERIC_WRITE
+		mov ecx, GENERIC_READ
+			.if (bWrite)
+			or ecx, GENERIC_WRITE
+		.endif
+		invoke CreateFileA, addr szDrv, ecx, FILE_SHARE_READ or FILE_SHARE_WRITE,\
+			0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+		cmp eax,-1
+		jz openerror
+		mov hDisk, eax
 	.endif
-	invoke CreateFileA, addr szDrv, ecx, FILE_SHARE_READ or FILE_SHARE_WRITE,\
-		0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
-	cmp eax,-1
-	jz openerror
-	mov hDisk, eax
 	mov eax, [ebx].DPACKET.secsta
 	mov edx,512
 	cmp bType, 2
@@ -404,9 +418,11 @@ endif
 		invoke ReadFile, hDisk, dwBuffer, ecx, addr dwRead, 0
 	.endif
 io_done:
+if 0
 	push eax
 	invoke CloseHandle, hDisk
 	pop eax
+endif
 	and eax, eax
 	jz accerror
 	invoke setCF, 0
@@ -514,7 +530,7 @@ disk_access proc wAX:word
 local	bIsFD:byte
 local	bWrite:byte
 local	drive:dword
-local	hDisk:dword
+;local	hDisk:dword
 local	dwRead:dword
 local	dwBuffer:dword
 local	bMode:dword
@@ -611,16 +627,29 @@ local	drvparam:I13DPARAM
 	.if (bIsFD )
 		jmp accerror	;FD access not supported, use disk access
 	.endif
-	
-	mov ecx, GENERIC_READ
-	.if (bWrite)
-		or ecx, GENERIC_WRITE
+
+	mov eax, drive
+	mov cl, bWrite
+	.if eax != [bOldDisk] || [bOldAccess] != cl || bOldMode != 1
+		mov [bOldDisk], eax
+		mov cl, bWrite
+		mov [bOldAccess], cl
+		mov bOldMode, 1
+		.if hDisk != -1
+			invoke CloseHandle, hDisk
+			mov hDisk, -1
+		.endif
+		mov ecx, GENERIC_READ
+		.if (bWrite)
+			or ecx, GENERIC_WRITE
+		.endif
+		invoke CreateFileA, addr szDrv, ecx, FILE_SHARE_READ or FILE_SHARE_WRITE,\
+			0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+		cmp eax,-1
+		jz openerror
+		mov hDisk, eax
 	.endif
-	invoke CreateFileA, addr szDrv, ecx, FILE_SHARE_READ or FILE_SHARE_WRITE,\
-		0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
-	cmp eax,-1
-	jz openerror
-	mov hDisk, eax
+	
 	invoke _mul64, [edi].I13PACKET.qwStart, 512
 	push edx
 	mov edx, esp
@@ -639,9 +668,11 @@ local	drvparam:I13DPARAM
 	.else
 		invoke ReadFile, hDisk, dwBuffer, ecx, addr dwRead, 0
 	.endif
+if 0
 	push eax
 	invoke CloseHandle, hDisk
 	pop eax
+endif
 	and eax, eax
 	jz accerror
 exit:
@@ -779,6 +810,9 @@ DllMain proc stdcall hInstance:dword, reason:dword, lpReserved:dword
 		@DbgOutC <"wdevdd process attach",13,10>
 		mov eax,1
 	.elseif (eax == DLL_PROCESS_DETACH)
+		.if hDisk != -1
+			invoke CloseHandle, hDisk
+		.endif
 		@DbgOutC <"wdevdd process detach",13,10>
 	.elseif (eax == DLL_THREAD_ATTACH)
 		@DbgOutC <"wdevdd thread attach",13,10>

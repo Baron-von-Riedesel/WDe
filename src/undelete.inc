@@ -86,7 +86,7 @@ undelete endp
 UndeleteCore proc
     pushad
 undelLoop:
-    mov eax, [dwBpc]                    ; bytes per cluster
+    mov eax, [dwBpC]                    ; bytes per cluster
     mov ebx, [dwCluster]
     cmp [dwFilesize], eax               ; less than bytes per cluster left?
     jbe writeeof                        ; yes, write end of file in

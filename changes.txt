@@ -19,8 +19,11 @@ WDe V0.50 [??.??.2022]
     to main menu.
   - wdevdd.dll got a significant speed-up, making lengthy operations 
     under WinXP/Vista ( "find", "fill", "recurse", ... ) usable.
-  - fixed: logical disks with format NTFS and EXFAT are no longer handled
-    like FAT disks. 
+  - fixed: logical disks with format NTFS are no longer handled like FAT disks.
+  - support for exFAT file system implemented - it's experimental so far.
+    Under DOS, to investigate exFAT partitions, one will heve to use the
+    "restrict" option, since DOS itself doesn't know how to mount such
+    partitions.
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.

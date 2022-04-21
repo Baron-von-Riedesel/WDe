@@ -1,10 +1,66 @@
 
 ;--- simple sprintf() implementation
 
+?SPRBUFSIZE = 12
+
+if ?SN64
+
+?SPRBUFSIZE = 24
+
+;--- i64toa(long long n, char * s, int base);
+;--- convert 64-bit long long to string
+
+i64toa PROC stdcall uses esi edi number:qword, outb:ptr, base:word
+
+    mov ch, 0
+    movsx edi, base
+    mov eax, dword ptr number+0
+    mov esi, dword ptr number+4
+    cmp edi, -10
+    jne @F
+    neg edi
+    and esi, esi
+    jns @F
+    neg esi
+    neg eax
+    sbb esi, 0
+    mov ch, '-'
+@@:
+    mov bx, outb
+    add bx, 22
+    mov byte ptr [bx], 0
+@@nextdigit:
+    dec bx
+    xor edx, edx
+    xchg eax, esi
+    div edi
+    xchg eax, esi
+    div edi
+    add dl, '0'
+    cmp dl, '9'
+    jbe @F
+    add dl, 7+20h
+@@:
+    mov [bx], dl
+    mov edx, eax
+    or edx, esi
+    jne @@nextdigit
+    cmp ch, 0
+    je @F
+    dec bx
+    mov [bx], ch
+@@:
+    mov ax, bx
+    ret
+
+i64toa ENDP
+
+endif
+
 ;--- ltob(long n, char * s, int base);
 ;--- convert long to string
 
-ltob PROC stdcall uses bx di number:dword, outb:word, base:word
+ltob PROC stdcall uses bx di number:dword, outb:ptr, base:word
 
     mov ch, 0
     movzx edi, base
@@ -52,7 +108,7 @@ local size_:word
 local flag:byte
 local longarg:byte
 local fill:byte
-local szTmp[12]:byte
+local szTmp[?SPRBUFSIZE]:byte
 
     pushad
     push ds
@@ -105,10 +161,23 @@ chkdigit:
     mov [size_], dx
 
     cmp al, 'l'
+if ?SN64
+    sete [longarg]
+    jne nol
+    lodsb
+    cmp al, 'l'
+    jne @F
+    inc [longarg]
+@@:
+    inc si
+nol:
+    dec si
+else
     sete [longarg]
     je @F
     dec si
 @@:
+endif
     lodsb
     mov [fmt], si
     cmp al, 'x'
@@ -148,8 +217,20 @@ handle_u:
 @@lprt262:
     mov eax, [bx]
     add bx, 4
+if ?SN64
+    dec [longarg]
+    js is16
+    jz @F
+    mov edx, [bx]
+    add bx, 4
+    lea si, [szTmp]
+    invoke i64toa, edx::eax, si, cx
+    jmp outnum
+is16:
+else
     cmp [longarg], 1
     je @F
+endif
     sub bx, 2
     movzx eax, ax
     and cx, cx      ;signed or unsigned?
@@ -158,6 +239,7 @@ handle_u:
 @@:
     lea dx, [szTmp]
     invoke ltob, eax, dx, cx
+outnum:
     mov si, ax
     call output_string
     retn

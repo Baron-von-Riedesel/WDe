@@ -63,11 +63,11 @@ continuefatscan:
     jne unformatError                 ; no, not acceptable
 entryisok:
     inc eax                           ; cluster++
-    cmp eax, [dwLastcluster]
+    cmp eax, [dwLastCluster]
     jbe continuefatscan
 
 unffatok:
-    mov eax, [dwRoot]                 ; jump to the root directory
+    mov eax, [dwRootSect]             ; jump to the root directory
     mov [ioreq.dwSector], eax
     call rwsectx
     jc abortUnformat
@@ -86,12 +86,12 @@ nextCluster:
     inc [dwCluster]
 
     mov eax, [dwCluster]
-    cmp eax, [dwRootcluster]            ; matches root cluster?
+    cmp eax, [dwRootCluster]            ; matches root cluster?
     je nextCluster                      ; next cluster.
 
     call cluster2sector                 ; read first sector in cluster
 
-    mov cl, [bSpc]
+    mov cl, [bSpC]
 
 nextSectorOfCluster:
     call checkabort
@@ -111,7 +111,7 @@ nextSectorOfCluster:
     xor bx, bx
     call finddirectory
     jnc isDirectory
-    cmp cl, [bSpc]                      ; if the first sector in a cluster
+    cmp cl, [bSpC]                      ; if the first sector in a cluster
     je nextCluster                      ; is not a directory...scan next
                                         ; cluster
     mov bx, [wBps]
@@ -171,7 +171,7 @@ dontReRead:
 ;--- the clusternumber may have been cleared!
 ;--- in that case only "regular" may be found - and nothing is recovered!
 
-    cmp eax, [dwRootcluster]            ; check if directory was in the root
+    cmp eax, [dwRootCluster]            ; check if directory was in the root
     jne regulardirectory
 
     or [bx].UFDIR.bFlags, ROOTLINKED_DIRECTORY OR PROCESSABLE_DIRECTORY
@@ -355,7 +355,7 @@ checkDirValidity:
     call cluster2sector
     mov [dwCurSector], eax        ; get matching sector number
 
-    mov dh, [bSpc]                ; number of sectors per cluster
+    mov dh, [bSpC]                ; number of sectors per cluster
             
 checkNextSector:
 
@@ -484,9 +484,9 @@ writeRootEntry:                         ; IN: si = offset sectbuffer
     push bx
     push cx
 
-    mov ebx, [dwRoot]
+    mov ebx, [dwRootSect]
 
-    mov ch, [bSpc]                      ; start at the first root sector
+    mov ch, [bSpC]                      ; start at the first root sector
     xor dx, dx                          ; zero the checked root entry count
 
 checkNextRootSect:
@@ -566,7 +566,7 @@ recoverFiles:
 
     mov [minsize], eax
 
-    mov eax, [dwBpc]            ; all single cluster files were recovered,
+    mov eax, [dwBpC]            ; all single cluster files were recovered,
     mov [maxsize], eax          ; so set the minimum file recovery size
     add [maxsize], eax          ; to the minimum number of bytes required
                                 ; to consume 2 clusters, and the maximum
@@ -602,7 +602,7 @@ adjustMinMax:
     cmp [maxsize], eax             ; nextsize is smaller or equal to maxsize,
     jae finishedUnformat           ; so no bigger files were found.
 
-    mov edx, [dwBpc]
+    mov edx, [dwBpC]
 continueAdjustMinMax:
     add [minsize], edx
     add [maxsize], edx
@@ -616,8 +616,8 @@ finishedUnformat:
     mov dx, CStr('Copying Fat-1 to Fat-2...')
     call printbottom
     mov eax, [dwReserved]
-    mov ecx, [dwSpf]
-    mov edx, [dwFatend]
+    mov ecx, [dwSpF]
+    mov edx, [dwFat1end]
 
 f1tof2loop:
     mov [ioreq.dwSector], eax

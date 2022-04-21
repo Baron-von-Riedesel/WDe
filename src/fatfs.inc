@@ -20,16 +20,16 @@ cluster2sector proc
     sub eax, 2
     jc errem2
 
-    movzx ebx, [bSpc]
+    movzx ebx, [bSpC]
     mul ebx
     jc errem2
 
-    add eax, [dwDatastart]
+    add eax, [dwDataStart]
     jc errem2
 
-    cmp [filesys], FS_FAT32
-    jne skipfat32adjust
-    cmp [dwRootcluster], 2
+    test [filesys], FS_FAT32
+    je skipfat32adjust
+    cmp [dwRootCluster], 2
     ja skipfat32adjust
     sub eax, ebx
     jnc skipfat32adjust
@@ -52,19 +52,19 @@ sector2cluster proc
     movzx ecx, [bFats]
 ;   jcxz skipfats                         ; useful if ever FATS=0
 @@:
-    sub eax, [dwSpf]
+    sub eax, [dwSpF]
     loop @B
 skipfats:
 
-    cmp [filesys], FS_FAT32
-    je dontsubroot
+    test [filesys], FS_FAT32
+    jnz dontsubroot
     mov cx, [wRootsectors]
     sub eax, ecx
 dontsubroot:
 
     sub eax, [dwReserved]
 
-    mov cl, [spcmd]
+    mov cl, [bSpCshift]
     shr eax, cl                           ; divide by sectors per cluster
     
     add eax, 2                            ; clusters start at 2
@@ -110,8 +110,8 @@ f12gfs:
                                       ; to 0FFFFFFxh
 fat1632:
     mov eax, dword ptr [si+bx]
-    cmp [filesys], FS_FAT32
-    je f32gfd
+    test [filesys], FS_FAT32
+    jnz f32gfd
 f16gfd:
     movzx eax, ax                     ; clear top word for fat12/fat16
     cmp ax, 0FFF7h
@@ -174,8 +174,8 @@ pmethod2:
 
     jmp dpfe2
 dof132:
-    cmp [filesys], FS_FAT32
-    jne dpfe2
+    test [filesys], FS_FAT32
+    je dpfe2
 fat32pfe:
     and dword ptr [si+bx], 0F0000000h   ; preserve highest nibble in fat32
     or dword ptr [si+bx], eax           ; as it is not part of the entry
@@ -215,11 +215,12 @@ locatefatentry proc
     push eax
     push ecx
                                         
-    cmp ebx, [dwLastcluster]    ; past the last cluster on the drive?
+    cmp ebx, [dwLastCluster]    ; past the last cluster on the drive?
     stc
     ja done                     ; so abort with an error
 
     mov cl, [filesys]           ; convert cluster number to FAT offset
+    and cl, FS_FAT12 or FS_FAT16 or FS_FAT32
     shr cl, 1                   ; FAT32: 4->2, FAT16: 2->1, FAT12: 1->0
     jnz @F
     mov eax, ebx                ; adjustment for fat12 -
@@ -248,7 +249,7 @@ locatefatentry proc
 ;    jb locationinfirstfat
     cmp [fromfat], 1
     je locationinfirstfat
-    add eax, [dwSpf]
+    add eax, [dwSpF]
 locationinfirstfat:
     cmp [dwCurSector], eax      ; read that FAT sector if necessary
     je done
@@ -323,9 +324,9 @@ getentrynumber proc
     sub eax, [dwReserved]
 
     mov [fromfat], 1
-    cmp eax, [dwSpf]
+    cmp eax, [dwSpF]
     jb @F
-    sub eax, [dwSpf]
+    sub eax, [dwSpF]
     inc [fromfat]
 @@:
 
@@ -345,6 +346,7 @@ getentrynumber proc
 ;--- here eax contains relative offset of current spot within FAT
 
     mov cl, [filesys]     ; 4=FAT32,2=FAT16,1=FAT12
+    and cl, FS_FAT12 or FS_FAT16 or FS_FAT32
     shr cl, 1             ; 4->2, 2->1, 1->0
     shr eax, cl
 
@@ -382,6 +384,7 @@ noinc12:
 nosmd:
 
     mov cl, [filesys]
+    and cl, FS_FAT12 or FS_FAT16 or FS_FAT32
     shr cl, 1
     shl eax, cl
 

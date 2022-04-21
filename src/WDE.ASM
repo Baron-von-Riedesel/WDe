@@ -16,16 +16,21 @@
 
 ;--- _TEXT2 is an extra "code" segment for menu vectors, so they're always aligned
 ;--- _DATA2 is an extra "data" segment for menus
+;--- _BSS is for "uninitialized" data; we need it dword-aligned,
+;--- hence simplified segment directive .data? cannot be used.
 
 _TEXT2 segment word public 'CODE'
 startmenucmds label word
 _TEXT2 ends
 _DATA2 segment word public 'DATA'
-startmenudefs label near
+startmenudefs label byte
 _DATA2 ends
+_BSS segment dword public 'BSS'
+startbss label byte
+_BSS ends
 
 CGROUP group _TEXT, _TEXT2
-DGROUP group _DATA2
+DGROUP group _DATA2, _BSS
 
 ifndef ?DEBUG
 ?DEBUG           EQU 0  ; 1=debug features on
@@ -43,7 +48,7 @@ ifndef ?LFN
 ?LFN             EQU 0  ; 1=prefer using LFN functions (not implemented yet)
 endif
 ifndef ?SN64
-?SN64            EQU 0  ; 1=support 64-bit sector access (not tested yet)
+?SN64            EQU 0  ; 1=support 64-bit sector access (not implemented yet)
 endif
 
         BOTTOMROW        equ 42 ; last row (menu, messages)
@@ -62,12 +67,12 @@ endif
 
 ; "filesys" variable
         FS_UNDEFINED     EQU 0
-        FS_FAT12         EQU 1
-        FS_FAT16         EQU 2
+        FS_FAT12         EQU 1  ; bits 0-2 (FAT12-FAT32) must not be changed;
+        FS_FAT16         EQU 2  ; they are used to calculate a shift factor.
         FS_FAT32         EQU 4
-        FS_FATXX         EQU FS_FAT12 or FS_FAT16 or FS_FAT32
-        FS_NTFS          EQU 8
-        FS_EXFAT         EQU 16
+        FS_EXFAT         EQU 8 or FS_FAT32
+        FS_FATXX         EQU FS_FAT12 or FS_FAT16 or FS_FAT32 or FS_EXFAT
+        FS_NTFS          EQU 16
 
 ; "bRegion" variable for figuring out what section we're on in the drive
         RG_UNDEFINED     EQU 0
@@ -323,6 +328,8 @@ volume_label    db 11 dup (?)   ;if boot_sig is != 0x28
 fs_type         db 8 dup (?)    ;"FAT32   "
 EBPB_FAT32 ends
 
+    include exfat.inc
+
 ;--- HD access for int 13h, ah=42h/43h
 
 DAP struct
@@ -355,13 +362,16 @@ buffofs  dw ?
 buffseg  dw ?
 DISKIO ends
 
+;--- disk info returned by Int 13h, ah=48h
+
 DINFO1 struct
 _size    dw ?
 flags    dw ?
 cyls     dd ?
 heads    dd ?
 secs     dd ?
-totalsec dq ?
+totalsecL dd ?
+totalsecH dd ?
 bps      dw ?
 DINFO1 ends
 
@@ -384,6 +394,9 @@ CDREQ ends
 
 IOREQ struct
 dwSector   dd ?
+if ?SN64
+dwSectorH  dd ?
+endif
 bDrive     db ? ; drive number (bDrive ... drvtype must be one dword)
 bRW        db ? ; distinguish between read/write
 rwfunc     db ? ; what read/write function to use
@@ -391,33 +404,29 @@ drvtype    db ? ; physical/fat/cdrom/file
 pBuffer    dw ?
 IOREQ ends
 
-MENULVL struct  ; item for menu stack
+MENULVL struct  ; item for menu stack, size must be 4
 bMenuStart db ?
 bMenuSize  db ?
 bSpaces    db ?
            db ?
 MENULVL ends
 
-SECITEM struct  ; size must be 8
+SECITEM struct  ; item on "sector stack", size must be 8
 dwSector dd ?
 wSpot    dw ?
          dw ?
 SECITEM ends
-
-
-    .data  ; submenus "file options" & "functions" are dynamically modified
 
     .const
 
 introtext       db 'WDe V0.50',0
 copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
 
-owmsg           db 'File Exists - Append/Overwrite/Cancel [A/O/C]? ',0
-fhdmsg          db 'Floppy/Hard Disk [F/H]? ',0
-cdrcmsg         db 'Raw/Cooked Mode [R/C]? ',0
-plmsg           db 'Physical/Logical [P/L]? ',0
-abmsg           db 'Above/Below [A/B]? ',0
-;fomsg           db 'New File/Abort [F/A]? ',0
+owmsg           db 'File Exists - A(ppend), O(verwrite) or C(ancel)? ',0
+fhdmsg          db 'F(loppy) or H(ard) disk? ',0
+cdrcmsg         db 'R(aw) or C(ooked) mode? ',0
+plmsg           db 'L(ogical) or P(hysical) disk? ',0
+abmsg           db 'A(bove) or B(elow)? ',0
 truncatemsg     db 'Truncate To Filesize',0
 diskfullmsg     db 'Disk Full',0
 quitmsg         db 'Quit',0
@@ -484,6 +493,10 @@ part0B0C        db 'Fat32',0                            ; 41
                 db 'Inverse',0                          ; 42
                 db 'Next',0                             ; 43
                 db 'Help',0                             ; 44
+
+;--- a few menu items are dynamically (de)activated. 
+;--- in those cases the menu string# must be known;
+;--- hence the MENUF_xxx definitions.
 
 MENUF_RESTORE equ 15
 MENUF_CHAIN   equ 23
@@ -571,20 +584,13 @@ attributesmsg   db 'Attributes: ',0
     .data
 
 _psp   dw 0
-_mem   dw 0   ;current top of memory
-_0000H dw 0
+_mem   dw 0   ; current top of memory
+_0000H dw 0   ; segment value/selector for access to BIOS data
 
 fifields label word
     dw DStr('Total Free Clusters: '), offset printvalue_hl
     dw DStr('First Free Cluster:  '), offset printhex_hl
 numfifields equ ($ - offset fifields) / (2 * sizeof word)
-
-;--- a dword-aligned _BSS segment is needed,
-;--- hence simplified segment directive .data? cannot be used.
-_BSS segment dword public 'BSS'
-startbss label byte
-_BSS ends
-DGROUP group _BSS
 
 _BSS segment
 
@@ -608,26 +614,30 @@ bHL             db ? ; keeps track of whether we're editing high or low nibble
     align dword
 fromfat         db ? ; fat to use for getfatentry/putfatentry
 filesys         db ? ; type of fat
-bSpc            db ? ; sectors per cluster
+bSpC            db ? ; sectors per cluster
 bFats           db ? ; number of fats
-dwSpf           dd ? ; sectors per fat
-dwFatend        dd ? ; end of fat
+dwSpF           dd ? ; sectors per fat
+dwFat1end       dd ? ; end of first fat
 dwReserved      dd ? ; reserved sectors (start of fat)
 rootentries     dw ? ; number of root entries (unused)
 wRootsectors    dw ? ; number of root sectors
 dwCurSector     dd ? ; current sector in sectbuffer
-;dwCurSectorHigh dd ? ; high sector dword for int13h
+if ?SN64
+dwCurSectorH    dd ? ; high sector dword for int13h
+endif
 dwDataend       dd ? ; end of data
-; dwDataendHigh   dd ? ; high dword for int13h HUGE hds
-dwDatastart     dd ? ; start of data
-dwLastcluster   dd ? ; total # of clusters on the drive
-dwRoot          dd ? ; root directory
-dwRootcluster   dd ? ; root cluster (FAT32)
+if ?SN64
+dwDataendH      dd ? ; high dword for int13h HUGE hds
+endif
+dwDataStart     dd ? ; start sector of data region
+dwLastCluster   dd ? ; total # of clusters on the drive
+dwRootSect      dd ? ; start sector of root directory
+dwRootCluster   dd ? ; root start cluster (FAT32)
 dwValue         dd ?
 dwMaxvalue      dd ?
 dwFilesize      dd ?
 dwCluster       dd ?
-dwBpc           dd ? ; bytes per cluster
+dwBpC           dd ? ; bytes per cluster
 dwSecBackup     dd ? ; sector backup
 partitions      dd ?,?,?,? ; partition start sectors
 
@@ -637,7 +647,7 @@ wBps            dw ? ; bytes per sector
 lastbottomtext  dw ? ; printbottom backs up string pointer for rwsect
                      ; to reprint it when there's a sector error
 hdnumber        db ? ; hard drive number partition belongs to
-spcmd           db ? ; sectors per cluster for doing bitshifts
+bSpCshift       db ? ; sectors per cluster for doing bitshifts
 spcc            db ? ; sectors per cluster counter
 bRegion         db ? ; what part of the disk we're in
 viewmode        db ? ; see VM_xxx
@@ -658,7 +668,10 @@ seed3           dw ?
 seed4           dw ?
 
 dwRwfilesize    dd ?            ; filesize of image file for DT_FILE
-dwDrivestart    dd ?            ; used for sector restriction
+dwDrivestart    dd ?            ; used for sector restriction ( physical access only )
+if ?SN64
+dwDrivestartH   dd ?
+endif
 dwFat12start    dd ?            ; stores the sector number when fat12
                                 ; view mode was selected
 rwhandle        dw ?            ; file handle if device is DT_FILE
@@ -705,8 +718,6 @@ lasttick        dw ?            ; timer ticks since last call
 menustack       MENULVL 4 dup (<?>)  ; menu stack
 secstk          SECITEM 8 dup (<?>)  ; sector stack ( room for 8 items )
 
-
-
     align 4
 filenamebuffer  db 72 dup(?)    ; size must be at least 69, 72 used for alignment
 stringbuffer    db 76 dup(?)    ; buffer for string input (pos 74: length)
@@ -724,7 +735,7 @@ valuebuffer     db 11 dup(?)
     align 4
                 db 3 dup (?)    ; ensure sectbuffer is dword aligned
 fat12fix1       db ?            ; stores first borrowed byte for fat12
-sectbuffer      db 2352 dup(?)  ; read buffer for sector reading
+sectbuffer      db 4096 dup(?)  ; read buffer for sector reading
 
 _BSS ends
 
@@ -1115,7 +1126,7 @@ ctrlkeys endp
 checkmenukey proc
 
     mov cl, ah
-    sub cl, F1_KEY
+    sub cl, F1_KEY              ; convert F1-F8 to 0-7
     jb @F
     movzx bx, [menustackidx]
     shl bx, 2
@@ -1184,6 +1195,9 @@ trydevice proc
     push [dwDrivestart]
 
     mov [ioreq.dwSector], 0       ; attempt to read sector 0
+if ?SN64
+    mov [ioreq.dwSectorH], 0
+endif
     mov [ioreq.pBuffer], offset sectbuffer
     mov [ioreq.drvtype], bh
     mov [dwDrivestart], 0
@@ -1954,14 +1968,14 @@ nextentry:
     je done
     push eax
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, offset recursemsg, cx, eax, [dwLastcluster]
+    invoke sprintf, dx, offset recursemsg, cx, eax, [dwLastCluster]
     call printbottom
     pop eax
 @@:
     add eax, edi                        ; go back/forward one fat entry
     cmp eax, 2                          ; past first entry in fat?
     jb loop_done
-    cmp eax, [dwLastcluster]            ; past last entry in fat?
+    cmp eax, [dwLastCluster]            ; past last entry in fat?
     ja chainnotfound
 
     push eax
@@ -2014,7 +2028,7 @@ dochainjump::             ; <--- for recurse ( Ctrl-left in FAT )
 ;    cmp eax, 0FFFFFF7h
 ;    jae done
 
-    cmp eax, [dwLastcluster]
+    cmp eax, [dwLastCluster]
     ja done
     call go2entry                 ; will set [dwCurSector] + [spot]=0
     mov eax, [dwCurSector]
@@ -2071,9 +2085,13 @@ do_direntry:
 
     call bufferinsi
     mov bx, [spot]
+    and bl, 11100000b
+
+    test [filesys], FS_EXFAT                   ; exFAT direntry structure?
+    jnz exfat_enter
+
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh   ; lfn entry?
     jz done
-    and bl, 11100000b
     mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
     shl eax, 16
     mov ax, word ptr [si+bx+DIR_CLUST_LOW]
@@ -2086,6 +2104,18 @@ do_direntry:
     cmp dword ptr [si+bx],"  .."
     jz jumptoroot
     ret
+
+exfat_enter:
+    mov al, [si+bx].EXFATDIR.etype
+    cmp al, 0C0h  ;secondary file stream entry?
+    jz @F
+    cmp al, 081h  ;primary allocation bitmap?
+    jz @F
+    cmp al, 082h  ;primary upcase table?
+    jnz done
+@@:
+    mov eax, [si+bx].EXFATDIRS.dwFirstCl
+    jmp jumptoeax
 
 handle_enter endp
 
@@ -2387,18 +2417,18 @@ setfsview:
 ;-------------------------------------------------------
 choosefatview:
     mov dl, VM_FAT32
-    cmp [filesys], FS_FAT32
-    je setDLview
+    test [filesys], FS_FAT32
+    jnz setDLview
     mov dl, VM_FAT16
     cmp [filesys], FS_FAT16
     je setDLview
     mov dl, VM_FAT12
 
     mov eax, [dwReserved]
-    add eax, [dwSpf]
+    add eax, [dwSpF]
     cmp eax, [dwCurSector]
     jbe @F
-    sub eax, [dwSpf]
+    sub eax, [dwSpF]
 @@:
     mov [dwFat12start], eax
 setDLview:
@@ -2647,7 +2677,7 @@ startchainsaving:
     jc done
 
 chainsaveloop:
-    movzx ebx, [bSpc]                     ; writefile will write one cluster at a time
+    movzx ebx, [bSpC]                     ; writefile will write one cluster at a time
     mov [dwValue], ebx
     add ebp, ebx
     mov di, offset mydisp                 ; function address to call inside writefile
@@ -2764,7 +2794,7 @@ rbuhs:                                    ;<--- next cluster
     cmp eax, [dwDataend]
     ja clusterr
     mov [dwCurSector], eax
-    mov al, [bSpc]
+    mov al, [bSpC]
     mov [spcc], al
 
     mov dx, offset sprintfbuffer
@@ -2981,12 +3011,12 @@ submenu_fileoptions endp
 srroot:
     call srcommon
 
-    mov eax, [dwRoot]
+    mov eax, [dwRootSect]
     xor edx, edx
 
-    cmp [filesys], FS_FAT32
-    jne userootsects
-    mov dl, [bSpc]       ;known bug: FAT32 root dir may be more than just 1 cluster!
+    test [filesys], FS_FAT32
+    je userootsects
+    mov dl, [bSpC]       ;known bug: FAT32 root dir may be more than just 1 cluster!
     jmp dorootsr
 userootsects:
     mov dx, [wRootsectors]
@@ -3043,10 +3073,10 @@ srfat1:
 srfat2:
     cmp [bFats], 2
     jb srfat1
-    mov eax, [dwFatend]
+    mov eax, [dwFat1end]
 srfat:
     call srcommon
-    mov edx, [dwSpf]
+    mov edx, [dwSpF]
     mov [dwValue], edx
     cmp [srflag], SR_SAVE
     je endsavedrive
@@ -3124,20 +3154,18 @@ submenu_jumpto proc
     @mitem 13, jumptodata
     @mend ldjumpmenu
 
-cdjumpmenu equ ldjumpmenu
-
     mov cl, 2
 ;--- set menu "input, MBR, partition1, ..."
     mov dx, pdjumpmenu + lpdjumpmenu shl 8
     cmp [ioreq.drvtype], DT_PHYSICAL
     je @F
-    mov dx, cdjumpmenu + 1 shl 8
+    mov dx, ldjumpmenu + 1 shl 8  ; for CDFS, just jump to sector
     cmp [ioreq.drvtype], DT_CDROM
     je @F
-    mov dh, 2                  ; for non-fat logical devices, allow jump to boot sector
-    test [filesys], FS_FATXX
-    jz @F
-    mov dx, ldjumpmenu + lldjumpmenu shl 8
+    mov dh, 2                     ; for NTFS logical devices, allow jump to boot sector
+    test [filesys], FS_NTFS
+    jnz @F
+    mov dh, lldjumpmenu
 @@:
     jmp pushmenustack
 
@@ -3155,11 +3183,11 @@ jumptop4:
     jmp donejump
 
 jumptodata:
-    mov ebx, [dwDatastart]
+    mov ebx, [dwDataStart]
     jmp donejump
 
 jumptocluster:
-    mov eax, [dwLastcluster]
+    mov eax, [dwLastCluster]
     mov dx,offset sprintfbuffer
     invoke sprintf, dx, offset szCluster2, eax
     call gethexvalue
@@ -3177,10 +3205,10 @@ jumptofat1:
 jumptofat2:
     cmp [bFats], 2
     jb jumptofat1
-    mov ebx, [dwFatend]
+    mov ebx, [dwFat1end]
     jmp donejump
 jumptoroot::
-    mov ebx, [dwRoot]
+    mov ebx, [dwRootSect]
 
 donejump:
     cmp [dwDataend], ebx
@@ -3543,6 +3571,132 @@ printeol:
 
 lfnview endp
 
+;--- in: si=sector buffer
+;---     bx=current dir entry
+
+direxfatview proc
+
+    mov [scrn_xy], VIEWROW * 100h + 1
+    mov cl, 78
+    mov ax, COL_DEFAULT shl 8 or SPACE
+    call fillcell
+    inc [scrn_row]
+    mov cl, 78
+    mov ax, COL_DEFAULT shl 8 or SPACE
+    call fillcell
+    mov [scrn_xy], VIEWROW * 100h + 1
+
+    mov al, [si+bx].EXFATDIR.etype
+    test al, 80h
+    jz freeentry
+    test al, 40h
+    jnz issecondary
+    movzx cx, byte ptr [si+bx+1]
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("primary, secondary count=%u, "), cx
+    call printstring
+    and al,1Fh
+    cmp al, EXFTC_ALLOCBM
+    jz allocbm
+    cmp al, EXFTC_UPCASET
+    jz upcase
+    cmp al, EXFTC_VOLLABEL
+    jz vollabel
+    cmp al, EXFTC_FILE
+    jz file
+done:
+    ret
+freeentry:
+    and al, al   ; end of directory?
+    jz done
+    mov dx, CStr("free")
+    call printstring
+    ret
+issecondary:
+    mov dx, CStr("secondary")
+    call printstring
+    and al, 1Fh
+    cmp al, 0      ; a secondary file stream entry?
+    jz isfilestream
+    cmp al, 1      ; a secondary file name entry?
+    jz isfilename
+    ret
+isfilestream:
+    mov dx, offset sprintfbuffer
+    movzx ax, [si+bx].EXFATDIRFS.secflgs
+    movzx cx, [si+bx].EXFATDIRFS.namelength
+    invoke sprintf, dx, CStr(", stream, flags=%X, name length=%u"), ax, cx
+    call printstring
+    call dispcluster
+    ret
+isfilename:
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr(", name")
+    call printstring
+    ret
+
+allocbm:
+    mov dx, CStr("allocation bitmap ")
+    call printstring
+    call dispcluster
+    jmp done
+upcase:
+    mov dx, CStr("uppercase table ")
+    call printstring
+    call dispcluster
+    jmp done
+vollabel:
+    mov dx, CStr("volume label ")
+    call printstring
+    jmp done
+file:
+    mov dx, [si+bx].EXFATDIRF.attributes
+    mov di, offset valuebuffer
+    call renderattributes
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("file, attributes: %X [%s]"), [si+bx].EXFATDIRF.attributes, di
+    call printstring
+
+    jmp done
+dispcluster:
+    mov al, [si+bx].EXFATDIR.etype
+    test al,80h
+    jz nocluster
+    mov [scrn_col],1
+    inc [scrn_row]
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("start cluster: %lX, size=%lu"), [si+bx].EXFATDIR.dwFirstCl, dword ptr [si+bx].EXFATDIR.dqSize
+    call printstring
+nocluster:
+    ret
+
+    .const
+attrchars db "RHS?DA"
+    .code
+
+renderattributes:
+    push si
+    push di
+    push ds
+    pop es
+    mov si, offset attrchars
+    mov cx, sizeof attrchars
+    mov ah, al
+nextchar:
+    lodsb
+    shr dx, 1
+    jc @F
+    mov al, '-'
+@@:
+    stosb
+    loop nextchar
+    mov [di], cl
+    pop di
+    pop si
+    ret
+
+direxfatview endp
+
 ;--- directory view
 ;--- displaying just the spot entry
 
@@ -3551,6 +3705,9 @@ dirview proc
     call bufferinsi
     mov bx,[spot]
     and bl, 0E0h
+
+    test [filesys], FS_EXFAT
+    jnz direxfatview
 
 ;--- adjust menus.
 ;--- (the menu adjustment is currently a bit silly implemented, too complicated )
@@ -3822,7 +3979,7 @@ chainmenuitem proc
 chainmenuitem endp
 
 
-;--- FAT32 view - 7 rows and 9 clusters/row are shown.
+;--- FAT32/EXFAT view - 7 rows and 9 clusters/row are shown.
 ;--- in total that fits in 15 lines: 0,36,72,108,144,180,216,252,288,324,360,396,432,468,504
 ;--- ( the last line has 2 items only )
 
@@ -4338,12 +4495,10 @@ bsview proc
 
     call bufferinsi
 
-    test [filesys], FS_NTFS
-    jnz bsntfsview
-    test [filesys], FS_EXFAT
-    jnz bsexfatview
-
-;--- todo: check for NTFS and EXFAT filesystems
+    cmp [filesys], FS_NTFS
+    jz bsntfsview
+    cmp [filesys], FS_EXFAT     ; don't test flags here, no jump wanted for FAT12/16/32!
+    jz bsexfatview
 
     mov di, offset bsviewtab
 
@@ -4516,14 +4671,45 @@ basicbs:
     ret
 bsntfsview endp
 
-;--- EXFAT BPB struct
-
     .data
 
 bsexfatviewtab label word
-    dw 48h
+    dw EXFAT.dqHidden
+    dw DStr('Start of Partition')
+    dw 1408h
+    dw EXFAT.dqSize
     dw DStr('Sectors In Partition')
+    dw 1408h
+    dw EXFAT.dwFatOfs
+    dw DStr('Reserved Sectors')
     dw 0A04h
+    dw EXFAT.dwFatSiz
+    dw DStr('Size of FAT')
+    dw 0A04h
+    dw EXFAT.dwClHpOfs
+    dw DStr('Start Data Region')
+    dw 0A04h
+    dw EXFAT.dwClCnt
+    dw DStr('Clusters')
+    dw 0A04h
+    dw EXFAT.dwRootCl
+    dw DStr('Start Root Dir')
+    dw 0A04h
+    dw EXFAT.wFSRev
+    dw DStr('FS Revision')
+    dw 0502h
+    dw EXFAT.wVolFlgs
+    dw DStr('Volume Flags')
+    dw 0502h
+    dw EXFAT.bBpSShift
+    dw DStr('BytesPerSector Shift')
+    dw 0301h
+    dw EXFAT.bSpCShift
+    dw DStr('SecPerCluster Shift')
+    dw 0301h
+    dw EXFAT.bNumFats
+    dw DStr('No of FATs')
+    dw 0301h
 lbsexfatviewtab equ ($ - offset bsexfatviewtab) / ( 3 * sizeof word )
 
     .code
@@ -4711,6 +4897,10 @@ golastsect:
 ;--- via int 25h/26h or int 21h, ax=7305h
 ;--- this is also true if FS is NTFS or EXFAT.
 
+;--- Also: here the drive can be locked - previously
+;--- this was done in setvariables, but this is the wrong
+;--- place, since this proc is called by "restrict"
+
 setlogvars proc
     mov di, offset sprintfbuffer
     mov word ptr [di], 003Dh  ;size of buffer
@@ -4722,13 +4912,42 @@ setlogvars proc
     mov ax, 7302h
     int 21h
     mov dl, RWF_OLDLOGICAL
-    jc @F
+    jc donesetlog
     cmp ax,7300h
-    jz @F
+    jz donesetlog
     mov ax, [di+4]
     mov [wBps], ax
-    mov dl, RWF_NEWLOGICAL
+
+;--- if dword [di+35h] != 0, it's FAT32
+
+if ?VDD
+;--- windows complains if drive is an USB memory stick.
+;--- hence don't lock if running on NT!
+    cmp [hVdd],-1
+    jnz dontlock
+endif
+
+;--- lock logical valume. Required by Win9x only?
+;--- there should be a corresponding unlock (86A/486A) when done with the drive
+
+    mov cx, 084Ah       ; this is for FAT12/FAT16
+    cmp dword ptr [di+35h], 0
+    jz @F
+    mov ch, 48h
 @@:
+    mov bl, [ioreq.bDrive]
+    inc bl
+    mov dx, 1           ; permission flags (0=allow writes)
+    mov bh, 1           ; lock level (0-4)
+    mov ax, 440Dh       ; lock the drive for windows
+    int 21h
+
+    mov bh, 04h         ; locks the drive for real dos
+    mov ax, 440Dh       ; i don't quite understand why i must lock it twice
+    int 21h             ; some sort of OS bug i guess
+dontlock:
+    mov dl, RWF_NEWLOGICAL
+donesetlog:
     mov [ioreq.rwfunc], dl
     ret
 setlogvars endp
@@ -4762,14 +4981,14 @@ setphysvars proc
     @int13
     jc use1308
 
-    mov eax, dword ptr [si].DINFO1.totalsec+0
-if 1                                    ; HUGE hd support?
+    mov eax, [si].DINFO1.totalsecL
+ife ?SN64                               ; HUGE hd support?
     dec eax
 else
-    mov edx, dword ptr [si].DINFO1.totalsec+4
-    sbb eax, 1
+    mov edx, [si].DINFO1.totalsecH
+    sub eax, 1
     sbb edx, 0
-    mov [dwDataendHigh], edx
+    mov [dwDataendH], edx
 endif
     mov [dwDataend], eax
     mov ax, [si].DINFO1.bps
@@ -4854,7 +5073,7 @@ setcdvar:
 logicalsetvars:
 
     xor eax, eax
-    mov [dwRootcluster], eax                  ; default root cluster = 0
+    mov [dwRootCluster], eax                  ; default root cluster = 0
 
 ;--- get file system
 ;--- no DOS functions can be used here, 
@@ -4872,14 +5091,14 @@ logicalsetvars:
     jz isexfat
 assumefat:
     mov al, [si].BPB.sectors_cluster          ; sectors per cluster
-    mov [bSpc], al
+    mov [bSpC], al
 
     mov dl, 0FFh
 @@:
     inc dl
     shr al, 1
     jnz @B
-    mov [spcmd], dl
+    mov [bSpCshift], dl
 
     movzx eax, [si].BPB.reserved_sectors      ; number of reserved sectors
     mov [dwReserved], eax
@@ -4895,7 +5114,7 @@ assumefat:
     jnz @F
     mov eax, [si].EBPB_FAT32.sec_per_fat32    ; if fat32
 @@:
-    mov [dwSpf], eax
+    mov [dwSpF], eax
 
     movzx eax, [si].BPB.sectors_fat12         ; sectors in partition
     test ax, ax                               ; < 32 MB?
@@ -4905,16 +5124,16 @@ assumefat:
     dec eax
     mov [dwDataend], eax
 
-    sub eax, [dwSpf]
+    sub eax, [dwSpF]
     cmp [bFats], 2
     jb skipsub2
-    sub eax, [dwSpf]
+    sub eax, [dwSpF]
 skipsub2:
     sub eax, [dwReserved]
 
     movzx ebx, [wRootsectors]
     sub eax, ebx
-    mov cl, [spcmd]
+    mov cl, [bSpCshift]
     shr eax, cl
 
     mov [filesys], FS_FAT32
@@ -4926,13 +5145,13 @@ skipsub2:
     mov [filesys], FS_FAT12
 goodnumcluster:
     add eax, 2
-    mov [dwLastcluster], eax
+    mov [dwLastCluster], eax
 
-    mov eax, [dwSpf]
+    mov eax, [dwSpF]
     movzx ebx, [bFats]
     mul ebx
     add eax, [dwReserved]               ; spf * fats + reserved = root
-    mov [dwRoot], eax
+    mov [dwRootSect], eax
 
     cmp [filesys], FS_FAT32
     jne not_fat32
@@ -4944,16 +5163,16 @@ goodnumcluster:
     mov [backupbs], ax
     mov ax, [si].EBPB_FAT32.fs_info_start ; filesystem info sector
     mov [fsinfo], ax
-    movzx ax, [bSpc]
+    movzx ax, [bSpC]
     mov [wRootsectors], ax
     mov eax, [si].EBPB_FAT32.root_startcl
-    mov [dwRootcluster], eax
+    mov [dwRootCluster], eax
 
     sub eax, 2
     jc wrongrootc
-    mov cl, [spcmd]
+    mov cl, [bSpCshift]
     shl eax, cl
-    add [dwRoot], eax
+    add [dwRootSect], eax
 wrongrootc:
     pop eax
     jmp isfat32
@@ -4963,53 +5182,25 @@ not_fat32:
     mov al, [si].EBPB.phys_drive        ; hard drive number
     mov [hdnumber], al
     movzx eax, [wRootsectors]
-    add eax, [dwRoot]                   ; calculate start of data area
+    add eax, [dwRootSect]               ; calculate start of data area
 
 isfat32:
 
-    cmp eax, [dwRoot]
+    cmp eax, [dwRootSect]
     jne datastartiscorrect
-    mov bl, [bSpc]
+    mov bl, [bSpC]
     add eax, ebx
 datastartiscorrect:
-    mov [dwDatastart], eax
+    mov [dwDataStart], eax
 
     mov eax, [dwReserved]
-    add eax, [dwSpf]
-    mov [dwFatend], eax                 ; calculate end of fat 1 area
+    add eax, [dwSpF]
+    mov [dwFat1end], eax                ; calculate end of fat 1 area
 
     movzx eax, [wBps]                   ; calculate bytes per cluster
-    mov bl, [bSpc]
+    mov bl, [bSpC]
     mul ebx
-    mov [dwBpc], eax
-
-    cmp [ioreq.drvtype], DT_LOGICAL
-    jnz donegetvars
-if ?VDD
-;--- windows complains if drive is an USB memory stick.
-;--- hence don't lock if running on NT!
-    cmp [hVdd],-1
-    jnz donegetvars
-endif
-
-;--- lock logical valume. Required by Win9x only?
-;--- there should be a corresponding unlock (86A/486A) when done with the drive
-
-    mov cx, 084Ah       ; this is for FAT12/FAT16
-    cmp [filesys], FS_FAT32
-    jne @F
-    mov ch, 48h
-@@:
-    mov bl, [ioreq.bDrive]
-    inc bl
-    mov dx, 1           ; permission flags (0=allow writes)
-    mov bh, 1           ; lock level (0-4)
-    mov ax, 440Dh       ; lock the drive for windows
-    int 21h
-
-    mov bh, 04h         ; locks the drive for real dos
-    mov ax, 440Dh       ; i don't quite understand why i must lock it twice
-    int 21h             ; some sort of OS bug i guess
+    mov [dwBpC], eax
 donegetvars:
     ret
 
@@ -5019,20 +5210,77 @@ isntfs:
     dec eax
     mov [dwDataend], eax
     mov [dwReserved], 1
-    jmp donegetvars
+    ret
+
+if 0
+EXFAT struct
+    db 64 dup (?)
+dqHidden dq ?     ; sector offset to start of partition
+dqSize   dq ?     ; size of volume in sectors
+dwFatOfs dd ?     ; offset in sectors to start of first FAT
+dwFatSiz dd ?     ; size of a FAT in sectors
+dwClHpOfs dd ?    ; offset in sectors to start of clusters
+dwClCnt   dd ?    ; no of clusters in cluster "heap"
+dwRootCl  dd ?    ; starting cluster of root dir
+dwVolId   dd ?    ; volume serial no
+wFSRev    dw ?   
+wVolFlgs  dw ?
+bBpSShift db ?    ; bytes per sector shift
+bSpCShift db ?    ; sectors per cluster shift
+bNumFats  db ?    ; number of FATs
+bDrive    db ?    ; drive no (80h=phys disk 0)
+EXFAT ends
+endif
 
 isexfat:
     mov [filesys], FS_EXFAT
-    mov [dwRoot], 0
-;    mov eax, [si+64]
-;    mov [???], eax
-    mov eax, [si+72]
+    mov eax, dword ptr [si].EXFAT.dqSize+0
+ife ?SN64
     dec eax
+else
+    mov edx, dword ptr [si].EXFAT.dqSize+4
+    sub eax, 1
+    sbb edx, 0
+    mov [dwDataendH], edx
+endif
     mov [dwDataend], eax
-    mov [dwReserved], 1
-    mov eax, [si+92]
-    mov [dwLastcluster], eax
-    jmp donegetvars
+    mov eax, [si].EXFAT.dwFatOfs
+    mov [dwReserved], eax
+    mov eax, [si].EXFAT.dwFatSiz
+    mov [dwSpF], eax
+    add eax, [dwReserved]
+    mov [dwFat1end], eax
+    mov eax, [si].EXFAT.dwClHpOfs
+    mov [dwDataStart], eax
+    mov eax, [si].EXFAT.dwClCnt
+    mov [dwLastCluster], eax
+    mov al, [si].EXFAT.bNumFats
+    mov [bFats], al
+    mov eax, [si].EXFAT.dwRootCl
+    mov [dwRootCluster], eax
+    mov ax, 1
+    mov cl, [si].EXFAT.bBpSShift 
+    shl ax, cl
+    mov [wBps], ax
+    mov al, 1
+    mov cl, [si].EXFAT.bSpCShift 
+    mov [bSpCshift], cl
+    shl al, cl
+    mov [bSpC], al
+    movzx edx, [wBps]
+    movzx eax, al
+    push eax
+    mul edx
+    mov [dwBpC], eax
+    pop eax
+    mov edx, [dwRootCluster]
+    sub edx, 2
+    mul edx
+    add eax, [dwDataStart]
+    mov [dwRootSect], eax
+    movzx ax, [bSpC]
+    mov [wRootsectors], ax        ; [wRootsectors] just one cluster!
+    ret
 
 setffparam:
     mov eax, [dwRwfilesize]
@@ -5422,7 +5670,7 @@ printentry proc                         ; prints the fat entry the cursor
     jne abortentry                      ; right of the screen
 
     call getentrynumber
-    mov [scrn_col], 34h
+    mov [scrn_col], 52
     mov dl,8
     call rendernumhex
     call printstring
@@ -5555,13 +5803,13 @@ printtopline proc
     movzx cx, [bFats]
     jcxz notinfat
 anotherfat:
-    add edx, [dwSpf]
+    add edx, [dwSpF]
     loop anotherfat
     cmp eax, edx
     jb infat
 
-notinfat:
-    mov edx, [dwRoot]
+notinfat:                          ; not in reserved and not in fat
+    mov edx, [dwRootSect]
     cmp eax, edx
     jb indata
     movzx ebx, [wRootsectors]
@@ -5571,24 +5819,19 @@ notinfat:
 
     mov [bRegion], RG_ROOT
 
-    mov dx, offset inrootmsg
-    cmp [filesys], FS_FAT32
-    je dispclust
+    mov dx, offset inrootmsg             ; "[root]
+    test [filesys], FS_FAT32             ; root in data region?
+    jnz dispclust
+
 continuecount:
     call printstring
 abortdc:
-    mov cl, 61                           ; clear to column 61
-    cmp [ioreq.drvtype], DT_PHYSICAL
-    je @F
     mov cl, RIGHTCOL                     ; clear to last column
-@@:
-    pushf
     sub cl, [scrn_col]
     mov al, SPACE
     call fillchar
-    popf
+    cmp [ioreq.drvtype], DT_PHYSICAL
     jne done
-
     mov [scrn_xy], 003Fh
     mov eax, [dwCurSector]
     cmp [ioreq.rwfunc], RWF_NEWINT13
@@ -5596,14 +5839,9 @@ abortdc:
     test [diskinfobuffer.flags], 2   ;CHS valid?
     jz done
 @@:
-    call getchs      ;returns cyl in cl[6-7]+ch, heads in dh, secs in cl[0-5]
-    movzx eax, ch
-    mov ah, cl
-    shr ah, 6
-    movzx bx, dh
-    and cx, 3Fh
+    call getchsx
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("CHS: %3u/%3u/%2u"), ax, bx, cx
+    invoke sprintf, dx, CStr("CHS: %u/%u/%u"), ax, bx, cx
     call printstring
 done:
     popad
@@ -5619,10 +5857,10 @@ infat:
     push [scrn_xy]
     call printentry
     pop [scrn_xy]
-    mov dx, offset infatmsg 
+    mov dx, offset infatmsg           ; "[FAT-"
     call printstring
     mov dl, '1'
-    mov eax, [dwFatend]
+    mov eax, [dwFat1end]
     cmp [dwCurSector], eax
     jb firstfat
     mov dl, '2'
@@ -5637,10 +5875,10 @@ firstfat:
     test [filesys], FS_FATXX
     je abortdc
 
-    mov [scrn_col], 2Dh
-    mov dx, offset entrymsg
+    mov [scrn_col], 45
+    mov dx, offset entrymsg           ; "Entry: "
     call printstring
-    mov [scrn_col], 3Ch
+    mov [scrn_col], 60
     jmp abortdc
 
 setmbrview:
@@ -5669,12 +5907,12 @@ dispclust:
 
     or [bRegion], RG_DATA
 
-    mov dx, offset szCluster          ; display "cluster:"
+    mov dx, offset szCluster          ; "Cluster: "
     call printstring
 
     mov eax, [dwCurSector]
     call sector2cluster
-    mov dl, 7                         ; cluster has max. 7 hex digits
+    mov dl, 7                         ; cluster has max. 7 hex digits (8 for exfat!)
     call rendernumhex
     jmp continuecount
 
@@ -5958,7 +6196,8 @@ nextaddress:
     ret
 printsector endp
 
-;--- print value of current offset in row 0 and set the 2 cursor attributes
+;--- print value of current offset in row 0, update the entry# in fatview
+;--- and set the 2 cursor attributes
 
 printoffset proc
 
@@ -6221,6 +6460,33 @@ getchs proc
     or cl, dl
     ret
 getchs endp
+
+;--- this routine is better and should replace getchs
+;--- returns CHS in ax,bx,cx
+
+getchsx proc
+    movzx cx, [heads]
+    movzx bx, [sectors]
+    cmp bl,0
+    jz @F
+    imul bx, cx      ;heads * sectors = sectors per cylinder
+    shld edx, eax, 16
+    test bx, bx
+    jz @F
+    div bx           ; gives cylinders in eax
+    push ax
+    mov ax, dx
+    xor dx, dx
+    movzx cx, [sectors]
+    div cx
+    mov bx, ax      ; gives heads in bx
+    mov cx, dx
+    inc cx
+    pop ax
+@@:
+    ret
+getchsx endp
+
 ;-------------------------------------------------------
 ; rwsect handles all sector reading and writing in WDe for all disk types
 ;       IN:     [dwCurSector] = the sector number to read
@@ -6302,6 +6568,10 @@ acctab label word
     pop es
     mov eax, [dwCurSector]
     add eax, [dwDrivestart]
+if ?SN64
+    mov edi, [dwCurSectorH]
+    adc edi, [dwDrivestartH]
+endif
     mov dx, [ioreq.pBuffer]
     movzx bx, [ioreq.rwfunc]
     shl bx,1
@@ -6420,9 +6690,11 @@ newint13_access:
     mov [si].DAP.wBufferOfs, dx
     mov [si].DAP.wBufferSeg, ds         ; segment part of transfer address
     mov [si].DAP.dwStartLow, eax        ; set sector #
+if ?SN64
+    mov [si].DAP.dwStartHigh, edi
+else
     mov [si].DAP.dwStartHigh, 0
-;    mov eax, [dwCurSectorHigh]         ; \/\/\/\ 64-bit lba support
-;    mov [si].DAP.dwStartHigh, eax
+endif
 
     mov dl, [ioreq.bDrive]
     mov ah, 42h
@@ -7307,8 +7579,13 @@ writefile endp
 ;---      NC ok, file handle in AX (and wFilehandle)
 
 openfile proc
-    mov dx, 1
-screatefile::    ;<- used by createfile
+    mov dx, 1    ; DL, bit 0: 1=open if file exists
+
+;--- entry used by createfile,
+;--- then DX=10010b:
+;---         bit 1: replace/open file if it exists
+;---         bit 4: create file if it doesn't exist
+screatefile::
     mov [wFilehandle],-1
 if ?LFN
     mov ax, 716Ch
@@ -7323,6 +7600,9 @@ if ?LFN
 endif
     mov ax, 6c00h
 tryLFN:
+;--- BL, bit 0-2: access mode
+;--- BH, bit 4=1: allow 4GB-1 file size
+;---     bit 5=1: return error, no int 24h
     mov bx, 3002h
     mov si, offset filenamebuffer
     xor cx, cx

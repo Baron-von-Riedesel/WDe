@@ -175,7 +175,11 @@ WDe User Manual
       WDe uses int21h/ax=7305h to do logical drive reading/writing,
       (DOS 7.x functions) and int 25h/26h (cx=0FFFFh) for non-fat32
       partitions/drives.  All drive information is obtained from
-      the bootsector.
+      the bootsector. Note that when running in Windows XP or Vista,
+      the file system of the logical drive may be NTFS or exFAT. In
+      such cases the navigation inside WDe may be limited; NTFS
+      is unsupported, and support for exFAT is in an experimental
+      state.
 
     3.3 - CD-Rom drives
 
@@ -336,8 +340,8 @@ WDe User Manual
           the bootsector to that partition and then restrict it as a
           fat drive.  This would allow us to jump along the fat chain,
           jump to the root, etc, to verify drive integrity.  This means
-          that recovery operations may be made on FAT32 partitions under
-          DOS versions that do not support FAT32.
+          that recovery operations may be made on FAT32 or exFAT disks
+          under DOS versions that do not support those file systems.
 
           Another use is specifying the drive type of an image file
           being read by WDe.
@@ -349,9 +353,9 @@ WDe User Manual
           current sector innaccessible.
 
           When "Above" is chosen, an option to set the drive type is also
-          provided; FAT or Physical.  FAT reads the new "Sector 0" as a
-          bootsector and sets all variables accordingly; Physical treats
-          the drive as a hard drive with a master boot record.
+          provided; L(ogical) or P(hysical). Logical will interpret the new
+          "Sector 0" as a bootsector and sets all variables accordingly;
+          Physical treats the drive as a hard drive with a master boot record.
 
         4.2.6.3 - Item "UnFormat"
 

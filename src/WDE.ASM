@@ -690,7 +690,7 @@ sectors         db ?
 handling        db ?            ; inside rwsect: how to handle errors
 menustackidx    db ?            ; index for menustack
 secstk_top      db ?            ; index for secstk
-bSecure         db ?
+bSecure         db ?            ; secure mode cmdline option set?
 
 ; unformat
     align dword
@@ -1933,13 +1933,15 @@ popsecstack endp
 
 pushsecstack proc
     push bx
+    push ax
     movzx bx, [secstk_top]
     and bl, 7
     shl bx, 3
     mov [bx][secstk].dwSector, eax
-    push [spot]
-    pop [bx][secstk].wSpot
+    mov ax, [spot]
+    mov [bx][secstk].wSpot, ax
     inc [secstk_top]
+    pop ax
     pop bx
     ret
 pushsecstack endp
@@ -2087,8 +2089,8 @@ do_direntry:
     mov bx, [spot]
     and bl, 11100000b
 
-    test [filesys], FS_EXFAT                   ; exFAT direntry structure?
-    jnz exfat_enter
+    cmp [filesys], FS_EXFAT                    ; exFAT direntry structure?
+    jz exfat_enter
 
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh   ; lfn entry?
     jz done
@@ -2116,6 +2118,7 @@ exfat_enter:
 @@:
     mov eax, [si+bx].EXFATDIRS.dwFirstCl
     jmp jumptoeax
+
 
 handle_enter endp
 
@@ -2184,8 +2187,7 @@ finddir:
     call backupsector
     call bufferinsi
 @@:
-    xor bx, bx
-    call finddirectory  ; scan if a dir entry is found in buffer
+    call IsDirectory    ; scan if a dir entry is found in buffer
     jnc doneX
     call findcommon     ; get next (sub)sector, will set SI
     jmp @B
@@ -2384,8 +2386,7 @@ updatescreen proc
     cmp dl, RG_DATA
     jne @F
     call bufferinsi                   ; check if it's a directory
-    xor bx, bx
-    call finddirectory
+    call IsDirectory
     jnc setdirview
     jmp setdataview
 @@:
@@ -3574,7 +3575,7 @@ lfnview endp
 ;--- in: si=sector buffer
 ;---     bx=current dir entry
 
-direxfatview proc
+exfat_dirview proc
 
     mov [scrn_xy], VIEWROW * 100h + 1
     mov cl, 78
@@ -3695,7 +3696,7 @@ nextchar:
     pop si
     ret
 
-direxfatview endp
+exfat_dirview endp
 
 ;--- directory view
 ;--- displaying just the spot entry
@@ -3706,8 +3707,8 @@ dirview proc
     mov bx,[spot]
     and bl, 0E0h
 
-    test [filesys], FS_EXFAT
-    jnz direxfatview
+    cmp [filesys], FS_EXFAT
+    jz exfat_dirview
 
 ;--- adjust menus.
 ;--- (the menu adjustment is currently a bit silly implemented, too complicated )
@@ -5395,21 +5396,73 @@ printchs proc
 
 printchs endp
 
-;--- scan read buffer for directories (FAT type)
+;--- check if it's an exfat directory
+;--- this check is currently not at all fool-proved
+
+IsExfatDir proc
+    push cx
+    xor bx, bx
+    mov ch, 512 / 32                    ; = 16 dir entries in a sector
+nextitem:
+    mov al, [si+bx]
+    cmp al, 00
+    jz chknull
+    cmp al, 81h
+    jz ok
+    cmp al, 82h
+    jz ok
+    cmp al, 83h
+    jz ok
+    cmp al, 85h
+    jz ok
+    cmp al, 0C0h
+    jz ok
+    cmp al, 0C1h
+    jz ok
+    test al, 80h
+    jnz notfound
+ok:
+    add bx, 32
+    dec ch
+    jnz nextitem
+    pop cx
+    ret
+notfound:
+    pop cx
+    stc
+    ret
+;--- the rest must be 0
+nextnull:
+    mov al,[si+bx]
+    cmp al, 0
+    jnz notfound
+chknull:
+    add bx, 32
+    dec ch
+    jnz nextnull
+    pop cx
+    ret
+
+IsExfatDir endp
+
+;--- scan read buffer if it contains a directory (FAT type)
 ;--- IN: SI=sector buffer
-;---     BX=offset in buffer (currently assumed 0000!)
 ;--- OUT: not found: carry set
 ;---      found    : carry cleared
 ;--- must preserve DX, CX
 
-finddirectory proc
+IsDirectory proc
+
+    cmp [filesys], FS_EXFAT
+    jz IsExfatDir
 
     push cx
 
+    xor bx, bx
     cmp byte ptr [si+bx], 0
     je notfound
 
-flok:
+;flok:
 ;    mov ch, byte ptr [wBps+1]          ; 16 entries every 512 bytes
 ;    shl ch, 4                          ; this puts 16 in ch if bps is 512
 
@@ -5417,8 +5470,8 @@ flok:
 
 nextentry:
 
-;  cmp byte ptr [si+12+bx], 0           ; NT series *does* use this byte,
-;  jne notfound                         ; so it may not be 0 on drives that
+;    cmp byte ptr [si+12+bx], 0         ; NT series *does* use this byte,
+;    jne notfound                       ; so it may not be 0 on drives that
 ;                                       ; have been messed with by NT
     mov cl, 10
 
@@ -5561,7 +5614,7 @@ allzero2:
     jnz allzero
     jmp founddir
 
-finddirectory endp
+IsDirectory endp
 
 ;-------------------------------------------------------
 spaceandcolon:                    ; i don't like this function, it was created
@@ -7432,8 +7485,8 @@ checksetview proc
     mov cx, [vidcolsize]
     mov ax, VIEWROW                 ; start of "view" area
     mul cx
-    add di,ax
-    mov dl,8
+    add di, ax
+    mov dl, 8
 @@:
     push di
     push cx
@@ -7442,7 +7495,7 @@ checksetview proc
     rep stosw
     pop cx
     pop di
-    add di,cx
+    add di, cx
     dec dl
     jnz @B
 no_viewmode_change:
@@ -7455,7 +7508,7 @@ getnos:                               ; 'get number of sectors' from the
     mov eax, [dwDataend]              ; then abort.
     sub eax, [dwCurSector]
     inc eax
-    mov dx,offset sprintfbuffer
+    mov dx, offset sprintfbuffer
     invoke sprintf, dx, offset szNoOfSectors, eax
     call getdecvalue
     jc @F

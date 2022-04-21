@@ -108,9 +108,8 @@ nextSectorOfCluster:
     call rwsectx                        ; need error checking b4 & after
 
     mov si, offset sectbuffer
-    xor bx, bx
-    call finddirectory
-    jnc isDirectory
+    call IsDirectory
+    jnc directory_found
     cmp cl, [bSpC]                      ; if the first sector in a cluster
     je nextCluster                      ; is not a directory...scan next
                                         ; cluster
@@ -122,7 +121,7 @@ verifySectorNull:                       ; if the first sector of the cluster
     dec bx
     jnz verifySectorNull
 
-isDirectory:
+directory_found:
 
     mov eax, [dwCurSector]
     inc eax                             ; increase sector # in cluster

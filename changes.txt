@@ -24,6 +24,8 @@ WDe V0.50 [??.??.2022]
     Under DOS, to investigate exFAT partitions, one will heve to use the
     "restrict" option, since DOS itself doesn't know how to mount such
     partitions.
+  - option -m ( mount partition as logical drive ) added.
+  - string enter function has improved edit capabilities.
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.

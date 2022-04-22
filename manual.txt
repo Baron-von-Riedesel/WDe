@@ -17,7 +17,7 @@ WDe User Manual
   4.2       Menu Items & Submenus
   4.2.1     Item "Save"
   4.2.2     Menu "File"
-  4.2.2.1   Menus "Save Sectors" & "Restore Sectors"
+  4.2.2.1   Menus "Save to File" & "Restore from File"
   4.2.2.1.1 Item "Input"
   4.2.2.1.2 Item "MBR/Boot Sector"
   4.2.2.1.3 Item "Partition 1/2/3/4"
@@ -91,18 +91,15 @@ WDe User Manual
 
   1.0 - Initial Screen and Commandline
 
-    When starting, WDe accepts a command line argument that may be either a
-    drive letter, followed by a colon (i.e. "c:"), or a disk number (i.e. "0").
-    If the disk number is followed by a 'f', access will be to the corresponding
-    floppy disk instead of the hard disk.If no (valid) argument is given, the
-    user will be prompted ("Drive: ") to specify the drive/disk:
-
-    If TAB is pressed, the "Drive: " prompt will be replaced by a "Filename: "
-    prompt and a full file/path name can be entered. WDe will interpret this
-    file as a physical device, so the file must be a so-called image file. The
-    sector restriction  function can then be used to make WDe interpret the
-    content as a logical drive.
-
+     When starting, WDe optionally accepts command line arguments - to make
+    WDe display the currently accepted arguments, run "WDe -?".
+    
+     If no (valid) argument is given on the command line, the user will be
+    prompted ("Drive: ") to specify the current drive or disk. The TAB key
+    may be pressed to change the "Drive: " prompt to a "Filename: " prompt;
+    a full file/path name can then be entered, WDe will interpret this
+    file as a physical disk. The sector restriction function can then be
+    used to make WDe interpret the parts of the file as logical drive.
 
 
 
@@ -133,8 +130,8 @@ WDe User Manual
     connected to it within the fat. Hitting Enter while in a directory
     will jump to the beginning of the first cluster of that entry.
     
-    Hitting Enter, Ctrl-Enter or Ctrl-Right key will save the current sector#
-    on a stack; using Ctrl-Up will retrieve this information and thus allow
+    Hitting Enter, Ctrl+Enter or Ctrl+Right key will save the current sector#
+    on a stack; using Ctrl+Up will retrieve this information and thus allow
     to go back to the saved position.
 
     Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
@@ -238,13 +235,13 @@ WDe User Manual
         DOS allows that ).
 
 
-        4.2.2.1 - Menus "Save Sectors" & "Restore Sectors"
+        4.2.2.1 - Menus "Save to File" & "Restore from File"
 
           4.2.2.1.1 - Item "Input"
 
           Sectors are saved or restored beginning at the current
-          position on the drive being edited; the user of WDe
-          is prompted for the number of sectors to save/restore.
+          position on the drive being edited; the user is prompted
+          for the number of sectors to save/restore.
 
           4.2.2.1.2 - Item "MBR/Boot Sector"
 
@@ -255,8 +252,7 @@ WDe User Manual
           4.2.2.1.3 - Item "Partition 1/2/3/4"
 
           These functions will save/restore the entire partition
-          selected to a file.  Note that files larger than 2gb's are
-          not yet supported by WDe.
+          selected to a file.
 
           4.2.2.1.4 - Item "Fat1/Fat2"
 
@@ -266,7 +262,7 @@ WDe User Manual
           4.2.2.1.5 - Item "Root"
 
           Saves or restores either the root for FAT12/FAT16 or the
-          first cluster of it for FAT32 to/from file.
+          first cluster of it for FAT32/exFAT to/from file.
 
           4.2.2.1.6 - Item "Partition"
 
@@ -278,7 +274,12 @@ WDe User Manual
           or in the 32 bytes belonging to a directory entry.  Using this
           option can save/restore the data in a fat or file chain to/from
           a specified file. Note that, when restoring, the chain itself is
-          never changed, just the corresponding sector contents.
+          never changed, just the corresponding sector contents. When
+          saving a file chain to a file the user may be prompted after
+          the copy process whether the saved file should be truncated to the
+          size stored in the directory entry. So this option actually allows
+          to copy files from a file system that is not natively supported by
+          the OS ( i.e. FAT32 and exFAT ).
 
         4.2.2.2 - Item "Change Disk"
 
@@ -348,7 +349,7 @@ WDe User Manual
 
           Restrict gives an "Above/Below" prompt.  If Above is chosen,
           the current sector will now be considered Sector 0 and any
-          sectors "above" (lower than the current sector) are innaccessible.
+          sectors "above" (lower than the current sector) are inaccessible.
           "Below" will merely make all sectors below (greater than) the
           current sector innaccessible.
 

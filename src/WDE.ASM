@@ -50,6 +50,9 @@ endif
 ifndef ?SN64
 ?SN64            EQU 0  ; 1=support 64-bit sector access (not implemented yet)
 endif
+?SAFEMODE        EQU 1  ; 1=support cmdline option -s
+?MOUNT           EQU 1  ; 1=support cmdline option -m
+?EXTVIEW         EQU 0  ; 1=extended exFAT direntry view
 
         BOTTOMROW        equ 42 ; last row (menu, messages)
         RIGHTCOL         equ 79 ; last col
@@ -60,6 +63,7 @@ endif
         COLASC           equ 63 ; column where ascii display starts
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
+        DIRENTSIZE       EQU 32   ; size of directory entry (FATxx + exFAT)
 
 ; "bRW" variable
         RW_READ          EQU 0
@@ -200,13 +204,14 @@ endif
         F8_KEY           EQU 42h
 
         HOME_KEY         EQU 47h
-        UP_KEY           EQU 48h
+        CSRUP_KEY        EQU 48h
         PAGEUP_KEY       EQU 49h
-        LEFT_KEY         EQU 4bh
-        RIGHT_KEY        EQU 4dh
+        CSRLEFT_KEY      EQU 4bh
+        CSRRIGHT_KEY     EQU 4dh
         END_KEY          EQU 4fh
-        DOWN_KEY         EQU 50h
+        CSRDOWN_KEY      EQU 50h
         PAGEDOWN_KEY     EQU 51h
+        INS_KEY          EQU 52h
         DEL_KEY          EQU 53h
 
         CTRLENTER_KEY    EQU 1C0Ah  ;check both AH & AL (so 0A can be entered by ctrl-j)
@@ -462,8 +467,8 @@ menustrings     label byte
                 db 'Fat2',0                             ; 11
                 db 'Root',0                             ; 12
                 db 'Data Area',0                        ; 13
-                db 'Save Sectors',0                     ; 14
-                db 'Restore Sectors',0                  ; 15
+                db 'Save to File',0                     ; 14
+                db 'Restore from File',0                ; 15
                 db 'Input',0                            ; 16
                 db 'MBR',0                              ; 17
                 db 'Partition1',0                       ; 18
@@ -690,7 +695,13 @@ sectors         db ?
 handling        db ?            ; inside rwsect: how to handle errors
 menustackidx    db ?            ; index for menustack
 secstk_top      db ?            ; index for secstk
-bSecure         db ?            ; secure mode cmdline option set?
+bHexString      db ?            ; stringbuffer filled with hex value
+if ?SAFEMODE
+bSafe           db ?            ; "safe" mode cmdline option set?
+endif
+if ?MOUNT
+bMount          db ?            ; mount partition + 1
+endif
 
 ; unformat
     align dword
@@ -720,7 +731,7 @@ secstk          SECITEM 8 dup (<?>)  ; sector stack ( room for 8 items )
 
     align 4
 filenamebuffer  db 72 dup(?)    ; size must be at least 69, 72 used for alignment
-stringbuffer    db 76 dup(?)    ; buffer for string input (pos 74: length)
+stringbuffer    db 76 dup(?)    ; buffered string for find/fill (pos 74: length)
 sprintfbuffer   db 80 dup(?)    ; buffer for sprintf
 ioreq           IOREQ <?>
 diskinfobuffer  DINFO1 <?>      ; buffer for int13h "get drive info"
@@ -740,6 +751,8 @@ sectbuffer      db 4096 dup(?)  ; read buffer for sector reading
 _BSS ends
 
     .code
+
+getstring proto stdcall :ptr, :word, :word
 
 if ?PM
     include initpm16.inc
@@ -763,6 +776,18 @@ endm
     pop dx
 endm
 endif
+
+;--- main menu definition
+
+    @mstart initialmenu
+    @mitem  0, savetodisk
+    @mitem  1, submenu_file
+    @mitem  2, submenu_jumpto
+    @mitem  3, submenu_view
+    @mitem  4, submenu_find
+    @mitem  5, submenu_functions
+    @mitem 44, helpscreen
+    @mend initialmenu
 
 Start proc
 
@@ -803,29 +828,35 @@ if ?VDD
     call initvdd         ; init vdd on nt platforms ( works in V86 only, not in PM )
 endif
 
-    call vinit           ; init video mode, init screen
+;--- copy cmdline to dgroup
 
-if ?PM
-    call initpm16
-    call wdepm16
-endif
-
-    mov [stackbot], sp
-    mov [_mem], sp       ; set start of heap ( currently used by unformat only )
+    push ds
+    push ds
+    pop es
+    mov ds, [_psp]
+    mov di, offset sprintfbuffer
+    mov si, 80h+1
+@@:
+    lodsb
+    stosb
+    cmp al,13
+    jz @F
+    cmp al,0
+    jnz @B
+@@:
+    pop ds
+    mov byte ptr [di-1],0
 
 ;--- scan command line
 
-    mov es, [_psp]
-    mov si, 80h
-    movzx cx, byte ptr es:[si]
-    inc si
+    mov si, offset sprintfbuffer
 @@:
-    jcxz inval_cmd
-    lodsb es:[si]
-    dec cl
+    lodsb
+    cmp al,0
+    jz no_drive
     cmp al,' '
     jbe @B
-    mov ah, es:[si]
+    mov ah,[si]
     cmp al,'/'
     jz handleoptions
     cmp al,'-'
@@ -842,33 +873,38 @@ endif
     ja inval_cmd
     sub al, 'a'
     cmp ah, ':'
-    jz donecmdline
+    jz has_drive
     jmp inval_cmd
 handleoptions:
-    jcxz inval_cmd
     call options
-    inc si
-    dec cl
-    jnz @B
-    jmp inval_cmd
+    jnc @B
+inval_cmd:
+    jmp printhelp
 maybedrive:
     mov bh, DT_PHYSICAL
     sub al, '0'
     or al, 80h
-    cmp ah, 13
-    jz donecmdline
+    cmp ah, 0
+    jz has_drive
     or ah, 20h
     cmp ah, 'h'
-    jz donecmdline
+    jz has_drive
     and al, 7fh
     cmp ah, 'f'
-    jz donecmdline
-inval_cmd:
+    jz has_drive
+    jmp inval_cmd
+no_drive:
     mov al, -1
-donecmdline:
-
+has_drive:
     pusha
-    mov ax, 3524h               ; back up old int 24h
+
+    call setseeds1
+    call vinit                  ; init video mode, init screen
+if ?PM
+    call initpm16
+    call wdepm16
+endif
+    mov ax, 3524h               ; back up old int 24h ( must be done AFTER switch to pm )
     int 21h
     mov word ptr [old24h+0], bx
     mov word ptr [old24h+2], es
@@ -879,8 +915,11 @@ donecmdline:
     mov ah, 25h                 ; set up new int 24h
     int 21h
     pop ds
-    call setseeds1
+
     popa
+
+    mov [stackbot], sp
+    mov [_mem], sp              ; set start of heap ( currently used by unformat only )
 
     cmp al, -1
     jnz disk_entered
@@ -897,20 +936,27 @@ disk_entered:
 drive_ok::
     call setvariables           ; set all obtainable parameter variables
 
+if ?MOUNT
+    cmp [bMount], 0
+    jz @F
+    mov al,0
+    xchg al, [bMount]
+    cmp [ioreq.drvtype], DT_PHYSICAL
+    jnz @F
+;--- setvariables moved partition startsectors in [partitions]
+    movzx eax, al
+    dec ax
+    mov eax, [partitions+eax*4]
+    mov [dwCurSector], eax
+    call rwsect
+    call mountdrive
+@@:
+endif
+
     xor dx, dx
     call nspotcalc
     mov [crsr_xy], dx           ; set cursor to spot 0
     call printoffset            ; print current offset
-
-    @mstart initialmenu      ; main menu definition
-    @mitem  0, savetodisk
-    @mitem  1, submenu_file
-    @mitem  2, submenu_jumpto
-    @mitem  3, submenu_view
-    @mitem  4, submenu_find
-    @mitem  5, submenu_functions
-    @mitem 44, helpscreen
-    @mend initialmenu
 
     mov dx, initialmenu + linitialmenu shl 8
     mov cl, 3
@@ -1049,14 +1095,35 @@ handle_esc:
 main endp
 
 options proc
-    cmp ah, '?'
-    jz printhelp
-    cmp ah, '?'
-    jz printhelp
-    or ah,20h
-    cmp ah,'s'
-    jnz printhelp
-    mov [bSecure], 1            ;deactivate all write access
+    lodsb
+    and al,al
+    jz error
+    or al,20h
+if ?SAFEMODE
+    cmp al,'s'
+    jnz @F
+    mov [bSafe], 1              ; deactivate all write access
+    ret
+@@:
+endif
+if ?MOUNT
+    cmp al,'m'
+    jnz @F
+    lodsb 
+    and al,al
+    jz error
+    sub al,'0'
+    jc error
+    cmp al,4
+    cmc
+    jc error
+    inc ax
+    mov [bMount], al
+    ret
+@@:
+endif
+error:
+    stc
     ret
 options endp
 
@@ -1086,10 +1153,10 @@ ck  label word
     CKey CTRLEND_KEY,      jumptolastsect
     CKey TAB_SCAN,         changemode
 lck1 equ ($ - ck) shr 1
-    CKey LEFT_KEY,         moveleft
-    CKey RIGHT_KEY,        moveright
-    CKey UP_KEY,           moveup
-    CKey DOWN_KEY,         movedown
+    CKey CSRLEFT_KEY,      moveleft
+    CKey CSRRIGHT_KEY,     moveright
+    CKey CSRUP_KEY,        moveup
+    CKey CSRDOWN_KEY,      movedown
     CKey HOME_KEY,         movefirst
     CKey END_KEY,          movelast
 lck equ ($ - ck) shr 1
@@ -1407,8 +1474,12 @@ quickhelptext label byte
     db "Keys in Data area of Fat32/Fat1x partitions:",0
     db 0    
     db "Ctrl+Right    - Jump to linked cluster in fat",0
-    db "Ctrl+Enter    - Jump to fat entry for this cluster",0
+    db "Ctrl+Enter    - Jump to FAT entry for this cluster",0
     db "Enter         - If in directory, jump to first cluster of entry",0
+    db 0    
+    db "Note that with exFAT disks Ctrl+Left and Ctrl+Right often don't",0
+    db "work, because on such systems a file may have no associated FAT",0
+    db "chain - in this case the file is stored contiguous.",0
     db -1
 
     .code
@@ -1476,11 +1547,6 @@ restrictbelow:
     mov [dwDataend], eax                ; last sector of the drive
     ret
 restrictabove:
-    mov eax, [dwCurSector]              ; set the current sector as the
-    add [dwDrivestart], eax             ; first sector; this is added to
-    sub [dwDataend], eax                ; [dwCurSector] for r/w, so adjust the
-    xor eax, eax                        ; final sector accordingly
-    mov [dwCurSector], eax
     mov dx, offset plmsg                ; "physical/logical?"
     call printbottom
 rsgetkeys2:
@@ -1493,9 +1559,15 @@ rsgetkeys2:
     je donesetpl
     cmp al, 'l'
     jne rsgetkeys2
+mountdrive::                            ; <--- mount [dwCurSector] as boot sector of new logical drive
     mov dl, DT_LOGICAL
 donesetpl:
     mov [ioreq.drvtype], dl
+    mov eax, [dwCurSector]              ; set the current sector as the
+    add [dwDrivestart], eax             ; first sector; this is added to
+    sub [dwDataend], eax                ; [dwCurSector] for r/w, so adjust the
+    xor eax, eax                        ; final sector accordingly
+    mov [dwCurSector], eax
     call setvariables
 done:
     ret
@@ -2005,6 +2077,12 @@ recursechain endp
 ;--- if in FAT, jump to linked (=next) cluster in chain
 ;--- if in data region, jump to linked cluster in FAT
 
+;--- for exFAT, it might be that the FAT entry is NULL -
+;--- this usually means that the file is stored contiguous;
+;--- and the successor ( if one exists ) is then the next cluster#.
+;--- problem is that WDe doesn't know the file size and hence
+;--- can't tell when the end is reached.
+
 jumpcluster proc
 
     cmp [bRegion], RG_FAT
@@ -2109,16 +2187,22 @@ do_direntry:
 
 exfat_enter:
     mov al, [si+bx].EXFATDIR.etype
-    cmp al, 0C0h  ;secondary file stream entry?
-    jz @F
-    cmp al, 081h  ;primary allocation bitmap?
-    jz @F
-    cmp al, 082h  ;primary upcase table?
-    jnz done
+    test al, 80h
+    jz done
+    test al, 40h
+    jz isprim
+    test [si+bx].EXFATDIRS.secflgs, EXFPF_CLSDEFINED
+    jz done
 @@:
     mov eax, [si+bx].EXFATDIRS.dwFirstCl
     jmp jumptoeax
-
+isprim:
+    and al, 1Fh
+    cmp al, EXFTC_ALLOCBM
+    jz @B
+    cmp al, EXFTC_UPCASET
+    jz @B
+    ret
 
 handle_enter endp
 
@@ -2629,6 +2713,12 @@ savechain proc
     mov [fromfat], 1
     call srcommon
 
+_BSS segment
+dwNumCluster dd ?
+bSkipFat db ?
+_BSS ends
+
+    mov [bSkipFat], 0
     xor ebp, ebp
     cmp [chainflag], FAT_CHAIN
     je beginfatchainsave
@@ -2638,21 +2728,22 @@ savechain proc
     call bufferinsi
     mov bx,[spot]
     and bl, 11100000b                       ; chop off 0-31 bytes to set bx to
+
+    cmp [filesys], FS_EXFAT
+    jz exfatsavechain
+
     mov eax, dword ptr [si+bx+DIR_FILESIZE] ; filesize
     mov [dwFilesize], eax
     mov ax, word ptr [si+bx+DIR_CLUST_HIGH] ; high cluster word
     shl eax, 16
     mov ax, word ptr [si+bx+DIR_CLUST_LOW]  ; low cluster word
 
+savefilechain:
     mov [dwSecBackup], eax                  ; back the cluster number up
     call cluster2sector                     ; returns -1 if outside of valid cluster range
     cmp eax, [dwDataend]
     ja invalclust
-    push eax
-    mov eax, [dwSecBackup]
-    call getfatentry
-    mov [dwSecBackup], eax
-    pop eax
+    call getnextcluster
     jmp startchainsaving
 
 invalclust:
@@ -2660,6 +2751,34 @@ invalclust:
     call printerror
 done:
     ret
+
+exfatsavechain:
+    mov eax, [si+bx].EXFATDIRS.dwFirstCl
+    mov ecx, dword ptr [si+bx].EXFATDIRS.dqSize+0
+    mov dwFilesize, ecx
+    test [si+bx].EXFATDIRS.secflgs, EXFPF_NOCHAIN
+    jz savefilechain
+
+;--- the file has NO fat chain.
+;--- hence the number of clusters to save must be calculated
+
+    mov [bSkipFat], 1   ; don't use fat to get next cluster#
+    push eax
+    push ecx
+    movzx eax, [wBps]
+    mov cl, [bSpCshift]
+    shl eax, cl         ; eax = bytes per cluster
+    pop ecx
+    xchg eax, ecx       ; eax = filesize, ecx = bytes/cluster
+    mov edx, dword ptr [si+bx].EXFATDIRS.dqSize+4
+    div ecx             ; filesize / bytes per cluster
+    and dx,dx
+    setnz dl
+    movzx edx, dl
+    add eax, edx
+    mov dwNumCluster, eax
+    pop eax
+    jmp savefilechain
 
 ;--- in a FAT, start saving cluster chain
 
@@ -2689,14 +2808,25 @@ chainsaveloop:
     call cluster2sector
     cmp eax, [dwDataend]
     ja donechainsave
+    call getnextcluster
+    jmp chainsaveloop
 
+getnextcluster:
     push eax
     mov eax, [dwSecBackup]
-    call getfatentry
+    cmp [bSkipFat], 0       ; does a fat chain exist
+    jz ncfromfat
+    inc eax                 ; no, increment cluster#
+    dec [dwNumCluster]
+    jns dgnc                ; and check if EOF has been reached
+    mov eax, -1
+    jmp dgnc
+ncfromfat:
+    call getfatentry        ; get next cluster# from fat chain
+dgnc:
     mov [dwSecBackup], eax
     pop eax
-
-    jmp chainsaveloop
+    ret
 
 mydisp:
     mov dx, offset sprintfbuffer
@@ -2750,7 +2880,7 @@ savechain endp
 ;--- IN: [chainflag] = FAT_CHAIN or FILE_CHAIN
 ;        entry of file in DTA
 
-restchain proc
+restorechain proc
     call srcommon
 
     mov eax, [dwCurSector]
@@ -2768,6 +2898,8 @@ restchain proc
     mov bx, [spot]
     and bl, 11100000b
 
+    cmp [filesys], FS_EXFAT
+    jz done
 if 0                            ; chain is restored even if file isn't big enough
     cmp eax, dword ptr [si+bx+DIR_FILESIZE]
     jb toosmallerr
@@ -2869,7 +3001,7 @@ error:
     call printerror
 done:
     ret
-restchain endp
+restorechain endp
 
 ;-------------------------------------------------------
 srcommon proc
@@ -2892,7 +3024,7 @@ sr_ok:
     ret
 srcommon endp
 
-;--- menu item "file ops, save sectors, input"
+;--- menu item "file, save to file, input"
 
 savefile proc
     call getnos                         ; get number of sectors in [dwValue]
@@ -2979,14 +3111,14 @@ srchain:
     cmp [chainflag], NO_CHAIN
     je @F
     cmp [srflag], SR_RESTORE
-    je restchain
+    je restorechain
     jmp savechain
 @@:
     ret
 
 ;-------------
 
-srhdcheck:   ;submenu fileoptions for physical disks
+srhdcheck:   ; submenu fileoptions for physical disks
 
     mov bx, 1CAh
     mov cx, 4
@@ -3171,16 +3303,16 @@ submenu_jumpto proc
     jmp pushmenustack
 
 jumptop1:
-    mov ebx, [partitions+0]
+    mov ebx, [partitions+0*sizeof dword]
     jmp donejump
 jumptop2:
-    mov ebx, [partitions+4]
+    mov ebx, [partitions+1*sizeof dword]
     jmp donejump
 jumptop3:
-    mov ebx, [partitions+8]
+    mov ebx, [partitions+2*sizeof dword]
     jmp donejump
 jumptop4:
-    mov ebx, [partitions+12]
+    mov ebx, [partitions+3*sizeof dword]
     jmp donejump
 
 jumptodata:
@@ -3446,11 +3578,11 @@ lfntab label byte
     and cl, 3Fh
     cmp cl, 1
     jz foundfirst
-    cmp bx, 512-32
+    cmp bx,  512 - DIRENTSIZE
     jz foundfirst
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES+32], 0Fh
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES+DIRENTSIZE], 0Fh
     jnz foundfirst
-    add bx, 32
+    add bx, DIRENTSIZE
     jmp @B
 foundfirst:
 
@@ -3511,7 +3643,7 @@ noprint:
     jz done
     cmp bx, 0
     jz done
-    sub bx, 32
+    sub bx, DIRENTSIZE
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
     jz nextentry
 done:
@@ -3577,6 +3709,30 @@ lfnview endp
 
 exfat_dirview proc
 
+;--- (de)activate "Chain"
+
+    xor dx, dx
+    cmp [menustackidx], 2        ; simple check if "file options" may be active.
+    jnz nochainadjust
+    mov al, -2
+    mov ah, NO_CHAIN
+    cmp [si+bx].EXFATDIR.etype, 0C0h          ; stream entry?
+    jnz @F
+    mov al, MENUF_CHAIN
+    mov ah, FILE_CHAIN
+@@:
+    cmp al, [ldfileoptf7]
+    setnz dl
+    mov [ldfileoptf7], al
+    mov [chainflag], ah
+nochainadjust:
+    and dx, dx         ; only reprint the current menu if menu has been changed
+    jz @F
+    pusha
+    call printmenu
+    popa
+@@:
+
     mov [scrn_xy], VIEWROW * 100h + 1
     mov cl, 78
     mov ax, COL_DEFAULT shl 8 or SPACE
@@ -3592,19 +3748,31 @@ exfat_dirview proc
     jz freeentry
     test al, 40h
     jnz issecondary
-    movzx cx, byte ptr [si+bx+1]
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("primary, secondary count=%u, "), cx
-    call printstring
+
     and al,1Fh
+    mov dx, allocbm
     cmp al, EXFTC_ALLOCBM
-    jz allocbm
+    jz @F
+	mov dx, upcase
     cmp al, EXFTC_UPCASET
-    jz upcase
+	jz @F
+	mov dx, vollabel
     cmp al, EXFTC_VOLLABEL
-    jz vollabel
+	jz @F
+	mov dx, file
     cmp al, EXFTC_FILE
-    jz file
+	jnz unknownprim
+@@:
+	call dx
+unknownprim:
+if ?EXTVIEW
+    mov dx, CStr(", primary")
+    call printstring
+endif
+    movzx cx, [si+bx].EXFATDIR.seccnt
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr(", secondary count=%u"), cx
+    call printstring
 done:
     ret
 freeentry:
@@ -3614,8 +3782,10 @@ freeentry:
     call printstring
     ret
 issecondary:
-    mov dx, CStr("secondary")
+if ?EXTVIEW
+    mov dx, CStr("secondary, ")
     call printstring
+endif
     and al, 1Fh
     cmp al, 0      ; a secondary file stream entry?
     jz isfilestream
@@ -3624,32 +3794,75 @@ issecondary:
     ret
 isfilestream:
     mov dx, offset sprintfbuffer
-    movzx ax, [si+bx].EXFATDIRFS.secflgs
-    movzx cx, [si+bx].EXFATDIRFS.namelength
-    invoke sprintf, dx, CStr(", stream, flags=%X, name length=%u"), ax, cx
+    movzx ax, [si+bx].EXFATDIRSF.secflgs
+    invoke sprintf, dx, CStr("stream, flags=%X"), ax
     call printstring
+    test al, EXFPF_NOCHAIN
+    jz @F
+    push dx
+    mov dx, CStr(" [no FAT chain]")
+    call printstring
+    pop dx
+@@:
+    movzx cx, [si+bx].EXFATDIRSF.namelength
+    invoke sprintf, dx, CStr(", name length=%u"), cx
     call dispcluster
     ret
 isfilename:
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr(", name")
+    invoke sprintf, dx, CStr('name: "')
     call printstring
+fncont:
+    push si
+    lea si, [si+bx].EXFATDIRSN.name_
+    mov cx, 15
+nextwchar:
+    lodsw
+    and ax, ax
+    jz namedone
+    cmp ah, 0
+    jz @F
+    mov al, '?'
+@@:
+    mov dl, al
+    call printchar
+    loop nextwchar
+namedone:
+    pop si
+    jz @F
+    cmp bx,[wBps]
+    jz @F
+    cmp [si+bx+DIRENTSIZE].EXFATDIRS.etype, 0C1h
+    jnz @F
+    add bx, DIRENTSIZE
+    cmp [scrn_col], RIGHTCOL-15
+    jb fncont
+    mov dl,'"'
+    call printchar
+    inc [scrn_row]
+    mov [scrn_col], 7
+    mov dl,'"'
+    call printchar
+    jmp fncont
+@@:
+    mov dl,'"'
+    call printchar
     ret
 
 allocbm:
-    mov dx, CStr("allocation bitmap ")
+    mov dx, CStr("allocation bitmap")
     call printstring
     call dispcluster
-    jmp done
+    ret
 upcase:
-    mov dx, CStr("uppercase table ")
+    mov dx, CStr("uppercase table")
     call printstring
     call dispcluster
-    jmp done
+    ret
 vollabel:
-    mov dx, CStr("volume label ")
+    mov dx, CStr("volume label")
     call printstring
-    jmp done
+    ret
 file:
     mov dx, [si+bx].EXFATDIRF.attributes
     mov di, offset valuebuffer
@@ -3657,22 +3870,24 @@ file:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("file, attributes: %X [%s]"), [si+bx].EXFATDIRF.attributes, di
     call printstring
+    ret
 
-    jmp done
 dispcluster:
     mov al, [si+bx].EXFATDIR.etype
     test al,80h
     jz nocluster
+    push [scrn_xy]
     mov [scrn_col],1
     inc [scrn_row]
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("start cluster: %lX, size=%lu"), [si+bx].EXFATDIR.dwFirstCl, dword ptr [si+bx].EXFATDIR.dqSize
     call printstring
+    pop [scrn_xy]
 nocluster:
     ret
 
     .const
-attrchars db "RHS?DA"
+attrchars db "AD?SHR"
     .code
 
 renderattributes:
@@ -3683,9 +3898,10 @@ renderattributes:
     mov si, offset attrchars
     mov cx, sizeof attrchars
     mov ah, al
+    shl dx, 10   ; skip highest 10 bits
 nextchar:
     lodsb
-    shr dx, 1
+    shl dx, 1
     jc @F
     mov al, '-'
 @@:
@@ -5397,16 +5613,16 @@ printchs proc
 printchs endp
 
 ;--- check if it's an exfat directory
-;--- this check is currently not at all fool-proved
+;--- this check is currently not really fool-proved
 
 IsExfatDir proc
     push cx
     xor bx, bx
-    mov ch, 512 / 32                    ; = 16 dir entries in a sector
+    mov cx, [wBps]
+    shr cx, 5          ; 32 bytes per entry
+    mov dl, 0
 nextitem:
-    mov al, [si+bx]
-    cmp al, 00
-    jz chknull
+    mov al, [si+bx].EXFATDIR.etype
     cmp al, 81h
     jz ok
     cmp al, 82h
@@ -5416,31 +5632,36 @@ nextitem:
     cmp al, 85h
     jz ok
     cmp al, 0C0h
-    jz ok
+    jz isc0
     cmp al, 0C1h
-    jz ok
+    jz isc1
     test al, 80h
     jnz notfound
-ok:
-    add bx, 32
-    dec ch
-    jnz nextitem
+addrnext:
+    add bx, DIRENTSIZE
+    loop nextitem
+    cmp dl, 1          ; at least 1 "in use" entry must have been found
     pop cx
     ret
+ok:
+    inc dl
+    jmp addrnext
+isc0:                  ; secondary stream entry must directly follow primary file
+    and bx, bx
+    jz ok
+    cmp [si+bx-DIRENTSIZE].EXFATDIR.etype, 85h
+    jz ok
+    jmp notfound
+isc1:                  ; secondary name entry must follow 0C0h or 0C1h entry
+    and bx, bx
+    jz ok
+    cmp [si+bx-DIRENTSIZE].EXFATDIR.etype, 0C1h
+    jz ok
+    cmp [si+bx-DIRENTSIZE].EXFATDIR.etype, 0C0h
+    jz ok
 notfound:
     pop cx
     stc
-    ret
-;--- the rest must be 0
-nextnull:
-    mov al,[si+bx]
-    cmp al, 0
-    jnz notfound
-chknull:
-    add bx, 32
-    dec ch
-    jnz nextnull
-    pop cx
     ret
 
 IsExfatDir endp
@@ -5466,7 +5687,7 @@ IsDirectory proc
 ;    mov ch, byte ptr [wBps+1]          ; 16 entries every 512 bytes
 ;    shl ch, 4                          ; this puts 16 in ch if bps is 512
 
-    mov ch, 512 / 32                    ; = 16 dir entries in a sector
+    mov ch, 512 / DIRENTSIZE
 
 nextentry:
 
@@ -5603,7 +5824,7 @@ notfound:
     ret
 
 allzero:
-    mov cl, 32
+    mov cl, DIRENTSIZE
 allzero2:
     cmp byte ptr [si+bx], 0
     jne notfound
@@ -5763,8 +5984,11 @@ getdecvalue proc
     mov [dwMaxvalue], eax
     sub sp, 80-8
     mov di, sp
-    call getstring             ; get string in buffer at DI
+    mov byte ptr [di],0
 tryagain:
+    invoke getstring, di, 80-8, 0
+;--- returns ax=chars, dx=cursor ofs
+    mov cx, ax
     jcxz abort
     mov si, sp
     push cx
@@ -5813,8 +6037,6 @@ invalkey:
 invalvalue:
     mov ax, 0E07h
     int 10h
-    shr ecx, 16   ; restore cx
-    call getstring2
     jmp tryagain
 
 getdecvalue endp
@@ -6454,8 +6676,8 @@ clearscreen proc
     ret
 clearscreen endp
 
-
     .const
+
 helptext label byte
     db 13,10
     db "usage: wde [ option ] [ disk ]",13,10
@@ -6466,8 +6688,14 @@ helptext label byte
     db "   if no (valid) disk is given, the user will be prompted for one.",13,10
     db "   <option> may be:",13,10
     db "     -?: display this help text and exit",13,10
+if ?SAFEMODE
     db "     -s: safe mode; no write access to disk",13,10
+endif
+if ?MOUNT
+    db "     -m<n>: mount partition <n> as logical drive",13,10
+endif
     db '$'
+
     .code
 
 printhelp proc
@@ -6595,8 +6823,8 @@ dummywrite:
     mov [ioreq.pBuffer], offset sectbuffer
     ret
 writesect:
-if 1
-    cmp [bSecure], 1   ;clears CF
+if ?SAFEMODE
+    cmp [bSafe], 1   ;clears CF
     jz dummywrite
 endif
     mov [ioreq.bRW], RW_WRITE
@@ -7259,7 +7487,7 @@ doret:
     ret
 quit endp
 
-;--- menu File Ops, Save sectors, partition
+;--- menu File, Save to file, partition
 
 savedata proc
 ;
@@ -7381,61 +7609,19 @@ printmenu endp
 ;---      CX = string length
 
 getstringprompt:
+    cmp [bHexString], 1
+    jnz @F
+    mov [bHexString], 0
+    mov stringbuffer[0], 0   ;clear string buffer
+@@:
     mov dx, offset szString
     call printbottom
     mov di, offset stringbuffer
-
-;--- fall thru!
-
-;--- enter a string. max length is: RIGHTCOL - current column
-;--- in:  DI=buffer for string
-;--- out: CX=chars entered
-;---      DI=cursor pos in buffer
-
-getstring proc
-    xor cx, cx
-getstring2::                         ;<--- if string is to be edited - DI,CX must be set
-    mov dh, RIGHTCOL
-    sub dh,[scrn_col]
-getkeyagain:
-    call cursorgetkey
-
-    cmp ah, BACKSPACE_SCAN
-    je backspace
-    cmp al, ESCAPE_KEY
-    je abort
-    cmp al, ENTER_KEY
-    je done
-    cmp al, 0
-    je getkeyagain
-    cmp al, 0e0h    ;extended key?
-    je getkeyagain
-    cmp cl, dh
-    je maxkeys
-
-    mov dl, al
-    call printchar
-    mov [di],al
-    inc di
-    inc cx
-    jmp getkeyagain
-maxkeys:
-    mov ax,0e07h
-    int 10h
-    jmp getkeyagain
-backspace:
-    jcxz getkeyagain
-    call backcommon
-    dec cx
-    dec di
-    jmp getkeyagain
-abort:
-    xor cx, cx
-    stc
-done:
+    invoke getstring, di, sizeof stringbuffer - 4, 0
+    mov cx, ax
     ret
 
-getstring endp
+    include getstrng.inc
 
 ;-------------------------------------------------------
 backcommon:
@@ -7739,6 +7925,11 @@ seed:
 ;       stringbuffer = hex string gotten
 
 gethexstring proc
+    cmp [bHexString], 1
+    jnz @F
+    mov [bHexString], 0
+    mov stringbuffer[0], 0   ;clear string buffer
+@@:
     mov dx, offset szHex
     mov di, offset stringbuffer
     call dogethex
@@ -7775,6 +7966,7 @@ nextnibble:
     sub cx, si
     shr cx, 2
     mov word ptr [stringbuffer+74], cx
+    mov [bHexString], 1         ; hexstring in stringbuffer
 done:
     ret
 
@@ -7788,8 +7980,9 @@ done:
 
 gethexvalue::
     mov [dwMaxvalue], eax
-    sub sp, 80
+    sub sp, 80-8
     mov di, sp
+    mov byte ptr [di], 0
     call dogethex
 nexttry:
     jc done2
@@ -7809,10 +8002,10 @@ nextdigit:
     loop nextdigit
     cmp ebx, [dwMaxvalue]                 ; value smaller or equal to maximum?
     ja invalvalue
-    add sp, 80
+    add sp, 80-8
     ret
 done2:
-    add sp, 80
+    add sp, 80-8
     stc
     ret
 invalvalue:
@@ -7821,10 +8014,11 @@ invalvalue:
     jmp inval
 
 dogethex:
-    push di
     call printbottom
-    call getstring
-    pop si
+dogethex2:
+    invoke getstring, di, 80-8, 0
+    mov si, di
+    mov cx, ax
 tryagain:
     stc
     jcxz dogethex_ex
@@ -7861,9 +8055,7 @@ invalchar:
 inval:
     mov ax, 0e07h   ; beep!
     int 10h
-    mov cx, dx
-    call getstring2
-    jmp tryagain
+    jmp dogethex2
 
 gethexstring endp
 

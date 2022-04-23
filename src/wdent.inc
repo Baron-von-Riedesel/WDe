@@ -91,8 +91,11 @@ initvdd proc
     push cs
     pop ds
     assume ds:_TEXT
-    mov ax, 06A50h               ; push AX, push XX
-    mov cx, 9021h                ; push XX, nop
+    mov ax, 6A50h                ; push AX, push XX
+    mov cx, 9013h                ; push XX, nop
+    mov word ptr [int13+0], ax
+    mov byte ptr [int13+2], cl
+    mov cl, 21h
     mov word ptr [int21+0], ax
     mov byte ptr [int21+2], cl
     mov cl, 25h

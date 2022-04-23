@@ -16,6 +16,9 @@
 	option casemap:none
 
 	include winbase.inc
+ifdef _DEBUG
+	include winuser.inc
+endif
 	include vddsvc.inc
 
 ifdef __JWASM__
@@ -46,7 +49,6 @@ endif
 
 @DbgOut macro xx:REQ, parms:VARARG
 ifdef _DEBUG
-wsprintfA proto c :ptr BYTE, :ptr BYTE, :VARARG
 	pushad
 	invoke wsprintfA, addr szText, CStr(<xx>), parms
 	invoke OutputDebugStringA, addr szText

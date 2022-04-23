@@ -557,6 +557,8 @@ nochainmsg      db 'Recursive Link Not Found',0
 nosearchstring  db 'No search string defined yet',0
 szDriveinvalid  db 'Drive invalid',0
 invalclustmsg   db 'Cluster %lX invalid',0
+secsizetoobig   db 'Sector size exceeds 4K',0
+no_bssignature  db 'No Boot Sector signature',0
 errormsg        db ' - Press Any Key',0
 
 inmbrmsg        db '[MBR]',0
@@ -925,7 +927,6 @@ endif
 
     mov [stackbot], sp
     mov [_mem], sp              ; set start of heap ( currently used by unformat only )
-
     cmp al, -1
     jnz disk_entered
 enter_disk:
@@ -2528,7 +2529,7 @@ updatescreen endp
 
 ;--- IN: [stringbuffer]: search string
 ;---      CX: size of string
-;---      AL: 0=normal start, 1=find next, hence increase spot first
+;---      AL: 0=normal start, 1=find next ( skips byte at spot pos )
 ;--- search starts at cursor pos of current sector
 
 stringsearch proc
@@ -5139,6 +5140,8 @@ setlogvars proc
     cmp ax,7300h
     jz donesetlog
     mov ax, [di+4]
+    cmp ax, sizeof sectbuffer    ; refuse sector sizes beyond 4 kB
+    ja donesetlog
     mov [wBps], ax
 
 ;--- if dword [di+35h] != 0, it's FAT32
@@ -5216,6 +5219,8 @@ else
 endif
     mov [dwDataend], eax
     mov ax, [si].DINFO1.bps
+    cmp ax, sizeof sectbuffer
+    ja secsizeerror 
     mov [wBps], ax
     mov ax,word ptr [si].DINFO1.cyls
     mov bl,byte ptr [si].DINFO1.heads
@@ -5224,7 +5229,13 @@ endif
     mov [heads], bl
     mov [sectors], cl
     mov [ioreq.rwfunc], RWF_NEWINT13
+    clc
     jmp done
+secsizeerror:
+    mov dx, offset secsizetoobig
+    call printerror
+    stc
+    ret
 use1308:
     mov dl, [ioreq.bDrive]
     xor di, di                          ; ES:DI=0000:0000 (bios bug)
@@ -5305,6 +5316,11 @@ logicalsetvars:
 ;--- all information must be read from the boot sector
 
     mov si, offset sectbuffer
+
+    mov dx, offset no_bssignature
+    cmp word ptr [si+1FEh], 0AA55h
+    jnz printerror
+
     mov eax, [si+3]
     cmp eax, "SFTN"
     jz isntfs
@@ -5436,26 +5452,6 @@ isntfs:
     mov [dwReserved], 1
     ret
 
-if 0
-EXFAT struct
-    db 64 dup (?)
-dqHidden dq ?     ; sector offset to start of partition
-dqSize   dq ?     ; size of volume in sectors
-dwFatOfs dd ?     ; offset in sectors to start of first FAT
-dwFatSiz dd ?     ; size of a FAT in sectors
-dwClHpOfs dd ?    ; offset in sectors to start of clusters
-dwClCnt   dd ?    ; no of clusters in cluster "heap"
-dwRootCl  dd ?    ; starting cluster of root dir
-dwVolId   dd ?    ; volume serial no
-wFSRev    dw ?   
-wVolFlgs  dw ?
-bBpSShift db ?    ; bytes per sector shift
-bSpCShift db ?    ; sectors per cluster shift
-bNumFats  db ?    ; number of FATs
-bDrive    db ?    ; drive no (80h=phys disk 0)
-EXFAT ends
-endif
-
 isexfat:
     mov [filesys], FS_EXFAT
     mov eax, dword ptr [si].EXFAT.dqSize+0
@@ -5485,6 +5481,8 @@ endif
     mov ax, 1
     mov cl, [si].EXFAT.bBpSShift 
     shl ax, cl
+    cmp ax, sizeof sectbuffer
+    ja secsizeerror
     mov [wBps], ax
     mov al, 1
     mov cl, [si].EXFAT.bSpCShift 
@@ -5505,7 +5503,10 @@ endif
     movzx ax, [bSpC]
     mov [wRootsectors], ax        ; [wRootsectors] just one cluster!
     ret
-
+secsizeerror:
+    mov dx, offset secsizetoobig
+    call printerror
+    ret
 setffparam:
     mov eax, [dwRwfilesize]
     shr eax, 9                          ; \Fix/ ?

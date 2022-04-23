@@ -1,8 +1,15 @@
 
 ;--- WDEVDD is a NTVDM VDD which
 ;--- supplies low-level access to block devices for WDE.
-;--- Copyright japheth 2010.
+;--- Copyright japheth 2010-2022.
 ;--- Released under GNU GPL 2 license.
+
+;--- emulated are:
+;--- int 13h, ah=02h/03h/08h/41h/42h/43h/48h
+;--- int 21h, ax=7305h ( add 7302h? )
+;--- int 25h
+;--- int 26h
+;--- int 2fh, ax=1510h
 
 	.386
 	.MODEL FLAT, stdcall
@@ -16,8 +23,8 @@ ifdef __JWASM__
 @pe_file_flags = @pe_file_flags or      IMAGE_FILE_DLL
 endif
 
-?RAWMODE equ 1		;1=support CDROM raw read mode
-?CDSECADJUST equ 1	;1=adjust sector number for CD access
+?RAWMODE     equ 1	; 1=support CDROM raw read mode
+?CDSECADJUST equ 1	; 1=adjust sector number for CD access
 
 ;--- CStr() define a string in .CONST
 
@@ -290,10 +297,10 @@ local	rri:RAW_READ_INFO
 endif
 
 	invoke getMSW
-	and eax,1
+	and eax, 1
 	mov bMode, eax
 	invoke getEBX
-	movzx edi,ax	;16bit offset!
+	movzx edi, ax	; 16bit offset!
 	invoke getDS
 	invoke VdmMapFlat, eax, edi, bMode
 	mov ebx, eax
@@ -334,7 +341,7 @@ endif
 		mov ax, [edi+16]
 		mov [ebx].DPACKET.bufseg, ax
 		mov al, [edi+24]
-		mov cdmode,al	;0=cooked, 1=raw
+		mov cdmode,al	; 0=cooked, 1=raw
 	.else
 		invoke getEDX
 		movzx eax, al
@@ -342,7 +349,7 @@ endif
 		mov drive, eax
 		invoke getESI
 		and al,1
-		mov bWrite, al	;0=read,1=write
+		mov bWrite, al	; 0=read, 1=write
 	.endif
 
 	movzx ecx,[ebx].DPACKET.bufofs
@@ -585,11 +592,11 @@ local	drvparam:I13DPARAM
 	.elseif ( ah == 41h )
 		invoke getEBX
 		.if ax == 55AAh
-			xchg ah,al
+			xchg ah, al
 			invoke setEBX, eax
 		.endif
 		invoke getECX
-		or al,5
+		or al, 101b            ; set bits 0 (ah=42h/43h supported) and 2 (?)
 		invoke setECX, eax
 		jmp exit
 	.elseif ( ah == 42h || ah == 43h )
@@ -752,28 +759,28 @@ local bMode:dword
 	invoke setESP, ebx
 	invoke setAX, si	;restore AX value
 
-	.if (di == 13h)
+	.if di == 13h
 		invoke disk_access, si
-	.elseif (di == 21h)
-		.if (si == 7305h)
+	.elseif di == 21h
+		.if si == 7305h
 			invoke drive_access, 0, 0, si
 		.else
 			@DbgOutC <"WDEVDD.Dispatch: can't handle this call",13,10>
 			jmp error
 		.endif
-	.elseif (di == 25h)
+	.elseif di == 25h
 		invoke drive_access, 1, 0, si
-	.elseif (di == 26h)
+	.elseif di == 26h
 		invoke drive_access, 1, 1, si
-	.elseif (di == 2Fh)
-		.if (si == 1510h)
+	.elseif di == 2Fh
+		.if si == 1510h
 			invoke drive_access, 2, 0, si
 		.else
 			@DbgOutC <"WDEVDD.Dispatch: can't handle this call",13,10>
 			jmp error
 		.endif
 ifdef _DEBUG
-	.elseif (di == 41h)
+	.elseif di == 41h
 		invoke getSP
 		movzx ebx,ax
 		invoke getSS

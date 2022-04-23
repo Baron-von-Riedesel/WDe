@@ -48,16 +48,19 @@ getkeyagain16:
     call cursorgetkey
     cmp al, ESCAPE_KEY
     je done
-
+ife ?LFN
     call validfileinputchar
     jc getkeyagain16
-
     cmp al, 'a'
     jb unok1
     cmp al, 'z'
     ja unok1
     sub al, 32
 unok1:
+else
+    call validfirstfilechar
+    jc getkeyagain16
+endif
 ;    call spot2bufofs                   ; should be preserved from above
 ;    and bl, 11100000b
 ;    add bx, offset sectbuffer

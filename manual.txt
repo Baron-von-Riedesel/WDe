@@ -96,7 +96,7 @@ WDe User Manual
     
      If no (valid) argument is given on the command line, the user will be
     prompted ("Drive: ") to specify the current drive or disk. The TAB key
-    may be pressed to change the "Drive: " prompt to a "Filename: " prompt;
+    may be pressed to change the "Drive: " prompt to a "File: " prompt;
     a full file/path name can then be entered, WDe will interpret this
     file as a physical disk. The sector restriction function can then be
     used to make WDe interpret the parts of the file as logical drive.

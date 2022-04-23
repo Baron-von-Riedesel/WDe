@@ -128,8 +128,7 @@ smexit:
     retn
 @@:
     cmp al, 09                      ; TAB?
-;    jz smexit
-    jz _ret
+    jz handle_tab
     cmp al, 13
     jz smexit
     cmp al, 10
@@ -172,14 +171,18 @@ chkm3:
     inc cx
 @@:
     retn
-
+handle_tab:
+    xor al, al
+    xchg al, [bTabSw]
+    cmp al, 1
+    jz smexit
+    retn
 
 chkctl2:                            ; ctrl key entered ( ascii 00 or 0E0 )
     mov bx, offset ctlkeytab
-    shr ax, 8
-    mov dl, 6
+    mov dl, lctlkeytab
 @@:
-    cmp al, [bx]
+    cmp ah, cs:[bx]
     jz ctlfound
     inc bx
     dec dl
@@ -188,10 +191,7 @@ chkctl2:                            ; ctrl key entered ( ascii 00 or 0E0 )
 ctlfound:
     sub bx, offset ctlkeytab
     shl bx, 1
-    add bx, offset ctlkeyjmptab
-    jmp word ptr [bx]
-
-    .const
+    jmp word ptr cs:[bx+ctlkeyjmptab]
 
 ctlkeytab label byte
     db INS_KEY
@@ -200,6 +200,10 @@ ctlkeytab label byte
     db END_KEY
     db CSRRIGHT_KEY
     db DEL_KEY
+lctlkeytab equ $ - ctlkeytab
+
+    align 2
+
 ctlkeyjmptab label word
     dw offset inskey
     dw offset cursleft
@@ -207,8 +211,6 @@ ctlkeyjmptab label word
     dw offset cursend
     dw offset cursright
     dw offset delkey
-
-    .code
 
 ;*** subroutines (ctrl keys)
 

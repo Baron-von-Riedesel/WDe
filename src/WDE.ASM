@@ -45,7 +45,7 @@ ifndef ?VDD
 ?VDD             EQU 1  ; 1=winXP VDD supported
 endif
 ifndef ?LFN
-?LFN             EQU 0  ; 1=prefer using LFN functions (not implemented yet)
+?LFN             EQU 1  ; 1=prefer using LFN functions
 endif
 ifndef ?SN64
 ?SN64            EQU 0  ; 1=support 64-bit sector access (not implemented yet)
@@ -570,7 +570,7 @@ szHex           db 'Hex: ',0
 szSector        db 'Sector: ',0
 szCluster       db 'Cluster: ',0
 szDrive         db 'Drive: ',0
-szFilename      db 'Filename: ',0
+szFile          db 'File: ',0
 szString        db 'String: ',0
 szNoOfSectors   db 'Number of Sectors (1-%lu): ',0
 
@@ -640,7 +640,7 @@ dwRootSect      dd ? ; start sector of root directory
 dwRootCluster   dd ? ; root start cluster (FAT32)
 dwValue         dd ?
 dwMaxvalue      dd ?
-dwFilesize      dd ?
+dwFilesize      dd ? ; size of current image file, or current file chain to save
 dwCluster       dd ?
 dwBpC           dd ? ; bytes per cluster
 dwSecBackup     dd ? ; sector backup
@@ -702,6 +702,7 @@ endif
 if ?MOUNT
 bMount          db ?            ; mount partition + 1
 endif
+bTabSw          db ?
 
 ; unformat
     align dword
@@ -730,15 +731,19 @@ menustack       MENULVL 4 dup (<?>)  ; menu stack
 secstk          SECITEM 8 dup (<?>)  ; sector stack ( room for 8 items )
 
     align 4
-filenamebuffer  db 72 dup(?)    ; size must be at least 69, 72 used for alignment
-stringbuffer    db 76 dup(?)    ; buffered string for find/fill (pos 74: length)
-sprintfbuffer   db 80 dup(?)    ; buffer for sprintf
+if ?LFN
+filenamebuffer  db 256 dup (?)
+else
+filenamebuffer  db 72 dup (?)   ; size must be at least 69, 72 used for alignment
+endif
+stringbuffer    db 76 dup (?)   ; buffered string for find/fill (pos 74: length)
+sprintfbuffer   db 80 dup (?)   ; buffer for sprintf
 ioreq           IOREQ <?>
 diskinfobuffer  DINFO1 <?>      ; buffer for int13h "get drive info"
 cdheader        CDREQ <?>       ; cd device request header
 drivepacket     DISKIO <?>      ; used by int 25h/26h and int 21h/ax=7305h
 diskrwbuffer    DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
-valuebuffer     db 11 dup(?)
+valuebuffer     db 11 dup (?)
 
 ;--- the alignment must observe the fat12fix.
 ;--- the handling of this format requires one byte just before
@@ -746,7 +751,7 @@ valuebuffer     db 11 dup(?)
     align 4
                 db 3 dup (?)    ; ensure sectbuffer is dword aligned
 fat12fix1       db ?            ; stores first borrowed byte for fat12
-sectbuffer      db 4096 dup(?)  ; read buffer for sector reading
+sectbuffer      db 4096 dup (?) ; read buffer for sector reading
 
 _BSS ends
 
@@ -1405,19 +1410,18 @@ handle_tabkey:
     jmp setdrive
 
 fnreq:
-    mov al,0
+    mov al, 1
     call getfilename
-    cmp ah, TAB_SCAN
+    cmp [bTabSw], 0             ; exit with TAB?
     je handle_tabkey
     jcxz abort                  ; no chars entered, or ESC pressed
-    call findfile
+    call findfileX
     jnc @F
     mov dx, offset filenotfound
     call nuprinterror           ; print error without screen update
     jmp fnreq
 @@:
-    call getfilesize            ; store size in [dwFilesize]
-;   mov eax, [dwFilesize]       ; file must be 1+ sectors in size
+    mov eax, [dwFilesize]       ; file must be 1+ sectors in size
     cmp eax, 512
     jnc @F
     mov dx, offset toosmall     ; "File too small"
@@ -1425,8 +1429,8 @@ fnreq:
     jmp fnreq
 @@:
     mov [dwRwfilesize], eax
+    mov bl, 2                   ; access mode (0=ro,1=wo,2=rw)
     call openfile
-    mov ax, [wFilehandle]
     mov [rwhandle], ax
     mov bh, DT_FILE
 done:
@@ -2755,7 +2759,7 @@ done:
 exfatsavechain:
     mov eax, [si+bx].EXFATDIRS.dwFirstCl
     mov ecx, dword ptr [si+bx].EXFATDIRS.dqSize+0
-    mov dwFilesize, ecx
+    mov [dwFilesize], ecx
     test [si+bx].EXFATDIRS.secflgs, EXFPF_NOCHAIN
     jz savefilechain
 
@@ -2881,7 +2885,7 @@ savechain endp
 ;        entry of file in DTA
 
 restorechain proc
-    call srcommon
+    call srcommon               ; calls findfile ( DTA set )
 
     mov eax, [dwCurSector]
     mov [dwSecBackup], eax
@@ -2894,7 +2898,7 @@ restorechain proc
 @@:
     mov [fromfat], 1
     call bufferinsi
-    call getfilesize            ; store size in [dwFilesize]
+    mov eax, [dwFilesize]
     mov bx, [spot]
     and bl, 11100000b
 
@@ -2915,10 +2919,12 @@ restclusts:
     cmp eax, [dwDataend]
     ja invalstart
 
+    mov bl, 0                             ; access mode (0=ro,1=wo,2=rw)
     call openfile
     pop eax
     mov dx, offset filenotfound
     jc error
+    mov [wFilehandle], ax
 
 rbuhs:                                    ;<--- next cluster
 
@@ -3006,13 +3012,13 @@ restorechain endp
 ;-------------------------------------------------------
 srcommon proc
     push ax
-    mov al,1
+    mov al, 0
     call getfilename
     pop ax
     jcxz srskip
     cmp [srflag], SR_RESTORE
     jne sr_ok
-    call findfile
+    call findfileX
     jnc sr_ok
     mov dx, offset filenotfound
     call printerror
@@ -3228,8 +3234,8 @@ srsector0:
 ;--- menu item "file ops, restore sectors, input"
 
 restfile proc
-    call srcommon
-    call getfilesize
+    call srcommon                         ; calls findfile
+    mov eax, [dwFilesize]
     movzx ebx, [wBps]
     cmp eax, ebx
     jae filesizeok
@@ -5120,13 +5126,13 @@ golastsect:
 
 setlogvars proc
     mov di, offset sprintfbuffer
-    mov word ptr [di], 003Dh  ;size of buffer
+    mov word ptr [di], 003Dh     ; size of buffer
     push ds
-    pop es
+    pop es                       ; ES:DI = buffer for eDPB
     mov dl, [ioreq.bDrive]
     inc dl
     mov cx, 003Fh
-    mov ax, 7302h
+    mov ax, 7302h                ; fix: check if this call needs translation in WinXP
     int 21h
     mov dl, RWF_OLDLOGICAL
     jc donesetlog
@@ -5140,6 +5146,7 @@ setlogvars proc
 if ?VDD
 ;--- windows complains if drive is an USB memory stick.
 ;--- hence don't lock if running on NT!
+;--- todo: check if wdevdd can take over the locking.
     cmp [hVdd],-1
     jnz dontlock
 endif
@@ -5855,6 +5862,7 @@ loopwipeview:
 ;--- read file to restore sectors/cluster/FAT/root/...
 ;--- IN: eax = start sector
 ;---    [dwValue] = # of sectors to write
+;---    [dwFilesize] = size of file to read
 ;--- OUT: sectors written to disk from file
 
 readfile proc
@@ -5869,7 +5877,6 @@ readfile proc
     ja invalidperror
 
     push eax
-    call getfilesize
     mov eax, [dwValue]
     movzx edx, [wBps]
     mul edx
@@ -5884,9 +5891,11 @@ readfile proc
     push [dwCurSector]
 
     mov [dwCurSector], eax
+    mov bl, 0                             ; access mode (0=ro,1=wo,2=rw)
     call openfile
     mov dx, offset filenotfound
     jc error
+    mov [wFilehandle], ax
 
 readfileloop:
 
@@ -7098,21 +7107,23 @@ nuprinterror::
     ret
 printerror endp
 
-;-------------------------------------------------------
+;--- check char if it is a valid filename char
 validpathchar proc
+ife ?LFN
     cmp al, BACK_SLASH
     je validchar
     cmp al, COLON
     je validchar
     cmp al, PERIOD
     je validchar
-validfileinputchar::
+validfileinputchar::              ; <--- called by undelete
     cmp al, 'a'                   ; lower case letters allowed in paths
     jb validfilechar
     cmp al, 'z'
     ja validfilechar
     jmp validchar
-extvalidfilechar::
+endif
+extvalidfilechar::                ; <--- called by IsDirectory
     cmp al, PERIOD
     je validchar
     cmp al, SPACE                 ; directory entries can contain spaces
@@ -7152,20 +7163,48 @@ invalidchar:
     ret
 validpathchar endp
 
+if ?LFN
+;--- for LFN, check for valid first file char
+;--- although: a dot as single char is invalid as a filename
+;---
+;------------ !"#$%&'()*+,-./0123456789:;<=>? 
+VIC textequ <10100000000000010000000000101011b>
+validfirstfilechar proc
+    cmp al, '\'
+    stc
+    jz done
+    cmp al, '@'
+    jnc done
+    push ax
+    mov edx, VIC
+    sub al, 20h    ; 00h-1Fh are invalid
+    jc @F
+    and eax, 1Fh   ; we check codes 20h-3Fh (and backslash) only
+    bt edx, eax
+@@:
+    pop ax
+done:
+    ret
+validfirstfilechar endp
+endif
+
 ;--- get a filename entered in menu line
-;--- IN:  AL=0: called by setdrive (TAB switches)
+;--- IN:  AL: 1=called by setdrive (TAB handling)
 ;--- OUT: CX=length of filename
 ;---      AH=last key scan code (check for TAB)
 ;---      [filenamebuffer]
 ;---      ax/di/dx/cx modified
 
 getfilename proc
-    mov bl, al
-    mov dx, offset szFilename
+    mov [bTabSw], al
+    mov dx, offset szFile
     call printbottom
     mov di, offset filenamebuffer
+if ?LFN
+    invoke getstring, di, 80 - sizeof szFile , 0
+    mov cx, ax
+else
     xor cx, cx
-
 getkeyagain:
     call cursorgetkey
 
@@ -7205,6 +7244,7 @@ abort:
     xor cx, cx
 done:
     mov byte ptr [di], 0                ; null-terminate filename
+endif
     ret
 getfilename endp
 
@@ -7704,13 +7744,7 @@ getnos:                               ; 'get number of sectors' from the
 @@:
     popad
     ret
-;-------------------------------------------------------
-getfilesize:                            ; out: eax & [filesize] = filesize
-    mov ah, 2fh                         ; gets the current dta
-    int 21h
-    mov eax, dword ptr es:[bx+1Ah]
-    mov [dwFilesize], eax
-    ret
+
 ;-------------------------------------------------------
 printbottom:
     mov [scrn_xy], BOTTOMROW*100h + 01h
@@ -7730,14 +7764,55 @@ clearbottom:
     pop ax
     pop cx
     ret
-;-------------------------------------------------------
-findfile:                       ; IN: filenamebuffer = filename
-    pusha                       ; OUT: carry flag set if no file found
-    mov dx, offset filenamebuffer
-    mov cx, 47h
-    mov ax, 4e00h               ; findfirst
+
+;--- find file
+;--- IN: filenamebuffer = filename
+;--- OUT: carry flag set if no file found
+;---      else [DTA]: find first data block
+findfile:
+    pusha
+if ?LFN
+    call openfile
+    jc @F
+    mov bx, ax
+    mov ah, 3Eh
     int 21h
+@@:
+else
+    mov dx, offset filenamebuffer ; buffer in DS:DX
+    mov cx, 47h                   ; file attr mask
+    mov ax, 4e00h                 ; findfirst
+    int 21h
+endif
     popa
+    ret
+findfileX:
+if ?LFN
+    pusha
+    call openfile
+    jc @F
+    mov bx, ax
+    mov ax, 4202h
+    xor cx, cx
+    xor dx, dx
+    int 21h
+    mov word ptr [dwFilesize+0], ax
+    mov word ptr [dwFilesize+2], dx
+    mov ah, 3eh
+    int 21h
+@@:
+    popa
+else
+    call findfile
+    jc @F
+    push bx
+    mov ah, 2fh                   ; gets the current dta in ES:BX
+    int 21h
+    mov edx, dword ptr es:[bx+1Ah]
+    pop bx
+    mov [dwFilesize], edx
+@@:
+endif
     ret
 ;-------------------------------------------------------
 closefile:
@@ -7813,9 +7888,9 @@ wferror:
 
 writefile endp
 
-;--- open a file, name in filenamebuffer
+;--- open a file, access mode in BL, name in filenamebuffer
 ;--- out: C if error
-;---      NC ok, file handle in AX (and wFilehandle)
+;---      NC ok, file handle in AX
 
 openfile proc
     mov dx, 1    ; DL, bit 0: 1=open if file exists
@@ -7824,11 +7899,19 @@ openfile proc
 ;--- then DX=10010b:
 ;---         bit 1: replace/open file if it exists
 ;---         bit 4: create file if it doesn't exist
+
 screatefile::
-    mov [wFilehandle],-1
+
+;--- BH, bit 4=1: allow 4GB-1 file size
+;---     bit 5=1: return error, no int 24h
+
+    mov bh, 30h
+    mov si, offset filenamebuffer
+    xor cx, cx
 if ?LFN
     mov ax, 716Ch
-    call tryLFN
+    stc
+    int 21h
     pushf
     cmp ax, 7100h
     jz @F
@@ -7838,17 +7921,7 @@ if ?LFN
     popf
 endif
     mov ax, 6c00h
-tryLFN:
-;--- BL, bit 0-2: access mode
-;--- BH, bit 4=1: allow 4GB-1 file size
-;---     bit 5=1: return error, no int 24h
-    mov bx, 3002h
-    mov si, offset filenamebuffer
-    xor cx, cx
     int 21h
-    jc @F
-    mov [wFilehandle], ax
-@@:
     ret
 openfile endp
 
@@ -7856,13 +7929,14 @@ openfile endp
 ;--- out: C if error
 
 createfile proc
-    call findfile
+    call findfile               ; perhaps better to call openfile?
     jnc fileexists
-
 ccreatefile:
-    mov dx, 10010b
+    mov dx, 10010b              ; replace file if it exists, else create it
+    mov bl, 1                   ; (0=ro,1=wo,2=rw access)
     call screatefile
     jc error
+    mov [wFilehandle], ax
     ret
 
 fileexists:
@@ -7879,9 +7953,11 @@ getaoc:
     je ccreatefile
     cmp al, 'a'
     jne getaoc
+    mov bl, 1                   ; (0=ro,1=wo,2=rw access)
     call openfile               ; append
     mov dx, offset fileerror
     jc printerror
+    mov [wFilehandle], ax
     mov bx, ax                  ; seek from end of file
     xor dx, dx
     xor cx, cx

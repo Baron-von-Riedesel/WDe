@@ -26,6 +26,7 @@ WDe V0.50 [??.??.2022]
     partitions.
   - option -m ( mount partition as logical drive ) added.
   - string enter function has improved edit capabilities.
+  - if available, WDe now uses LFN functions for file open/create.
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.

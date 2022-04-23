@@ -100,7 +100,7 @@ EXFATDIRS ends
 ;--- must immediately follow the primary entry, just 1 in a set.
 ;--- typecode is 0.
 
-EXFATDIRSF struct
+EXFATDIRSS struct
 etype      db ?
 secflgs    db ?
            db ?
@@ -111,9 +111,10 @@ dqValiddatalength dq ?
            dd ?
 firstcl    dd ?
 dqSize     dq ?
-EXFATDIRSF ends                              
+EXFATDIRSS ends                              
 
 ;--- critical secondary file name direntry
+;--- typecode is 1.
 
 EXFATDIRSN struct
 etype      db ?

@@ -641,7 +641,7 @@ outofmemory:
     jmp unformatError
 
 abortUnformat:
-    call updatescreen
+;    call updatescreen
     ret
 
 unformat endp

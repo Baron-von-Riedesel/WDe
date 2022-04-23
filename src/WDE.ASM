@@ -438,7 +438,7 @@ quitmsg         db 'Quit',0
 ynmsg           db ' [Y/n]? ',0
 
 unknownmsg      db 'Unknown',0
-active          db 'Active',0
+szActive        db '(Active)',0
 
 part00          db 'Unused',0
 part050F        db 'Ext Fat',0
@@ -518,7 +518,7 @@ startchs        db 'S-CHS ',0
 endchs          db 'E-CHS ',0
 ;startchs        db 'S-CHS %u/%u/%u',0
 ;endchs          db 'E-CHS %u/%u/%u',0
-startlba        db 'S-LBA',0
+startlba        db 'S-LBA ',0
 mboot           db 'Boot  ',0
 mtype           db 'Type  ',0
 psize           db 'Sects ',0
@@ -543,8 +543,8 @@ filenotfound    db 'File Not Found',0
 filetoobigmsg   db 'File Size Cannot Exceed 4GB-1',0
 
 errorread       db 'Error Reading File',0
-filewerror      db 'Error Writing File',0
-fileerror       db 'Error Creating File',0
+filewriteerr    db 'Error Writing File',0
+filecreateerr   db 'Error Creating File',0
 
 invalidpmsg     db 'Invalid Sector Range',0
 
@@ -1820,7 +1820,7 @@ done:
 fillerror::
     pop [ioreq.dwSector]
     call rwsectx
-    call updatescreen
+;    call updatescreen
 exit:
     ret
 
@@ -2599,7 +2599,7 @@ stringfound:
     and bx,1FFh
 
     push bx                             ; save new spot (start of found string)
-    call updatescreen                   ; found (hex/ascii) string
+;    call updatescreen                   ; found (hex/ascii) string
     pop ax
     mov dl,0
     call movecursor
@@ -2678,14 +2678,14 @@ dontinc:
     ret
 
 notfound:
-    mov dx, offset searcherror
+    mov dx, offset searcherror ; "no (more) matches found"
     call nuprinterror
 abort:
     push [dwSecBackup]
     pop [ioreq.dwSector]
     call rwsectx
-    call updatescreen
-    add sp, 2                 ; skip findcommon return address
+;    call updatescreen
+    add sp, 2                 ; skip caller's return address, will jump to main
     ret
 findcommon endp
 
@@ -2920,8 +2920,7 @@ restclusts:
     cmp eax, [dwDataend]
     ja invalstart
 
-    mov bl, 0                             ; access mode (0=ro,1=wo,2=rw)
-    call openfile
+    call openfilero
     pop eax
     mov dx, offset filenotfound
     jc error
@@ -3027,16 +3026,15 @@ srskip:
     add sp,2                  ; skip srcommon return address
     ret
 sr_ok:
-    mov [menustackidx], 0     ; when done with file op, go back to main menu
     ret
 srcommon endp
 
 ;--- menu item "file, save to file, input"
 
 savefile proc
-    call getnos                         ; get number of sectors in [dwValue]
+    call getnos               ; get number of sectors in [dwValue]
     jc @F
-    call srcommon
+    call srcommon             ; get filename ( may skip return address if no filename supplied )
     mov eax, [dwCurSector]
     jmp endsavedrive
 @@:
@@ -3101,20 +3099,20 @@ submenu_fileoptions proc
     test [filesys], FS_FATXX       ; non-FAT drives?
     jne setxxfileopt
     mov dh, 2                      ; then just allow "sectors" & "boot sector"
-
 setxxfileopt:
     jmp pushmenustack
 
-srfile:
+
+srfile:                            ; save sector range to file
     cmp [srflag], SR_RESTORE
     je restfile
     jmp savefile
 
-srdisk:
+srdisk:                            ; save partition to file
     cmp [srflag], SR_RESTORE
     je restdrive
     jmp dumpiso
-srchain:
+srchain:                           ; save chain to file
     cmp [chainflag], NO_CHAIN
     je @F
     cmp [srflag], SR_RESTORE
@@ -3192,12 +3190,11 @@ srpartition:
     mov [ioreq.dwSector], 0
     call rwsectx
     jc donesr
-    mov ebx, dword ptr [sectbuffer+bx]
+    mov ebx, dword ptr [sectbuffer+bx]   ; get size of partition
     mov [dwValue], ebx
     cmp [srflag], SR_RESTORE
     je endrestsectors
-;-------------------------------------------------------
-endsavedrive:
+endsavedrive:                            ; <--- by savefile, save bs, save fatx, save root
     call savedata
 donesr:
     ret
@@ -3801,7 +3798,7 @@ endif
     ret
 isfilestream:
     mov dx, offset sprintfbuffer
-    movzx ax, [si+bx].EXFATDIRSF.secflgs
+    movzx ax, [si+bx].EXFATDIRSS.secflgs
     invoke sprintf, dx, CStr("stream, flags=%X"), ax
     call printstring
     test al, EXFPF_NOCHAIN
@@ -3811,7 +3808,7 @@ isfilestream:
     call printstring
     pop dx
 @@:
-    movzx cx, [si+bx].EXFATDIRSF.namelength
+    movzx cx, [si+bx].EXFATDIRSS.namelength
     invoke sprintf, dx, CStr(", name length=%u"), cx
     call dispcluster
     ret
@@ -4440,6 +4437,7 @@ fat12viewmode endp
 ;--- physical disk MBR view
 
 mbrview proc
+
     mov [scrn_col], 01h
     xor cx, cx
 
@@ -4480,21 +4478,11 @@ nextpart:
     call printchar
     cmp al, 80h
     je partactive
-
-    push cx
-    mov al, SPACE
-    mov cl, 8
-    call fillchar
-    pop cx
     jmp donepart
 
 partactive:
-    mov dl, '('
-    call printchar
-    mov dx, offset active
+    mov dx, offset szActive
     call printstring
-    mov dl, ')'
-    call printchar
 donepart:
 
     call mbrcommon
@@ -4590,13 +4578,6 @@ donepart:
     mov dx, offset partA5
     cmp al, 0A5h
     je showpart
-
-    push cx                       ; clear space after partition number
-    mov al, SPACE
-    mov cl, 10
-    call fillchar
-    pop cx
-
     jmp dontshowpart
 
 showpart:
@@ -4606,9 +4587,6 @@ showpart:
     pop dx
     call printstring
     mov dl, ')'
-    call printchar
-    mov dl, SPACE
-    call printchar
     call printchar
 
 dontshowpart:
@@ -4623,8 +4601,6 @@ dontshowpart:
 
     mov dx, offset startlba
     call printstring
-    mov dl, SPACE
-    call printchar
 
     mov [highlight_ofs], bx
     add [highlight_ofs], 4
@@ -4650,10 +4626,24 @@ dontshowpart:
     jb nextpart
     ret
 
+;--- position to next line
+;--- CX=partition no
 mbrcommon:
     mov al, 20
     mul cl
     inc al
+
+;--- clear the rest of this "quarter" line
+    push cx
+    push ax
+    mov cl, al
+    add cl, 20
+    sub cl, [scrn_col]
+    mov al, SPACE
+    call fillchar
+    pop ax
+    pop cx
+
     mov [scrn_col], al
     inc [scrn_row]
     ret
@@ -5555,7 +5545,7 @@ isoloop:
     int 21h                             ; to the beginning of the iso
     jnc noisoerror                      ; since we can't read the first 10
                                         ; sectors on a CD
-    mov dx, offset filewerror
+    mov dx, offset filewriteerr
     call printerror
     ret
 
@@ -5571,7 +5561,7 @@ drivedump:
     call writefile
     pushf
     call closefile
-    call updatescreen
+;    call updatescreen
     popf
     jc done
 
@@ -5860,7 +5850,7 @@ loopwipeview:
     jb loopwipeview
     ret
 
-;--- read file to restore sectors/cluster/FAT/root/...
+;--- read file to restore sectors/cluster/FAT/root/... (but not "restore chain")
 ;--- IN: eax = start sector
 ;---    [dwValue] = # of sectors to write
 ;---    [dwFilesize] = size of file to read
@@ -5892,8 +5882,7 @@ readfile proc
     push [dwCurSector]
 
     mov [dwCurSector], eax
-    mov bl, 0                             ; access mode (0=ro,1=wo,2=rw)
-    call openfile
+    call openfilero
     mov dx, offset filenotfound
     jc error
     mov [wFilehandle], ax
@@ -5901,8 +5890,8 @@ readfile proc
 readfileloop:
 
     mov ah, 3Fh                           ; read 512 bytes of the file
-    mov bx, [wFilehandle]                 ; directly into the write buffer
-    mov cx, [wBps]                        ; bad idea?
+    mov bx, [wFilehandle]
+    mov cx, [wBps]
     mov dx, offset sectbuffer
     int 21h
     jnc noreaderror
@@ -5941,10 +5930,13 @@ donefileread:
     call closefile
     mov [handling], ABORT_OPERATION
     call rwsectx
-    call updatescreen
+;    call updatescreen
     popf
+    jc @F
+    mov [menustackidx], 0     ; if file op was successful, go back to main menu
     mov dx, offset donewritedisk
-    jnc printerror
+    jmp printerror
+@@:
     ret
 readfile endp
 
@@ -7528,7 +7520,8 @@ doret:
     ret
 quit endp
 
-;--- menu File, Save to file, partition
+;--- menu File, save sectors, bs, fat, partition,...
+;--- only "save chain" isn't handled here, it's in savechain()
 
 savedata proc
 ;
@@ -7566,10 +7559,11 @@ dosavedata:
     call writefile
     pushf
     call closefile
-    call updatescreen
+;    call updatescreen
     popf
     pop eax
     jc donesavedata
+    mov [menustackidx], 0     ; when file op was successful, go back to main menu
     jmp sectorswritten2file
 
 toobig::
@@ -7707,7 +7701,7 @@ checksetview proc
     mov [funcmf4], -2               ; hack: remove "undelete"
     mov [ldfileoptf7], -2           ; hack: remove "chain"
     mov [viewmode], dl              ; set new view
-;clearviewarea:
+clearviewarea::
     les di, [vidaddr]
     mov cx, [vidcolsize]
     mov ax, VIEWROW                 ; start of "view" area
@@ -7773,7 +7767,7 @@ clearbottom:
 findfile:
     pusha
 if ?LFN
-    call openfile
+    call openfilero
     jc @F
     mov bx, ax
     mov ah, 3Eh
@@ -7790,7 +7784,7 @@ endif
 findfileX:
 if ?LFN
     pusha
-    call openfile
+    call openfilero
     jc @F
     mov bx, ax
     mov ax, 4202h
@@ -7878,7 +7872,7 @@ abort:
     mov dx, offset abortfmsg
     jmp wferror
 errorwrite:
-    mov dx, offset filewerror
+    mov dx, offset filewriteerr
     jmp wferror
 diskfullerr:
     mov dx, offset diskfullmsg
@@ -7893,6 +7887,8 @@ writefile endp
 ;--- out: C if error
 ;---      NC ok, file handle in AX
 
+openfilero:
+    mov bl, 0
 openfile proc
     mov dx, 1    ; DL, bit 0: 1=open if file exists
 
@@ -7956,8 +7952,8 @@ getaoc:
     jne getaoc
     mov bl, 1                   ; (0=ro,1=wo,2=rw access)
     call openfile               ; append
-    mov dx, offset fileerror
-    jc printerror
+    mov dx, offset filecreateerr
+    jc error
     mov [wFilehandle], ax
     mov bx, ax                  ; seek from end of file
     xor dx, dx
@@ -7966,7 +7962,7 @@ getaoc:
     int 21h
     ret
 error:
-    mov dx, offset fileerror
+    mov dx, offset filecreateerr
     jmp @F
 doabortf:
     mov dx, offset abortfmsg

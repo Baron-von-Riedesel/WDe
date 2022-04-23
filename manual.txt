@@ -354,9 +354,11 @@ WDe User Manual
           current sector innaccessible.
 
           When "Above" is chosen, an option to set the drive type is also
-          provided; L(ogical) or P(hysical). Logical will interpret the new
+          provided; L(ogical) or P(hysical). L(ogical) will interpret the new
           "Sector 0" as a bootsector and sets all variables accordingly;
-          Physical treats the drive as a hard drive with a master boot record.
+          P(hysical) treats the drive as a hard drive with a master boot record
+          - that's likely to be useful if one has to navigate thru extended
+          DOS partitions.
 
         4.2.6.3 - Item "UnFormat"
 

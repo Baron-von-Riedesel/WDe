@@ -53,21 +53,25 @@ sector2cluster proc
 ;   jcxz skipfats                         ; useful if ever FATS=0
 @@:
     sub eax, [dwSpF]
+    jc done
     loop @B
 skipfats:
 
     test [filesys], FS_FAT32
-    jnz dontsubroot
+    jnz @F
     mov cx, [wRootsectors]
     sub eax, ecx
-dontsubroot:
+    jc done
+@@:
 
     sub eax, [dwReserved]
+    jc done
 
     mov cl, [bSpCshift]
     shr eax, cl                           ; divide by sectors per cluster
     
     add eax, 2                            ; clusters start at 2
+done:
     ret
 sector2cluster endp
 ;-------------------------------------------------------

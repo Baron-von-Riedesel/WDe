@@ -6,13 +6,16 @@
   mediums.
 
    WDe is currently capable of editing logical, physical and CD-Rom drives
-  on MS-DOS V4.0+ or compatible.  It should be able to edit drives up to
-  2 TB in size.
+  on MS-DOS V4.0+ or compatible.  It understands all FAT file systems, 
+  including exFAT. It should be able to edit drives up to 2 TB in size.
 
    Please be aware that a disk editor, if used inappropriately, might easily
-  cause severe data losses, if the user doesn't know what he/she is doing.
-  So be careful and, before doing any real work, get accustomed to WDe by
-  experimenting with storage devices that don't hold important data.
+  cause severe data losses. WDe is no exception in this regard, on the
+  contrary, it generally assumes that the user knows exactly what he/she
+  is doing and will begin any job that is is told to do instantly, without
+  confirmation. So if you're not accustomed to WDe's user interface yet, 
+  don't experiment with storage devices that hold important data - unless
+  you love to live dangerously!
    
 
   2. User Interface

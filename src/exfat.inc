@@ -1,4 +1,6 @@
 
+;--- exFAT data structures as documented by MS
+
 EXFAT struct
     db 64 dup (?)
 dqHidden dq ?     ; +64 sector offset to start of partition

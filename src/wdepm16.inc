@@ -1,5 +1,9 @@
 
-;*** WDe specific protected-mode initialization
+;*** WDe specific protected-mode initialization.
+;--- it's mostly to translate int 13h and int 2fh.
+;--- also, for NTVDM, the LFN functions must be translated.
+;--- translation itself is simple, since WDe runs in
+;--- conventional memory, no copy operations are needed.
 
 ?TR217302 equ 1 ; 1=translate int 21h, ax=7302h ( for NTVDM only )
 
@@ -38,10 +42,11 @@ endif
 
     .code
 
-;--- int 13h interception
-;--- There's no translation for extended int 13h
-;--- in hdpmi. The WDe segments are located in conventional memory,
-;--- so the only work to do is to set segment register values for DS/ES.
+;--- int 13h interception.
+;--- There's usually no translation for extended int 13h in DPMI hosts.
+;--- ah=42h/43h have a far16 buffer address in their "request package"
+;--- that must be converted. Since WDE runs in small memory model,
+;--- there's only one data segment: DGROUP.
 
 myint13 proc
     cmp ah, 42h
@@ -80,6 +85,8 @@ is48:
     add sp, sizeof RMCS-32
     iret
 myint13 endp
+
+;--- int 21h interception. This is for NTVDM only
 
 if ?TR217302 or ?LFN
 myint21 proc

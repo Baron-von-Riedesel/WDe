@@ -1,5 +1,6 @@
 
 ;--- old code from the 90ies - revived and changed to 16-bit.
+;--- reads in a string from keyboard
 
 
 GS_ESCAPE    equ 1

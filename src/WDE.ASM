@@ -53,6 +53,7 @@ endif
 ?SAFEMODE        EQU 1  ; 1=support cmdline option -s
 ?MOUNT           EQU 1  ; 1=support cmdline option -m
 ?EXTVIEW         EQU 0  ; 1=extended exFAT direntry view
+?ALTKEYS         EQU 1  ; 1=handle Alt-Left/Right
 
         BOTTOMROW        equ 42 ; last row (menu, messages)
         RIGHTCOL         equ 79 ; last col
@@ -223,6 +224,10 @@ endif
         CTRLHOME_KEY     EQU 77h
         CTRLPAGEUP_KEY   EQU 84h
         CTRLUP_KEY       EQU 8dh
+if ?ALTKEYS
+        ALTLEFT_KEY      EQU 9Bh
+        ALTRIGHT_KEY     EQU 9Dh
+endif
 
 ; "handling" variable
         ABORT_OPERATION  EQU 0   ;  abort by default
@@ -557,6 +562,7 @@ nochainmsg      db 'Recursive Link Not Found',0
 nosearchstring  db 'No search string defined yet',0
 szDriveinvalid  db 'Drive invalid',0
 invalclustmsg   db 'Cluster %lX invalid',0
+endofchainmsg   db 'End of cluster chain reached',0
 secsizetoobig   db 'Sector size exceeds 4K',0
 no_bssignature  db 'No Boot Sector signature',0
 errormsg        db ' - Press Any Key',0
@@ -1158,6 +1164,10 @@ ck  label word
     CKey CTRLHOME_KEY,     jumptobootsector
     CKey CTRLEND_KEY,      jumptolastsect
     CKey TAB_SCAN,         changemode
+if ?ALTKEYS
+    CKey ALTLEFT_KEY,      prevcluster
+    CKey ALTRIGHT_KEY,     nextcluster
+endif
 lck1 equ ($ - ck) shr 1
     CKey CSRLEFT_KEY,      moveleft
     CKey CSRRIGHT_KEY,     moveright
@@ -1470,21 +1480,29 @@ quickhelptext label byte
     db "Ctrl+Home     - Jump to first sector on drive",0
     db "Ctrl+Up       - pop sector from stack and jump to it",0
     db 0
-    db "Keys in Fat of Fat32/Fat1x partitions:",0
+    db "Keys in FAT of (ex)FAT partitions:",0
     db 0
-    db "Ctrl+Right    - Jump to linked fat entry",0
-    db "Ctrl+Left     - Recurse to find linking fat entry",0
-    db "Enter         - Jump to current entry's data",0
+    db "Ctrl+Right    - Jump to linked FAT entry (successor)",0
+    db "Ctrl+Left     - Try to find linking FAT entry (predecessor)",0
+    db "Enter         - Jump to current entry's data (=cluster)",0
     db 0
-    db "Keys in Data area of Fat32/Fat1x partitions:",0
+    db "Keys in Data area of (ex)FAT partitions:",0
     db 0    
-    db "Ctrl+Right    - Jump to linked cluster in fat",0
+    db "Ctrl+Right    - Jump to linked cluster in FAT (successor)",0
     db "Ctrl+Enter    - Jump to FAT entry for this cluster",0
-    db "Enter         - If in directory, jump to first cluster of entry",0
+if ?ALTKEYS
+    db "Alt+Right     - Forward 1 cluster",0
+    db "Alt+Left      - Back 1 cluster",0
+endif
+    db "Enter         - If in directory, jump to start cluster of entry",0
     db 0    
-    db "Note that with exFAT disks Ctrl+Left and Ctrl+Right often don't",0
-    db "work, because on such systems a file may have no associated FAT",0
-    db "chain - in this case the file is stored contiguous.",0
+    db "Note that on exFAT disks a file may have no associated FAT chain;",0
+    db "in such cases the file is stored contiguous. Ctrl+Right can't work",0
+    db "then."
+if ?ALTKEYS
+    db       " Alt+Right will always work, but can't detect a chain's end."
+endif
+    db 0
     db -1
 
     .code
@@ -1526,9 +1544,8 @@ savetodisk proc
     call printbottom
     call writesect                 ; write it.
     jc @F
-
     mov dx, offset donewritedisk
-    call printerror
+    call nuprinterror
 @@:
     ret
 savetodisk endp
@@ -1813,14 +1830,13 @@ done:
     call rwsectx
     jc @F
     mov dx, offset donewritedisk
-    call printerror
+    call nuprinterror
 @@:
     ret
 
 fillerror::
     pop [ioreq.dwSector]
     call rwsectx
-;    call updatescreen
 exit:
     ret
 
@@ -1903,7 +1919,7 @@ done:
     clc
     ret
 abort:
-    mov dx, offset abortdmsg
+    mov dx, offset abortdmsg      ; "abort writing to disk"
     call printerror
 error:
     stc
@@ -2100,6 +2116,9 @@ jumpcluster proc
     call sector2cluster                 ; get respective cluster number
     call getfatentry                    ; read fat entry
     jc done
+    mov dx, offset endofchainmsg
+    cmp eax, 0fffffffh
+    jz nuprinterror
     jmp jumptoeax                       ; jump to the cluster number read
 ;-------------------------------------------------------
 jumpfatcluster:
@@ -2124,6 +2143,15 @@ done:
     ret
 jumpcluster endp
 
+;--- display error msg "invalid cluster # xxx"
+;--- in: ebx=cluster# to display
+
+invalclusterror proc
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, offset invalclustmsg, ebx
+    jmp nuprinterror
+invalclusterror endp
+
 ;--- handle ctrl-key ENTER
 ;--- in FAT area: jump to data area of cluster at current offset
 ;--- in DIR area: jump to starting cluster of dir entry
@@ -2145,7 +2173,7 @@ jumptoeax::                             ; <--- used by  ctrl-right code
     mov ebx, eax
     call cluster2sector                 ; multiply it out to get the
     cmp eax, [dwDataend]                ; corresponding sector number
-    ja error                            ; verify that it's a valid sector
+    ja invalclusterror                  ; verify that it's a valid sector
     mov [ioreq.dwSector], eax
 
     cmp eax,[dwCurSector]               ; don't store if sectors are identical.
@@ -2159,10 +2187,6 @@ jumptoeax::                             ; <--- used by  ctrl-right code
     call movecursor
 done:
     ret
-error:
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, offset invalclustmsg, ebx
-    jmp nuprinterror
 
 do_direntry:
 
@@ -2598,9 +2622,7 @@ stringfound:
     mov [sectofs],ax
     and bx,1FFh
 
-    push bx                             ; save new spot (start of found string)
-;    call updatescreen                   ; found (hex/ascii) string
-    pop ax
+    mov ax, bx                          ; set new spot (start of found string)
     mov dl,0
     call movecursor
     add sp,2+4                          ; skip [sectofs] + [dwCurSector]
@@ -2684,7 +2706,6 @@ abort:
     push [dwSecBackup]
     pop [ioreq.dwSector]
     call rwsectx
-;    call updatescreen
     add sp, 2                 ; skip caller's return address, will jump to main
     ret
 findcommon endp
@@ -5026,6 +5047,41 @@ nextcell:
     ret
 bshighlight endp
 
+if ?ALTKEYS
+prevcluster:
+nextcluster proc
+
+    test [filesys], FS_FATXX
+    jz done
+    test [bRegion], RG_DATA
+    jz done
+    mov bx, ax
+    mov eax, [dwCurSector]
+    call sector2cluster
+    jc done
+    cmp bh, ALTLEFT_KEY
+    setnz cl
+    sub cl, 1
+    cmc
+    movsx ecx, cl
+    adc ecx, 0
+    add eax, ecx
+if 0
+    jmp jumptoeax                   ; don't use jumptoeax, this stores sector# on stack
+else
+    mov ebx, eax                    ; save cluster# for possible error msg
+    call cluster2sector             ; get corresponding sector number
+    cmp eax, [dwDataend]            ; 
+    ja invalclusterror              ; verify that it's a valid sector
+    mov [ioreq.dwSector], eax
+    call rwsectx
+endif
+done:
+    ret
+
+nextcluster endp
+endif
+
 ;--- main menu pgup, pgdown, ctrl-pgup, ctrl-pgdown keys
 
 nextsect1000:
@@ -5540,34 +5596,33 @@ dumpiso proc
     mov dx, offset sectbuffer
     mov bx, [wFilehandle]
     mov si, 10h
+;--- write to file (16 blank sectors)
+;--- to the beginning of the iso
+;--- since we can't read the first 10 sectors on a CD
 isoloop:
-    mov ah, 40h                         ; write to file (10 blank sectors)
-    int 21h                             ; to the beginning of the iso
-    jnc noisoerror                      ; since we can't read the first 10
-                                        ; sectors on a CD
+    mov ah, 40h
+    int 21h
+    jnc @F
     mov dx, offset filewriteerr
     call printerror
-    ret
-
-noisoerror:
-
+    stc 
+    jmp donedump
+@@:
     dec si
     jnz isoloop
-
 drivedump:
-
     xor eax, eax
     xor di, di
     call writefile
+donedump:
     pushf
     call closefile
-;    call updatescreen
     popf
     jc done
-
     mov eax, [dwDataend]
     inc eax
     call sectorswritten2file
+    mov [menustackidx], 0               ; leave file option menu, back to main menu
 done:
     ret
 
@@ -5875,7 +5930,7 @@ readfile proc
     pop eax
 
     mov dx, offset toosmall
-    jb printerror
+    jb nuprinterror
 
     mov [handling], QUERY_SKIP
 
@@ -5898,17 +5953,10 @@ readfileloop:
     mov dx, offset errorread
 error:
     call printerror
+    stc
     jmp donefileread
 
 noreaderror:
-
-    call checkabort
-    jne keepreadingfile
-    mov dx, offset abortdmsg
-    call printerror
-    jmp donefileread
-
-keepreadingfile:
 
     call writesect
     jc donefileread
@@ -5916,26 +5964,32 @@ keepreadingfile:
     inc [dwCurSector]
 
     call checktime
-    jc @F
+    jc continue_loop
+    call checkabort
+    jne @F
+    mov dx, offset abortdmsg              ; "abort writing to disk"
+    call nuprinterror
+    stc
+    jmp donefileread
+@@:
     mov eax, [dwValue]
     mov cx, offset restoremsg
     call printprogress
-@@:
+continue_loop:
     dec [dwValue]
     jnz readfileloop
-
+    clc
 donefileread:
     pop [ioreq.dwSector]
     pushf
     call closefile
     mov [handling], ABORT_OPERATION
     call rwsectx
-;    call updatescreen
     popf
     jc @F
-    mov [menustackidx], 0     ; if file op was successful, go back to main menu
+    mov [menustackidx], 0                 ; if file op was successful, go back to main menu
     mov dx, offset donewritedisk
-    jmp printerror
+    call nuprinterror
 @@:
     ret
 readfile endp
@@ -6886,6 +6940,7 @@ int2x_access:
     je newlog_access
 
 ;--- access drive via int 25h/26h
+;--- DS:BX -> disk read/write packet ( if CX == -1 )
 
 oldlog_access:
     mov al, [ioreq.bDrive]
@@ -6898,6 +6953,7 @@ oldlog_access:
     ret
 
 ;--- use new DOS 7 function
+;--- DS:BX -> disk package, same as for int 25h/26h
 
 newlog_access:
     mov dl, [ioreq.bDrive]
@@ -6924,7 +6980,7 @@ file_access:
 
     mov bx, [rwhandle]
     mov dx, ax                        ; offset into CX:DX
-    shld ecx,eax,16
+    shld ecx, eax, 16
     mov ax, 4200h                     ; seek from start of file
     int 21h
 
@@ -6941,6 +6997,9 @@ file_access:
 fa_error:
     stc
     ret
+
+;--- read CDROM
+;--- ES:BX -> device driver request header
 
 cdrom_access:
     mov bx, offset cdheader
@@ -6965,6 +7024,7 @@ ca_error:
     ret
 
 ;--- read/write physical disk with extended int 13h functions (42h/43h)
+;--- DS:SI -> disk address packet
 
 newint13_access:
     lea si, diskrwbuffer
@@ -6991,7 +7051,7 @@ endif
     ret
 
 ;--- use int 13h, AH=02/03, AL=sectors to read/write
-;--- buffer address in ES:BX
+;--- ES:BX -> buffer address
 ;--- DL=drive, DH & CX cylinder/head/sector
 
 oldint13_access:
@@ -6999,7 +7059,7 @@ oldint13_access:
     call getchs                 ; translate sector to c/h/s in dh/cx
     pop bx
     mov dl, [ioreq.bDrive]
-    mov ax, 0201h
+    mov ax, 0201h               ; AL=no of sectors to read/write
     cmp [ioreq.bRW], RW_WRITE
     jne @F
     mov ah,03h
@@ -7088,9 +7148,11 @@ access_error endp
 ;--- display error msg at menu line, then wait for a key press
 
 printerror proc
+if 0 ; most likely useless now
     push dx
     call updatescreen
     pop dx
+endif
 nuprinterror::
     call printbottom
     mov dx, offset errormsg
@@ -7520,8 +7582,9 @@ doret:
     ret
 quit endp
 
-;--- menu File, save sectors, bs, fat, partition,...
-;--- only "save chain" isn't handled here, it's in savechain()
+;--- menu File, save sectors, bs, fat, ...
+;--- "save chain" isn't handled here, it's in savechain()
+;--- "save partition" is handled by dumpiso() ( why? )
 
 savedata proc
 ;
@@ -7559,11 +7622,10 @@ dosavedata:
     call writefile
     pushf
     call closefile
-;    call updatescreen
     popf
     pop eax
     jc donesavedata
-    mov [menustackidx], 0     ; when file op was successful, go back to main menu
+    mov [menustackidx], 0        ; if file op was successful, go back to main menu
     jmp sectorswritten2file
 
 toobig::

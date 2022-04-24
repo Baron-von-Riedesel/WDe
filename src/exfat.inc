@@ -111,7 +111,7 @@ namehash   dw ?
            dw ?
 dqValiddatalength dq ?
            dd ?
-firstcl    dd ?
+dwFirstCl  dd ?
 dqSize     dq ?
 EXFATDIRSS ends                              
 

@@ -1463,7 +1463,8 @@ done:
 select_disk endp
 
 
-	.const
+    .const
+
 quickhelptext label byte
     db "Quick Key Reference",0
     db 0
@@ -1478,7 +1479,7 @@ quickhelptext label byte
     db "Shift+Tab     - Switch between hex and binary",0
     db "Ctrl+End      - Jump to last sector on drive",0
     db "Ctrl+Home     - Jump to first sector on drive",0
-    db "Ctrl+Up       - pop sector from stack and jump to it",0
+    db "Ctrl+Up       - Pop sector from stack and jump to it",0
     db 0
     db "Keys in FAT of (ex)FAT partitions:",0
     db 0
@@ -1829,6 +1830,7 @@ done:
     pop [ioreq.dwSector]
     call rwsectx
     jc @F
+    call updatescreen           ; let the user see how it looks like
     mov dx, offset donewritedisk
     call nuprinterror
 @@:
@@ -1853,7 +1855,7 @@ fillstring::
     call getstringprompt
 dofill:                               ; <--- entry "fill hex"
     jcxz exit
-    call getnos                         ; get number of sectors in [dwValue]
+    call getnos                       ; get number of sectors in [dwValue]
     jc exit
 
 ;    mov dx, offset writetodiskmsg
@@ -2119,7 +2121,7 @@ jumpcluster proc
     mov dx, offset endofchainmsg
     cmp eax, 0fffffffh
     jz nuprinterror
-    jmp jumptoeax                       ; jump to the cluster number read
+    jmp setcluster                      ; set the cluster# read from FAT
 ;-------------------------------------------------------
 jumpfatcluster:
 
@@ -2169,7 +2171,11 @@ handle_enter proc
     jne done
 
     call getentrynumber                 ; get the cluster number for [dwCurSector][spot]
-jumptoeax::                             ; <--- used by  ctrl-right code
+
+;--- set cluster# in eax and store current sector in sector stack,
+;--- reset spot to 0.
+
+setcluster::                            ; <--- used by various code
     mov ebx, eax
     call cluster2sector                 ; multiply it out to get the
     cmp eax, [dwDataend]                ; corresponding sector number
@@ -2205,11 +2211,11 @@ do_direntry:
     shl eax, 16
     mov ax, word ptr [si+bx+DIR_CLUST_LOW]
 
-     cmp eax, 2
+    cmp eax, 2
 ;--- jump to root directory if cluster# invalid?
-;--- not generally, only if if name of entry is ".."
+;--- not generally, only if name of entry is ".."
 ;    jb jumptoroot
-    jae jumptoeax
+    jae setcluster
     cmp dword ptr [si+bx],"  .."
     jz jumptoroot
     ret
@@ -2224,7 +2230,7 @@ exfat_enter:
     jz done
 @@:
     mov eax, [si+bx].EXFATDIRS.dwFirstCl
-    jmp jumptoeax
+    jmp setcluster
 isprim:
     and al, 1Fh
     cmp al, EXFTC_ALLOCBM
@@ -2756,7 +2762,7 @@ _BSS ends
     and bl, 11100000b                       ; chop off 0-31 bytes to set bx to
 
     cmp [filesys], FS_EXFAT
-    jz exfatsavechain
+    jz exfat_savechain
 
     mov eax, dword ptr [si+bx+DIR_FILESIZE] ; filesize
     mov [dwFilesize], eax
@@ -2778,7 +2784,7 @@ invalclust:
 done:
     ret
 
-exfatsavechain:
+exfat_savechain:
     mov eax, [si+bx].EXFATDIRS.dwFirstCl
     mov ecx, dword ptr [si+bx].EXFATDIRS.dqSize+0
     mov [dwFilesize], ecx
@@ -2920,13 +2926,19 @@ restorechain proc
 @@:
     mov [fromfat], 1
     call bufferinsi
-    mov eax, [dwFilesize]
     mov bx, [spot]
     and bl, 11100000b
 
     cmp [filesys], FS_EXFAT
-    jz done
+    jnz @F
+    mov eax, [si+bx].EXFATDIRSS.dwFirstCl
+    test [si+bx].EXFATDIRSS.secflgs, EXFPF_NOCHAIN
+    jnz exfat_restorechain
+    jmp restclusts
+@@:
+    mov [bSkipFat], 0
 if 0                            ; chain is restored even if file isn't big enough
+    mov eax, [dwFilesize]
     cmp eax, dword ptr [si+bx+DIR_FILESIZE]
     jb toosmallerr
 endif
@@ -2942,13 +2954,13 @@ restclusts:
     ja invalstart
 
     call openfilero
-    pop eax
+    pop ecx
     mov dx, offset filenotfound
     jc error
     mov [wFilehandle], ax
+    mov eax, ecx
 
-rbuhs:                                    ;<--- next cluster
-
+nextcluster:                              ; <--- next cluster
     mov [dwCluster], eax
     call cluster2sector                   ; fix?  checking needed for sector.
     cmp eax, [dwDataend]
@@ -2957,24 +2969,30 @@ rbuhs:                                    ;<--- next cluster
     mov al, [bSpC]
     mov [spcc], al
 
+    call checktime
+    jc nextsector
+
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("Reading file, writing cluster %lX..."), [dwCluster]
     call printbottom
 
-dornsb:                                   ;<--- next sector
-
+nextsector:                               ; <--- next sector
     mov ah, 3Fh
     mov bx, [wFilehandle]
     mov cx, [wBps]
     mov dx, [_mem]
     int 21h
     jc disperread
-
     cmp ax, cx
-    je docwrite
+    je iswholesector
+
+;--- the last bytes of the file don't cover a full sector
+;--- so read the current sector into sectbuffer and copy
+;--- the missing bytes from sectbuffer to out write buffer.
+
     call rwsect
     jc done
-    push ds                             ; preserve bytes at end of sector
+    push ds                               ; preserve bytes at end of sector
     pop es
     sub cx, ax
     mov si, offset sectbuffer
@@ -2982,27 +3000,30 @@ dornsb:                                   ;<--- next sector
     mov di, [_mem]
     add di, ax
     rep movsb
-docwrite:
+iswholesector:
     mov dx, [_mem]
     mov [ioreq.pBuffer], dx
     call writesect
     jc done
-    cmp ax, cx
+    cmp ax, cx                ; EOF reached?
     jne donerestchain
 
     dec [spcc]
-    jz restnextclust
+    jz @F
     inc [dwCurSector]
-    jmp dornsb
-
-restnextclust:
-
+    jmp nextsector
+@@:
     mov eax, [dwCluster]
+    cmp [bSkipFat], 1         ; get next cluster thru FAT chain?
+    jnz @F
+    inc eax                   ; no ( it's a contiguous exFAT file )
+    dec [dwNumCluster]
+    jnz nextcluster
+    jmp donerestchain
+@@:
     call getfatentry
     cmp eax, 0FFFFFF7h        ; top bits are set even for FAT12/FAT16!
-    jae donerestchain
-    cmp eax, 2
-    jae rbuhs
+    jb nextcluster            ; end of cluster chain?
 
 donerestchain:
 
@@ -3011,12 +3032,13 @@ donerestchain:
     call rwsectx
     mov dx, offset donewritedisk
     call printerror
+;    mov [menustackidx], 0     ; auto return to main menu
     ret
 clusterr:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr('Invalid Cluster %lX'), [dwCluster]
     call nuprinterror
-    jmp done
+    ret
 invalstart:
     pop eax
 invalstart2:
@@ -3028,6 +3050,31 @@ error:
     call printerror
 done:
     ret
+
+exfat_restorechain:
+
+;--- the exFAT file has NO fat chain.
+;--- hence the number of clusters to restore must be calculated
+
+    mov ecx, dword ptr [si+bx].EXFATDIRS.dqSize+0
+    mov [bSkipFat], 1   ; don't use fat to get next cluster#
+    push eax
+    push ecx
+    movzx eax, [wBps]
+    mov cl, [bSpCshift]
+    shl eax, cl         ; eax = bytes per cluster
+    pop ecx
+    xchg eax, ecx       ; eax = filesize, ecx = bytes/cluster
+    mov edx, dword ptr [si+bx].EXFATDIRS.dqSize+4
+    div ecx             ; filesize / bytes per cluster
+    and dx,dx
+    setnz dl
+    movzx edx, dl
+    add eax, edx
+    mov [dwNumCluster], eax
+    pop eax
+    jmp restclusts
+
 restorechain endp
 
 ;-------------------------------------------------------
@@ -3351,7 +3398,7 @@ jumptocluster:
     call gethexvalue
     jc done
     mov eax, ebx
-    jmp jumptoeax
+    jmp setcluster
 
 jumptobootsector::
     xor ebx, ebx
@@ -3373,7 +3420,7 @@ donejump:
     jb @F
     mov [ioreq.dwSector], ebx
     call rwsectx
-    mov [menustackidx], 0  ; return to main menu
+    mov [menustackidx], 0  ; auto return to main menu
 @@:
 done:
     ret
@@ -3778,17 +3825,17 @@ nochainadjust:
     mov dx, allocbm
     cmp al, EXFTC_ALLOCBM
     jz @F
-	mov dx, upcase
+    mov dx, upcase
     cmp al, EXFTC_UPCASET
-	jz @F
-	mov dx, vollabel
+    jz @F
+    mov dx, vollabel
     cmp al, EXFTC_VOLLABEL
-	jz @F
-	mov dx, file
+    jz @F
+    mov dx, file
     cmp al, EXFTC_FILE
-	jnz unknownprim
+    jnz unknownprim
 @@:
-	call dx
+    call dx
 unknownprim:
 if ?EXTVIEW
     mov dx, CStr(", primary")
@@ -5067,7 +5114,7 @@ nextcluster proc
     adc ecx, 0
     add eax, ecx
 if 0
-    jmp jumptoeax                   ; don't use jumptoeax, this stores sector# on stack
+    jmp setcluster                  ; don't use setcluster, that would push sector# onto stack
 else
     mov ebx, eax                    ; save cluster# for possible error msg
     call cluster2sector             ; get corresponding sector number
@@ -5988,6 +6035,7 @@ donefileread:
     popf
     jc @F
     mov [menustackidx], 0                 ; if file op was successful, go back to main menu
+    call updatescreen                     ; let the user see the new content
     mov dx, offset donewritedisk
     call nuprinterror
 @@:

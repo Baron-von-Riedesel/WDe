@@ -56,6 +56,9 @@ WDe User Manual
   5.15      "Root Not Blank"
   5.16      "No Directories Found"
   5.17      "No search string defined yet"
+  5.18      "File size cannot exceed 4GB-1"
+  5.19      "Sector size exceeds 4KB"
+
 
 
   0.0 - Hot-Key Quick Reference
@@ -73,19 +76,21 @@ WDe User Manual
     Shift+Tab     - Switch between hex and binary
     Ctrl+End      - Jump to last sector on drive
     Ctrl+Home     - Jump to first sector on drive
-    Ctrl+Up       - pop sector from stack and jump to it
-    
-    Keys in Fat of Fat32/Fat1x partitions:
+    Ctrl+Up       - Pop sector from stack and jump to it
 
-    Ctrl+Right    - Jump to linked fat entry
-    Ctrl+Left     - Recurse to find linking fat entry
+    Keys in FAT of exFAT partitions:
+
+    Ctrl+Right    - Jump to linked FAT entry (successor)
+    Ctrl+Left     - Recurse to find linking FAT entry (predecessor)
     Enter         - Jump to current entry's data
 
-    Keys in Data area of Fat32/Fat1x partitions:
-        
-    Ctrl+Right    - Jump to linked cluster in fat
-    Ctrl+Enter    - Jump to fat entry for this cluster
-    Enter         - If in directory, jump to first cluster of entry
+    Keys in Data area of exFAT partitions:
+
+    Ctrl+Right    - Jump to linked cluster in FAT (successor)
+    Ctrl+Enter    - Jump to FAT entry for this cluster
+    Alt+Right     - Forward 1 cluster
+    Alt+Left      - Back 1 cluster
+    Enter         - If in directory, jump to start cluster of entry
 
 
 
@@ -129,7 +134,7 @@ WDe User Manual
     fat entry.  Hitting Ctrl+Right will jump directly to the cluster
     connected to it within the fat. Hitting Enter while in a directory
     will jump to the beginning of the first cluster of that entry.
-    
+
     Hitting Enter, Ctrl+Enter or Ctrl+Right key will save the current sector#
     on a stack; using Ctrl+Up will retrieve this information and thus allow
     to go back to the saved position.
@@ -142,7 +147,6 @@ WDe User Manual
     If you hit the SHIFT+TAB key combination, you'll switch between
     hex and binary editing.  In this mode, you can use 0 and 1 to set
     bits or use the space bar to invert them.
-
 
 
 
@@ -192,7 +196,6 @@ WDe User Manual
       WDe reads files (hit tab when queried for drive) which can then
       be treated as physical or logical drives using the "Restrict"
       function.
-
 
 
 
@@ -402,7 +405,6 @@ WDe User Manual
 
 
 
-
   5.0 - Error Messages
 
     5.1 - "No (More) Matches Found"
@@ -482,35 +484,35 @@ WDe User Manual
         next sector, and finally the "Ignore All" error will skip any
         sectors that cannot be read and continue searching.
 
-    5.10- "Error Writing Sector"
+    5.10 - "Error Writing Sector"
 
         If a sector cannot be written to, it's possible that the drive
         being written to is read-only media.
 
-    5.11- "File Not Found"
+    5.11 - "File Not Found"
 
         This error occurs when a file to be read does not exist or the
         path to it is invalid.
 
-    5.12- "Invalid Start Cluster"
+    5.12 - "Invalid Start Cluster"
 
         This error is for UnDelete and Chain Saving/Restoring functions.
         It means that the very first cluster is not within the valid first
         and last cluster numbers for the particular drive.
 
-    5.13- "Recursive Link Not Found"
+    5.13 - "Recursive Link Not Found"
 
         This error occurs when attempting to find a cluster that links to
         another by recursively searching through the FAT table.  If WDe
         reaches the beginning of the FAT without finding a linked entry,
         this error occurs.
 
-    5.14- "Fat Table Not Blank"
+    5.14 - "Fat Table Not Blank"
 
         This error is specific to UnFormat; the FAT Table must not contain
         any entries; if it does then it is not fully formatted.
 
-    5.15- "Root Not Blank"
+    5.15 - "Root Not Blank"
 
         This is a somewhat unnecessary safety precaution taken by UnFormat;
         if the FAT is blank but there exists an entry in the root, this
@@ -521,14 +523,25 @@ WDe User Manual
         no clusters.  If the label is removed, this error should no longer
         occur.
 
-    5.16- "No Directories Found"
+    5.16 - "No Directories Found"
 
         This is another UnFormat error; it means that the entire drive has
         been scanned but no valid directories were found.  Since UnFormat
         can only recover files within directories, the UnFormat is aborted.
-    
-    5.17- "No search string defined yet"
+
+    5.17 - "No search string defined yet"
 
         This is emitted by "Find Next" if no search string (via F1 or F2 in
         the find submenu) has been defined yet.
-    
+
+    5.18 - "File Size cannot exceed 4GB-1"
+
+        This is a limitation of DOS's FAT file system. The message may appear
+        if a large partition is to be saved in a file.
+
+    5.19 - "Sector Size exceeds 4KB"
+
+        WDe's buffer for sectors is currently limited to a size of 4 kB.
+        A device ( or a boot sector, for logical disks ) that reports a larger
+        size will be rejected.
+

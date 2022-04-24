@@ -1,6 +1,10 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
-WDe V0.50 [??.??.2022]
+WDe V0.50pre2 [--.--.2022]
+  - fixed: restore chain didn't work in v0.50pre1.
+  - restore exFAT file chains implemented.
+
+WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )
     will work in all menus, not just in the main menu.
   - directory view changed, displays 1 item only, detects and shows
@@ -27,6 +31,7 @@ WDe V0.50 [??.??.2022]
   - option -m ( mount partition as logical drive ) added.
   - string enter function has improved edit capabilities.
   - if available, WDe now uses LFN functions for file open/create.
+  - Alt+Right/Left navigation ( forward/back 1 cluster ) added.
 
 WDe V0.40 [13.04.2022]
   - decimal numbers now displayed without leading zeros.

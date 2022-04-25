@@ -273,16 +273,22 @@ WDe User Manual
 
           4.2.2.1.7 - Item "Chain"
 
-          This option will appear when you're currently in the FAT table
+           This option will appear when you're currently in the FAT table
           or in the 32 bytes belonging to a directory entry.  Using this
           option can save/restore the data in a fat or file chain to/from
           a specified file. Note that, when restoring, the chain itself is
-          never changed, just the corresponding sector contents. When
-          saving a file chain to a file the user may be prompted after
+          never changed, just the corresponding sector contents.
+           When saving a file chain to a file the user may be prompted after
           the copy process whether the saved file should be truncated to the
           size stored in the directory entry. So this option actually allows
           to copy files from a file system that is not natively supported by
           the OS ( i.e. FAT32 and exFAT ).
+           When restoring a file chain, there is no check whether the file
+          sizes differ. If the source file is just 1 byte long, but the file
+          chain consists of clusters covering 1 MB, just the first byte is
+          "restored", the rest of the chain remains untouched. As already
+          mentioned, the chain itself - and, in case of file chains, the 
+          directory entry - are never modified.
 
         4.2.2.2 - Item "Change Disk"
 

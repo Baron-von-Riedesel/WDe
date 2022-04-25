@@ -69,7 +69,7 @@ entryisok:
 unffatok:
     mov eax, [dwRootSect]             ; jump to the root directory
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
     jc abortUnformat
     mov dx, CStr('Root Not Blank')
     cmp byte ptr [sectbuffer], 0      ; check if first root entry is blank
@@ -105,7 +105,7 @@ nextSectorOfCluster:
     call printbottom
 
     mov [ioreq.dwSector], eax
-    call rwsectx                        ; need error checking b4 & after
+    call readsect                       ; need error checking b4 & after
 
     mov si, offset sectbuffer
     call IsDirectory
@@ -141,7 +141,7 @@ directory_found:
     cmp cl, 0                           ; last sector in cluster?
     jne notLastSect
     mov si, [wBps]            
-    cmp byte ptr [sectbuffer-32+si], 0        ; if the first byte of the
+    cmp byte ptr [sectbuffer-DIRENTSIZE+si], 0; if the first byte of the
     je notLastSect                            ; last entry is not null, then
     or [bx].UFDIR.bFlags, UNTERMINATED_DIRECTORY  ; directory is unterminated
 notLastSect:
@@ -155,17 +155,17 @@ notLastSect:
     je dontReRead                       ; don't re-read it.
 
     mov [ioreq.dwSector], eax           ; read first sector of cluster
-    call rwsectx
+    call readsect
 
 dontReRead:
     cmp word ptr [sectbuffer], 202Eh            ; has "." entry?
     jne unlinkeddirectory
-    cmp dword ptr [sectbuffer+32], 20202E2Eh    ; has ".." entry?
+    cmp dword ptr [sectbuffer+DIRENTSIZE], 20202E2Eh    ; has ".." entry?
     jne unlinkeddirectory
 
-    mov ax, word ptr [sectbuffer+32+DIR_CLUST_HIGH]
+    mov ax, word ptr [sectbuffer+DIRENTSIZE+DIR_CLUST_HIGH]
     shl eax, 16
-    mov ax, word ptr [sectbuffer+32+DIR_CLUST_LOW]
+    mov ax, word ptr [sectbuffer+DIRENTSIZE+DIR_CLUST_LOW]
 
 ;--- the clusternumber may have been cleared!
 ;--- in that case only "regular" may be found - and nothing is recovered!
@@ -362,7 +362,7 @@ checkNextSector:
     ; Error checking?
     ;
 
-    call rwsect                 ; read the data in
+    call readcursect            ; read the data in
     mov dl, 16                  ; 16 32-byte entries per directory sector
     xor si, si                  ; pointer to the entry being worked with
 
@@ -426,7 +426,7 @@ foundClusterMatch:
     or [bx].UFDIR.bFlags, SUB_DIRECTORY ; specify it's a located subdirectory
 skipThisEntry:
 
-    add si, 32                  ; check next entry
+    add si, DIRENTSIZE          ; check next entry
     dec dl
     jnz processNextEntry
 
@@ -490,14 +490,14 @@ writeRootEntry:                         ; IN: si = offset sectbuffer
 
 checkNextRootSect:
     mov [ioreq.dwSector], ebx           ; error checking needed
-    call rwsectx
+    call readsect
     mov cl, 16                          ; 16 entries per sector
     mov si, offset sectbuffer           ; start with entry at offset 0
 
 checkNextEntry:
     cmp byte ptr [si], 0                ; first byte of the entry is 0?
     je writeEntry
-    add si, 32                          ; next entry
+    add si, DIRENTSIZE                  ; next entry
     dec cl
     jnz checkNextEntry
 
@@ -548,6 +548,8 @@ writtenDirType:
 
     mov dword ptr [si+08h], 10202020h           ; extension+attribs
 
+	push [dwCurSector]
+	pop [ioreq.dwSector]
     call writesect
     ;
     ; error checking
@@ -620,7 +622,7 @@ finishedUnformat:
 
 f1tof2loop:
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
     mov [ioreq.dwSector], edx
     call writesect
     inc eax
@@ -631,7 +633,7 @@ noCopyF1toF2:
 
     mov eax, [dwSecBackup]
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
     mov dx, CStr('Finished UnFormatting')
 unformatError:
     call printerror

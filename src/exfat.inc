@@ -33,11 +33,11 @@ EFET_EOD equ 0     ; end of directory
 ;--- typecode 3: volume label       83h
 ;--- typecode 5: file               85h
 
-EXFTC_GUID     equ 0  ; no cluster/size fields, no secondary
-EXFTC_ALLOCBM  equ 1
-EXFTC_UPCASET  equ 2
-EXFTC_VOLLABEL equ 3  ; no cluster/size fields, just count and 11 wide characters
-EXFTC_FILE     equ 5
+EXFPTC_GUID     equ 0  ; no cluster/size fields, no secondary
+EXFPTC_ALLOCBM  equ 1
+EXFPTC_UPCASET  equ 2
+EXFPTC_VOLLABEL equ 3  ; no cluster/size fields, just count and 11 wide characters
+EXFPTC_FILE     equ 5
 
 ;--- primary flags
 ;--- bit 0: 0=cluster and size are undefined, 1=are defined
@@ -47,9 +47,9 @@ EXFTC_FILE     equ 5
 EXFPF_CLSDEFINED equ 1
 EXFPF_NOCHAIN    equ 2
 
-;--- generic primary entry
+;--- generic primary directory entry
 
-EXFATDIR struct
+EXFDIRP struct
 etype      db ?    ; entry type
 seccnt     db ?    ; secondary count - no of secondary entries that follow
 chksum     dw ?    ;
@@ -58,11 +58,11 @@ chksum     dw ?    ;
            db 14 dup (?) ; custom defined
 dwFirstCl  dd ?    ; first cluster
 dqSize     dq ?    ; data length
-EXFATDIR ends
+EXFDIRP ends
 
-;--- primary file entry
+;--- primary file directory entry
 
-EXFATDIRF struct
+EXFDIRPF struct
 etype      db ?            ;+0
 seccnt     db ?            ;+1 secondary count
 chksum     dw ?            ;+2
@@ -77,7 +77,7 @@ bCreUtcOfs db ?            ;+22 create utc offset
 bModUtcOfs db ?            ;+23 last modifed utc offset
 bAccUtcOfs db ?            ;+24 last accessed utc offset
            db 7 dup (?)
-EXFATDIRF ends
+EXFDIRPF ends
 
 ;--- attributes:
 ;--- bit 0-5: readonly, hidden, system, reserved, directory, archive
@@ -90,19 +90,19 @@ EXFATDIRF ends
 ;--- bit 1: 1=no fat chain
 ;--- bit 2-15: custom defined
 
-EXFATDIRS struct
+EXFDIRS struct
 etype      db ?     ; entry type
 secflgs    db ?
            db 18 dup (?) ; custom defined
 dwFirstCl  dd ?     ; first cluster
 dqSize     dq ?     ; data length
-EXFATDIRS ends
+EXFDIRS ends
 
 ;--- stream extension, critical secondary entry in a file directory entry set,
 ;--- must immediately follow the primary entry, just 1 in a set.
 ;--- typecode is 0.
 
-EXFATDIRSS struct
+EXFDIRSS struct
 etype      db ?
 secflgs    db ?
            db ?
@@ -113,13 +113,13 @@ dqValiddatalength dq ?
            dd ?
 dwFirstCl  dd ?
 dqSize     dq ?
-EXFATDIRSS ends                              
+EXFDIRSS ends                              
 
 ;--- critical secondary file name direntry
 ;--- typecode is 1.
 
-EXFATDIRSN struct
+EXFDIRSN struct
 etype      db ?
 secflgs    db ?
 name_      dw 15 dup (?)
-EXFATDIRSN ends
+EXFDIRSN ends

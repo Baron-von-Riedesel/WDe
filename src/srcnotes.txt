@@ -116,3 +116,17 @@
 ;      11:      sharing buffer overflow?
 ;      14:      insufficient disk space
 ;
+
+; 
+; Notes about diskaccess_internal:
+;   Old versions of MS-DOS that do not support FAT32 do not set carry
+;   flag when returning from int 21h/ax=7305h to indicate that the function
+;   is not supported.
+;
+;   New versions of MS-DOS do not return ax=0207h when attempting a read
+;   with int 25h on a FAT32 partition as reported by Ralf Browns interrupt
+;   list, however, they do set the carry flag.
+;
+;   This function can't simply be removed from WDe quite yet, as many
+;   assumptions are made about various buffers being filled.
+;

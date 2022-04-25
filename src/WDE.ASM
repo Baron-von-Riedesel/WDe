@@ -399,7 +399,7 @@ mode     db ?           ;+24
          db ?,?,?
 CDREQ ends
 
-;--- this struct is used for communication with rwsect()
+;--- this struct is used for communication with readsect()/writesect()
 ;--- currently only a static member!
 
 IOREQ struct
@@ -638,7 +638,7 @@ dwCurSector     dd ? ; current sector in sectbuffer
 if ?SN64
 dwCurSectorH    dd ? ; high sector dword for int13h
 endif
-dwDataend       dd ? ; end of data
+dwDataend       dd ? ; end of data (last sector)
 if ?SN64
 dwDataendH      dd ? ; high dword for int13h HUGE hds
 endif
@@ -657,7 +657,7 @@ partitions      dd ?,?,?,? ; partition start sectors
 backupbs        dw ? ; backup boot sector location (FAT32)
 fsinfo          dw ? ; fsinfo sector (FAT32)
 wBps            dw ? ; bytes per sector
-lastbottomtext  dw ? ; printbottom backs up string pointer for rwsect
+lastbottomtext  dw ? ; printbottom backs up string pointer for readsect/writesect
                      ; to reprint it when there's a sector error
 hdnumber        db ? ; hard drive number partition belongs to
 bSpCshift       db ? ; sectors per cluster for doing bitshifts
@@ -689,6 +689,7 @@ dwFat12start    dd ?            ; stores the sector number when fat12
                                 ; view mode was selected
 rwhandle        dw ?            ; file handle if device is DT_FILE
 wFilehandle     dw ?            ; file handle for file ops
+cylinders       dw ?            ; disk geometry for int 13h, ah=02/03
 fillflag        db ?,?
 area            db ?            ; specifies where on a drive we are
 srflag          db ?            ; "file ops" menu flag
@@ -697,10 +698,9 @@ driveflag       db ?            ; setdrive gets File or Drive? 0/1 respective
 commandflag     db ?            ; used by unformat
 chainflag       db ?            ; dictates what type of chain to save
                                 ; fat links/file
-cylinders       dw ?            ; disk geometry for int 13h, ah=02/03
 heads           db ?
 sectors         db ?
-handling        db ?            ; inside rwsect: how to handle errors
+handling        db ?            ; inside readsect/writesect: how to handle errors
 menustackidx    db ?            ; index for menustack
 secstk_top      db ?            ; index for secstk
 bHexString      db ?            ; stringbuffer filled with hex value
@@ -712,14 +712,16 @@ bMount          db ?            ; mount partition + 1
 endif
 bTabSw          db ?
 
-; unformat
+;--- unformat fields
     align dword
 maxsize         dd ?            ; maximum filesize to recover
 minsize         dd ?            ; minimum filesize to recover
 dwNextsize      dd ?            ; next smallest filesize to recover
+fat12fixsec     dd ?            ; sector # for fat12 fix
 lostdirs        dw ?            ; total lost directories found
 rootdirs        dw ?            ; total root directories found
 wDirs           dw ?            ; total dirs found
+lasttick        dw ?            ; timer ticks since last call
 
 if ?DEBUG
   storedeax     dd ?
@@ -730,15 +732,12 @@ if ?DEBUG
   storeddi      dw ?
 endif
 
-fat12fixsec     dd ?            ; sector # for fat12 fix
-
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
-lasttick        dw ?            ; timer ticks since last call
-menustack       MENULVL 4 dup (<?>)  ; menu stack
-secstk          SECITEM 8 dup (<?>)  ; sector stack ( room for 8 items )
 
     align 4
+menustack       MENULVL 4 dup (<?>)  ; menu stack
+secstk          SECITEM 8 dup (<?>)  ; sector stack ( room for 8 items )
 if ?LFN
 filenamebuffer  db 256 dup (?)
 else
@@ -750,7 +749,7 @@ ioreq           IOREQ <?>
 diskinfobuffer  DINFO1 <?>      ; buffer for int13h "get drive info"
 cdheader        CDREQ <?>       ; cd device request header
 drivepacket     DISKIO <?>      ; used by int 25h/26h and int 21h/ax=7305h
-diskrwbuffer    DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
+dapacket        DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
 valuebuffer     db 11 dup (?)
 
 ;--- the alignment must observe the fat12fix.
@@ -959,8 +958,8 @@ if ?MOUNT
     movzx eax, al
     dec ax
     mov eax, [partitions+eax*4]
-    mov [dwCurSector], eax
-    call rwsect
+    mov [ioreq.dwSector], eax
+    call readsect
     call mountdrive
 @@:
 endif
@@ -1274,7 +1273,7 @@ trydevice proc
 
 ;    push [dwCurSector]           ; if drive switching is unsuccessful,
     push dword ptr [ioreq.bDrive] ; some fields will have to be restored.
-    push [wBps]                   ; might be used inside rwsect (zero-fill)!
+    push [wBps]                   ; might be used inside readsect (zero-fill)!
     push [dwDrivestart]
 
     mov [ioreq.dwSector], 0       ; attempt to read sector 0
@@ -1288,6 +1287,7 @@ endif
     cmp bh, DT_FILE
     jnz @F
     mov [ioreq.rwfunc], RWF_FILE
+    mov [dapacket.wNumSec], 1     ; used by file access!
     jmp tryread
 @@:
     mov [ioreq.bDrive], al
@@ -1314,7 +1314,7 @@ trylogical:
 tryfat:
     call setlogvars                   ; will set [ioreq.rwfunc], may change [wBps]
 tryread:
-    call rwsectx
+    call readsect
     jc driveerror                     ; failed?
     mov [sectofs],0
     add sp, 4+2+4                     ; skip saved data on stack
@@ -1610,6 +1610,8 @@ endif
     @mend funcmenu
 
     mov al, -2
+    cmp [filesys], FS_EXFAT       ; no "undelete" for exFAT!
+    jz @F
     test [filesys], FS_FATXX
     jz @F
     mov al, MENUF_UNFORMAT
@@ -1724,6 +1726,7 @@ fillinvrand::                           ;<--- entry for RANDOM/INVERSE
     pop es
 
     push [dwCurSector]
+    pop [ioreq.dwSector]
 
 ;--- better use buffinsi() than sectbuffer directly;
 ;--- it differs if sector size is != 512
@@ -1745,7 +1748,7 @@ dontshift:
     cmp bl, FL_INVERSE
     jne randomloop                      ; inverse function requires reading
     mov si, di                          ; every sector to reverse that data
-    call rwsect
+    call diskaccess_read
     jc fillerror
     push ds
     pop es
@@ -1827,8 +1830,7 @@ do12fill:
 ;--- this code expects old value of [dwCurSector] pushed onto the stack!
 
 done:
-    pop [ioreq.dwSector]
-    call rwsectx
+    call readcursect
     jc @F
     call updatescreen           ; let the user see how it looks like
     mov dx, offset donewritedisk
@@ -1837,8 +1839,7 @@ done:
     ret
 
 fillerror::
-    pop [ioreq.dwSector]
-    call rwsectx
+    call readcursect
 exit:
     ret
 
@@ -1861,6 +1862,7 @@ dofill:                               ; <--- entry "fill hex"
 ;    mov dx, offset writetodiskmsg
 ;    call printbottom
     push [dwCurSector]
+    pop [ioreq.dwSector]
 
     push ds
     pop es
@@ -1912,7 +1914,7 @@ fillcommon proc
     pop cx
     pop eax
 @@:
-    inc [dwCurSector]
+    inc [ioreq.dwSector]
     push ds
     pop es
     mov di, offset sectbuffer
@@ -1936,7 +1938,7 @@ fillcommon endp
 printprogress:
     push dx
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("%s (sector %lu, remaining %lu)"), cx, [dwCurSector], eax
+    invoke sprintf, dx, CStr("%s (sector %lu, remaining %lu)"), cx, [ioreq.dwSector], eax
     call printbottom
     pop dx
     ret
@@ -1984,7 +1986,7 @@ handle_ctlenter proc
     call pushsecstack           ; push sector# in eax onto sector stack
     call sector2cluster         ; convert sector# to cluster#
     call go2entry               ; convert cluster# to [ioreq.dwSector] + [spot] (location inside FAT)
-    call rwsectx                ; read FAT sector set by go2entry
+    call readsect               ; read FAT sector set by go2entry
 done:
     ret
 
@@ -2016,8 +2018,8 @@ popsecstack proc
     cmp eax, 0
     jz done
     dec [secstk_top]
-    mov [dwCurSector], eax
-    call rwsect
+    mov [ioreq.dwSector], eax
+    call readsect
     mov ax, [bx][secstk].wSpot
     mov dl, 0
     call movecursor
@@ -2140,7 +2142,7 @@ dochainjump::             ; <--- for recurse ( Ctrl-left in FAT )
     mov eax, [dwCurSector]
     cmp eax, [ioreq.dwSector]
     jz done
-    call rwsectx                  ; read the sector set by go2entry
+    call readsect                 ; read the sector set by go2entry
 done:
     ret
 jumpcluster endp
@@ -2187,7 +2189,7 @@ setcluster::                            ; <--- used by various code
     mov eax,[dwCurSector]               ; store current sector onto stack.
     call pushsecstack                   ; push sector# in eax onto sector stack
 @@:
-    call rwsectx
+    call readsect
     mov ax,0
     mov dl,0
     call movecursor
@@ -2221,21 +2223,21 @@ do_direntry:
     ret
 
 exfat_enter:
-    mov al, [si+bx].EXFATDIR.etype
+    mov al, [si+bx].EXFDIRP.etype
     test al, 80h
     jz done
     test al, 40h
     jz isprim
-    test [si+bx].EXFATDIRS.secflgs, EXFPF_CLSDEFINED
+    test [si+bx].EXFDIRS.secflgs, EXFPF_CLSDEFINED
     jz done
 @@:
-    mov eax, [si+bx].EXFATDIRS.dwFirstCl
+    mov eax, [si+bx].EXFDIRS.dwFirstCl
     jmp setcluster
 isprim:
     and al, 1Fh
-    cmp al, EXFTC_ALLOCBM
+    cmp al, EXFPTC_ALLOCBM
     jz @B
-    cmp al, EXFTC_UPCASET
+    cmp al, EXFPTC_UPCASET
     jz @B
     ret
 
@@ -2295,15 +2297,9 @@ submenu_find proc
     mov cl, 2
     jmp pushmenustack
 
-backupsector:
-    push [dwCurSector]
-    pop [dwSecBackup]
-    ret
-
 ;--- find directory entries
 
 finddir:
-    call backupsector
     call bufferinsi
 @@:
     call IsDirectory    ; scan if a dir entry is found in buffer
@@ -2316,7 +2312,6 @@ doneX:
 ;--- find boot sector
 
 findbs:
-    call backupsector
     call bufferinsi
 findbsnext:
     cmp dword ptr [si+1fch], 0AA550000h           ; check for boot sig ++
@@ -2335,7 +2330,6 @@ findbs2:
 ; media descriptor and then attempt to identify the fat type.
 ;
 findfat:
-    call backupsector
     call bufferinsi
 findfatnext:                      ; <---- next sector?
 if 1
@@ -2427,7 +2421,6 @@ findfat2:
 ;--- find MBR
 
 findmbr:
-    call backupsector
     call bufferinsi
 findmbrnext:
     cmp byte ptr [si], 0EBh
@@ -2567,6 +2560,8 @@ stringsearch proc
     mov word ptr [stringbuffer+74], cx  ; save length in last 2 bytes of buffer
 
     push [dwCurSector]
+    pop [ioreq.dwSector]
+
     push [sectofs]
 
     call spot2bufofs                    ; bx = sectofs + spot
@@ -2611,8 +2606,8 @@ resetsearch:
     mov cx, word ptr [stringbuffer+74]
     jnc nextbyte
     add bx, dx
-    dec [dwCurSector]
-    call rwsect
+    dec [ioreq.dwSector]
+    call diskaccess_read
     jmp nextbyte
 
 stringfound:
@@ -2620,8 +2615,8 @@ stringfound:
     sub bx, si
     jnc @F
     add bx, [wBps]
-    dec [dwCurSector]
-    call rwsect
+    dec [ioreq.dwSector]
+    call diskaccess_read
 @@:
     mov ax, bx
     and ax, 0FE00h
@@ -2631,15 +2626,18 @@ stringfound:
     mov ax, bx                          ; set new spot (start of found string)
     mov dl,0
     call movecursor
-    add sp,2+4                          ; skip [sectofs] + [dwCurSector]
+;    add sp,2+4                          ; skip [sectofs] + [dwCurSector]
+    add sp,2                            ; skip [sectofs]
+    mov eax, [ioreq.dwSector]
+    mov [dwCurSector], eax
     ret
 
 nextfindsector:
     mov eax, [dwDataend]
-    cmp eax, [dwCurSector]
+    cmp eax, [ioreq.dwSector]
     je stringnotfound
-    inc [dwCurSector]
-    call rwsect
+    inc [ioreq.dwSector]
+    call diskaccess_read
     jc abort
 
     call checktime
@@ -2648,7 +2646,7 @@ nextfindsector:
     je abort
     push cx
     mov eax, [dwDataend]
-    sub eax, [dwCurSector]
+    sub eax, [ioreq.dwSector]
     mov cx, offset searchingmsg
     call printprogress
     pop cx
@@ -2662,8 +2660,7 @@ stringnotfound:
 abort:
     pop ax                        ; skip "nextfindsector" return address
     pop [sectofs]
-    pop [ioreq.dwSector]
-    call rwsectx
+    call readcursect
     ret
 
 stringsearch endp
@@ -2681,7 +2678,7 @@ findcommon proc
     call checkabort
     je abort                  ; pop address, update screen, then RET
     mov eax, [dwDataend]
-    sub eax, [dwCurSector]
+    sub eax, [ioreq.dwSector]
     mov cx, offset searchingmsg
     call printprogress
 @@:
@@ -2690,12 +2687,12 @@ findcommon proc
     sub ax, 512
     cmp [sectofs], ax
     jb dontrw
-    mov eax, [dwCurSector]    ; check if end of disk has been reached
+    mov eax, [ioreq.dwSector] ; check if end of disk has been reached
     inc eax
     cmp eax, [dwDataend]
     ja notfound
     mov [ioreq.dwSector], eax ; not yet, try to read next sector
-    call rwsectx
+    call diskaccess_read
     jc abort
     mov [sectofs], 0
     jmp dontinc
@@ -2709,10 +2706,8 @@ notfound:
     mov dx, offset searcherror ; "no (more) matches found"
     call nuprinterror
 abort:
-    push [dwSecBackup]
-    pop [ioreq.dwSector]
-    call rwsectx
-    add sp, 2                 ; skip caller's return address, will jump to main
+    call readcursect
+    add sp, 2                  ; skip caller's return address, will jump to main
     ret
 findcommon endp
 
@@ -2785,10 +2780,10 @@ done:
     ret
 
 exfat_savechain:
-    mov eax, [si+bx].EXFATDIRS.dwFirstCl
-    mov ecx, dword ptr [si+bx].EXFATDIRS.dqSize+0
+    mov eax, [si+bx].EXFDIRS.dwFirstCl
+    mov ecx, dword ptr [si+bx].EXFDIRS.dqSize+0
     mov [dwFilesize], ecx
-    test [si+bx].EXFATDIRS.secflgs, EXFPF_NOCHAIN
+    test [si+bx].EXFDIRS.secflgs, EXFPF_NOCHAIN
     jz savefilechain
 
 ;--- the file has NO fat chain.
@@ -2802,7 +2797,7 @@ exfat_savechain:
     shl eax, cl         ; eax = bytes per cluster
     pop ecx
     xchg eax, ecx       ; eax = filesize, ecx = bytes/cluster
-    mov edx, dword ptr [si+bx].EXFATDIRS.dqSize+4
+    mov edx, dword ptr [si+bx].EXFDIRS.dqSize+4
     div ecx             ; filesize / bytes per cluster
     and dx,dx
     setnz dl
@@ -2897,7 +2892,7 @@ donechainsave:
 notruncate:
     call closefile
 
-    call rwsect                         ; [dwCurSector] is untouched
+    call readcursect                    ; [dwCurSector] is untouched
     mov eax, ebp
 sectorswritten2file::
     mov dx, offset sprintfbuffer
@@ -2915,8 +2910,8 @@ savechain endp
 restorechain proc
     call srcommon               ; calls findfile ( DTA set )
 
-    mov eax, [dwCurSector]
-    mov [dwSecBackup], eax
+;    mov eax, [dwCurSector]
+;    mov [dwSecBackup], eax
 
     cmp [chainflag], FILE_CHAIN
     jz @F
@@ -2931,8 +2926,8 @@ restorechain proc
 
     cmp [filesys], FS_EXFAT
     jnz @F
-    mov eax, [si+bx].EXFATDIRSS.dwFirstCl
-    test [si+bx].EXFATDIRSS.secflgs, EXFPF_NOCHAIN
+    mov eax, [si+bx].EXFDIRSS.dwFirstCl
+    test [si+bx].EXFDIRSS.secflgs, EXFPF_NOCHAIN
     jnz exfat_restorechain
     jmp restclusts
 @@:
@@ -2965,7 +2960,7 @@ nextcluster:                              ; <--- next cluster
     call cluster2sector                   ; fix?  checking needed for sector.
     cmp eax, [dwDataend]
     ja clusterr
-    mov [dwCurSector], eax
+    mov [ioreq.dwSector], eax
     mov al, [bSpC]
     mov [spcc], al
 
@@ -2988,9 +2983,9 @@ nextsector:                               ; <--- next sector
 
 ;--- the last bytes of the file don't cover a full sector
 ;--- so read the current sector into sectbuffer and copy
-;--- the missing bytes from sectbuffer to out write buffer.
+;--- the missing bytes from sectbuffer to our write buffer.
 
-    call rwsect
+    call readsect
     jc done
     push ds                               ; preserve bytes at end of sector
     pop es
@@ -3010,7 +3005,7 @@ iswholesector:
 
     dec [spcc]
     jz @F
-    inc [dwCurSector]
+    inc [ioreq.dwSector]
     jmp nextsector
 @@:
     mov eax, [dwCluster]
@@ -3027,9 +3022,9 @@ iswholesector:
 
 donerestchain:
 
-    mov eax, [dwSecBackup]
-    mov [ioreq.dwSector], eax
-    call rwsectx
+;    mov eax, [dwSecBackup]
+;    mov [ioreq.dwSector], eax
+    call readcursect
     mov dx, offset donewritedisk
     call printerror
 ;    mov [menustackidx], 0     ; auto return to main menu
@@ -3056,7 +3051,7 @@ exfat_restorechain:
 ;--- the exFAT file has NO fat chain.
 ;--- hence the number of clusters to restore must be calculated
 
-    mov ecx, dword ptr [si+bx].EXFATDIRS.dqSize+0
+    mov ecx, dword ptr [si+bx].EXFDIRS.dqSize+0
     mov [bSkipFat], 1   ; don't use fat to get next cluster#
     push eax
     push ecx
@@ -3065,7 +3060,7 @@ exfat_restorechain:
     shl eax, cl         ; eax = bytes per cluster
     pop ecx
     xchg eax, ecx       ; eax = filesize, ecx = bytes/cluster
-    mov edx, dword ptr [si+bx].EXFATDIRS.dqSize+4
+    mov edx, dword ptr [si+bx].EXFDIRS.dqSize+4
     div ecx             ; filesize / bytes per cluster
     and dx,dx
     setnz dl
@@ -3235,6 +3230,7 @@ dorootsr:
 ;-------------------------------------------------------
 restdrive:
     mov eax, [dwDataend]
+    inc eax
     mov [dwValue], eax
 
     call srcommon
@@ -3256,7 +3252,7 @@ srpartition:
 ;--- read sector 0
 
     mov [ioreq.dwSector], 0
-    call rwsectx
+    call readsect
     jc donesr
     mov ebx, dword ptr [sectbuffer+bx]   ; get size of partition
     mov [dwValue], ebx
@@ -3419,7 +3415,7 @@ donejump:
     cmp [dwDataend], ebx
     jb @F
     mov [ioreq.dwSector], ebx
-    call rwsectx
+    call readsect
     mov [menustackidx], 0  ; auto return to main menu
 @@:
 done:
@@ -3788,7 +3784,7 @@ exfat_dirview proc
     jnz nochainadjust
     mov al, -2
     mov ah, NO_CHAIN
-    cmp [si+bx].EXFATDIR.etype, 0C0h          ; stream entry?
+    cmp [si+bx].EXFDIRP.etype, 0C0h          ; file stream entry?
     jnz @F
     mov al, MENUF_CHAIN
     mov ah, FILE_CHAIN
@@ -3815,7 +3811,7 @@ nochainadjust:
     call fillcell
     mov [scrn_xy], VIEWROW * 100h + 1
 
-    mov al, [si+bx].EXFATDIR.etype
+    mov al, [si+bx].EXFDIRP.etype
     test al, 80h
     jz freeentry
     test al, 40h
@@ -3823,16 +3819,16 @@ nochainadjust:
 
     and al,1Fh
     mov dx, allocbm
-    cmp al, EXFTC_ALLOCBM
+    cmp al, EXFPTC_ALLOCBM
     jz @F
     mov dx, upcase
-    cmp al, EXFTC_UPCASET
+    cmp al, EXFPTC_UPCASET
     jz @F
     mov dx, vollabel
-    cmp al, EXFTC_VOLLABEL
+    cmp al, EXFPTC_VOLLABEL
     jz @F
     mov dx, file
-    cmp al, EXFTC_FILE
+    cmp al, EXFPTC_FILE
     jnz unknownprim
 @@:
     call dx
@@ -3841,9 +3837,9 @@ if ?EXTVIEW
     mov dx, CStr(", primary")
     call printstring
 endif
-    movzx cx, [si+bx].EXFATDIR.seccnt
+    movzx cx, [si+bx].EXFDIRP.seccnt
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr(", secondary count=%u"), cx
+    invoke sprintf, dx, CStr(", secondary count: %u"), cx
     call printstring
 done:
     ret
@@ -3866,8 +3862,8 @@ endif
     ret
 isfilestream:
     mov dx, offset sprintfbuffer
-    movzx ax, [si+bx].EXFATDIRSS.secflgs
-    invoke sprintf, dx, CStr("stream, flags=%X"), ax
+    movzx ax, [si+bx].EXFDIRSS.secflgs
+    invoke sprintf, dx, CStr("file stream, flags: %X"), ax
     call printstring
     test al, EXFPF_NOCHAIN
     jz @F
@@ -3876,17 +3872,22 @@ isfilestream:
     call printstring
     pop dx
 @@:
-    movzx cx, [si+bx].EXFATDIRSS.namelength
-    invoke sprintf, dx, CStr(", name length=%u"), cx
+    movzx cx, [si+bx].EXFDIRSS.namelength
+    invoke sprintf, dx, CStr(", name length: %u"), cx
     call dispcluster
     ret
 isfilename:
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr('name: "')
+    invoke sprintf, dx, CStr('file name')
     call printstring
+fncont_nextrow:
+    inc [scrn_row]
+    mov [scrn_col], 1
+    mov dl,'"'
+    call printchar
 fncont:
     push si
-    lea si, [si+bx].EXFATDIRSN.name_
+    lea si, [si+bx].EXFDIRSN.name_
     mov cx, 15
 nextwchar:
     lodsw
@@ -3904,18 +3905,14 @@ namedone:
     jz @F
     cmp bx,[wBps]
     jz @F
-    cmp [si+bx+DIRENTSIZE].EXFATDIRS.etype, 0C1h
+    cmp [si+bx+DIRENTSIZE].EXFDIRS.etype, 0C1h
     jnz @F
     add bx, DIRENTSIZE
     cmp [scrn_col], RIGHTCOL-15
     jb fncont
     mov dl,'"'
     call printchar
-    inc [scrn_row]
-    mov [scrn_col], 7
-    mov dl,'"'
-    call printchar
-    jmp fncont
+    jmp fncont_nextrow
 @@:
     mov dl,'"'
     call printchar
@@ -3936,23 +3933,23 @@ vollabel:
     call printstring
     ret
 file:
-    mov dx, [si+bx].EXFATDIRF.attributes
+    mov dx, [si+bx].EXFDIRPF.attributes
     mov di, offset valuebuffer
     call renderattributes
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("file, attributes: %X [%s]"), [si+bx].EXFATDIRF.attributes, di
+    invoke sprintf, dx, CStr("file, attributes: %X [%s]"), [si+bx].EXFDIRPF.attributes, di
     call printstring
     ret
 
 dispcluster:
-    mov al, [si+bx].EXFATDIR.etype
+    mov al, [si+bx].EXFDIRP.etype
     test al,80h
     jz nocluster
     push [scrn_xy]
     mov [scrn_col],1
     inc [scrn_row]
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("start cluster: %lX, size=%lu"), [si+bx].EXFATDIR.dwFirstCl, dword ptr [si+bx].EXFATDIR.dqSize
+    invoke sprintf, dx, CStr("start cluster: %lX, size: %lu"), [si+bx].EXFDIRP.dwFirstCl, dword ptr [si+bx].EXFDIRP.dqSize
     call printstring
     pop [scrn_xy]
 nocluster:
@@ -5121,7 +5118,7 @@ else
     cmp eax, [dwDataend]            ; 
     ja invalclusterror              ; verify that it's a valid sector
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
 endif
 done:
     ret
@@ -5162,7 +5159,7 @@ donextsect:
     dec eax
 @@:
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
     jc @F
     mov [sectofs],0
 @@:
@@ -5198,7 +5195,7 @@ dolastsect:
     mov eax, ebx
 golastsect:
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
     jc @F
     mov dx, [wBps]
     sub dx, 512
@@ -5219,6 +5216,7 @@ golastsect:
 ;--- place, since this proc is called by "restrict"
 
 setlogvars proc
+    mov [drivepacket.sectors], 1 ; default: read in 1 sector at a time
     mov di, offset sprintfbuffer
     mov word ptr [di], 003Dh     ; size of buffer
     push ds
@@ -5282,6 +5280,8 @@ setlogvars endp
 
 setphysvars proc
 
+    mov [dapacket.bSize], sizeof DAP
+    mov [dapacket.wNumSec], 1           ; default: one sector to transfer
     mov dl, [ioreq.bDrive]              ; check if int 13h extensions are implemented
     test dl, 80h
     jz use1308
@@ -5722,7 +5722,7 @@ IsExfatDir proc
     shr cx, 5          ; 32 bytes per entry
     mov dl, 0
 nextitem:
-    mov al, [si+bx].EXFATDIR.etype
+    mov al, [si+bx].EXFDIRP.etype
     cmp al, 81h
     jz ok
     cmp al, 82h
@@ -5749,15 +5749,15 @@ ok:
 isc0:                  ; secondary stream entry must directly follow primary file
     and bx, bx
     jz ok
-    cmp [si+bx-DIRENTSIZE].EXFATDIR.etype, 85h
+    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, 85h
     jz ok
     jmp notfound
 isc1:                  ; secondary name entry must follow 0C0h or 0C1h entry
     and bx, bx
     jz ok
-    cmp [si+bx-DIRENTSIZE].EXFATDIR.etype, 0C1h
+    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, 0C1h
     jz ok
-    cmp [si+bx-DIRENTSIZE].EXFATDIR.etype, 0C0h
+    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, 0C0h
     jz ok
 notfound:
     pop cx
@@ -5981,9 +5981,9 @@ readfile proc
 
     mov [handling], QUERY_SKIP
 
-    push [dwCurSector]
+;    push [dwCurSector]
 
-    mov [dwCurSector], eax
+    mov [ioreq.dwSector], eax
     call openfilero
     mov dx, offset filenotfound
     jc error
@@ -6008,7 +6008,7 @@ noreaderror:
     call writesect
     jc donefileread
 
-    inc [dwCurSector]
+    inc [ioreq.dwSector]
 
     call checktime
     jc continue_loop
@@ -6027,11 +6027,11 @@ continue_loop:
     jnz readfileloop
     clc
 donefileread:
-    pop [ioreq.dwSector]
+;    pop [ioreq.dwSector]
     pushf
     call closefile
     mov [handling], ABORT_OPERATION
-    call rwsectx
+    call readcursect
     popf
     jc @F
     mov [menustackidx], 0                 ; if file op was successful, go back to main menu
@@ -6872,68 +6872,55 @@ getchsx proc
     ret
 getchsx endp
 
-;-------------------------------------------------------
-; rwsect handles all sector reading and writing in WDe for all disk types
-;       IN:     [dwCurSector] = the sector number to read
-;               [handling]    = what to do when sector read/write fails
-;               [ioreq.rwfunc]= type of read/write function
-;               [ioreq.bRW]   = 1 for write, all other values read
-;               [ioreq.bDrive]= drive number to use
-;       OUT:    NC/C          = success or fail
-;               sector is read into/written from [ioreq.pBuffer]
-;
-; Notes:
-;   Old versions of MS-DOS that do not support FAT32 do not set carry
-;   flag when returning from int 21h/ax=7305h to indicate that the function
-;   is not supported.
-;
-;   New versions of MS-DOS do not return ax=0207h when attempting a read
-;   with int 25h on a FAT32 partition as reported by Ralf Browns interrupt
-;   list, however, they do set the carry flag.
-;
-;   This function can't simply be removed from WDe quite yet, as many
-;   assumptions are made about various buffers being filled.
-;
 
-;--- rwsectx is a more convenient version that leaves
-;--- [dwCurSector] in its previous state if an error occurs.
-;--- the sector to be read must be placed into [ioreq.dwSector].
+;--- readcursect "rereads" current sector
 
-rwsectx:
+readcursect:
     push [dwCurSector]
-    push [ioreq.dwSector]
-    pop [dwCurSector]
-    call rwsect
-    jnc @F
-    pop [dwCurSector]
-    ret
-@@:
-    lea sp,[esp+4]
-    ret
+    pop [ioreq.dwSector]
+    jmp diskaccess_read
 
-if 0 ; not used yet
-;--- read specified sector, don't modify [dwCurSector]
-;--- assumes that caller has set [ioreq.pBuffer]
-readsect:
-    push [dwCurSector]
-    push [ioreq.dwSector]
-    pop [dwCurSector]
-    call rwsect
-    pop [dwCurSector]
-    ret
-endif
-
-dummywrite:
-    mov [ioreq.pBuffer], offset sectbuffer
-    ret
+;--- generic write access.
+;--- unlike readsect, [ioreq.pBuffer] may be set by caller of writesect()
+;--- and [dwCurSector] is not modified.
 writesect:
 if ?SAFEMODE
     cmp [bSafe], 1   ;clears CF
-    jz dummywrite
+    jz @F
 endif
     mov [ioreq.bRW], RW_WRITE
+    jmp diskaccess
+if ?SAFEMODE
+dummywrite:
+    ret
+endif
 
-rwsect proc
+;--- generic read access. updates [dwCurSector] if read was successful
+
+readsect:
+    call diskaccess_read
+    jc @F
+    push [ioreq.dwSector]
+    pop [dwCurSector]
+@@:
+    ret
+
+diskaccess_read:
+    mov [ioreq.pBuffer], offset sectbuffer
+    mov [ioreq.bRW], RW_READ
+
+; discaccess handles all sector reading and writing in WDe for all disk types
+;       IN:     [ioreq.bRW]      = 0=read, 1=write
+;               [ioreq.dwSector] = the sector number to read
+;               [ioreq.pBuffer]  = buffer for transfer
+;               [handling]       = what to do when sector read/write fails
+;       OUT:    NC/C             = success or fail
+;                                  read: sector into [ioreq.pBuffer]
+; variables that have been set when a disk was changed:  
+;               [ioreq.bDrive]   = drive number to use
+;               [ioreq.rwfunc]   = type of read/write function
+
+diskaccess proc
 
     pushad
 
@@ -6951,21 +6938,21 @@ acctab label word
 
     push ds
     pop es
-    mov eax, [dwCurSector]
+    mov eax, [ioreq.dwSector]
     add eax, [dwDrivestart]
 if ?SN64
-    mov edi, [dwCurSectorH]
+    mov edi, [ioreq.dwSectorH]
     adc edi, [dwDrivestartH]
 endif
     mov dx, [ioreq.pBuffer]
     movzx bx, [ioreq.rwfunc]
     shl bx,1
     call [bx+acctab]
-    jnc sectordone
+    jc @F
+    popad
+    ret
+@@:
     call access_error
-sectordone:
-    mov [ioreq.pBuffer], offset sectbuffer
-    mov [ioreq.bRW], RW_READ
     popad
     ret
 
@@ -6976,7 +6963,6 @@ int2x_access:
     mov cx, -1
     lea bx, drivepacket
     mov [bx.DISKIO.startsec], eax         ; set sector #
-    mov [bx.DISKIO.sectors], 1            ; read in 1 sector at a time
     mov [bx.DISKIO.buffofs], dx
     mov [bx.DISKIO.buffseg], ds
     xor si, si                            ; 0 (read)
@@ -7039,7 +7025,8 @@ file_access:
     mov ah, 40h
 @@:
     mov bx, [rwhandle]
-    mov cx, 512
+    mov cx, [dapacket.wNumSec]        ; get no of sectors to read/write
+    shl cx, 9
     int 21h
     ret
 fa_error:
@@ -7075,9 +7062,7 @@ ca_error:
 ;--- DS:SI -> disk address packet
 
 newint13_access:
-    lea si, diskrwbuffer
-    mov [si].DAP.bSize, sizeof DAP
-    mov [si].DAP.wNumSec, 1             ; one sector to transfer
+    lea si, dapacket
     mov [si].DAP.wBufferOfs, dx
     mov [si].DAP.wBufferSeg, ds         ; segment part of transfer address
     mov [si].DAP.dwStartLow, eax        ; set sector #
@@ -7107,7 +7092,8 @@ oldint13_access:
     call getchs                 ; translate sector to c/h/s in dh/cx
     pop bx
     mov dl, [ioreq.bDrive]
-    mov ax, 0201h               ; AL=no of sectors to read/write
+    mov al, byte ptr [dapacket.wNumSec]
+    mov ah, 02 
     cmp [ioreq.bRW], RW_WRITE
     jne @F
     mov ah,03h
@@ -7115,9 +7101,9 @@ oldint13_access:
     @int13
     ret
 
-rwsect endp
+diskaccess endp
 
-;--- called if an error occured inside rwsect
+;--- called if an error occured inside diskaccess
 
 access_error proc
     mov dx, offset sectorrerror       ; "Error reading Sector"
@@ -7132,7 +7118,7 @@ access_error proc
 
     mov bx, [lastbottomtext]          ; save current menu text in BX
 
-    invoke sprintf, offset sprintfbuffer, dx, [dwCurSector]
+    invoke sprintf, offset sprintfbuffer, dx, [ioreq.dwSector]
     mov dx, offset sprintfbuffer
     call printbottom
 
@@ -7178,11 +7164,11 @@ checkskip:
 sectorerror2:    ;if ABORT_OPERATION is set
 if ?DEBUG
     push eax
-    mov eax, [dwCurSector]
+    mov eax, [ioreq.dwSector]
     call rendernumdec
     pop eax
 else
-    invoke sprintf, offset sprintfbuffer, dx, [dwCurSector]
+    invoke sprintf, offset sprintfbuffer, dx, [ioreq.dwSector]
     mov dx, offset sprintfbuffer
 endif
     call nuprinterror
@@ -7956,7 +7942,7 @@ writefileloop:
     call printprogress
 wfl1:
     mov [handling], QUERY_FILL
-    call rwsectx
+    call readsect
     mov [handling], ABORT_OPERATION
     jc done
 
@@ -7974,7 +7960,7 @@ wfl1:
 done:
     pop [ioreq.dwSector]
     pushf
-    call rwsectx
+    call readsect
     popf
     ret
 

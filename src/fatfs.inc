@@ -134,7 +134,7 @@ abort:
     cmp [dwCurSector], ebx            ; don't reread current sector if it
     je @F                             ; hasn't changed
     mov [ioreq.dwSector], ebx
-    call rwsectx
+    call readsect
 @@:
     popf
     pop ebx
@@ -186,12 +186,14 @@ fat32pfe:
 dpfe2:
     mov word ptr [si+bx], ax
 dpfe:
+	mov eax,[dwCurSector]               ; currently needed since writesect uses [ioreq.dwSector] now
+	mov [ioreq.dwSector], eax           ; to be improved soon
     call writesect
 
     cmp bx, 511
     jne abortpfe
     inc [dwCurSector]
-    call rwsect
+    call readcursect
     inc bx
     mov al, byte ptr [si+bx]
     mov byte ptr [si], al
@@ -200,7 +202,7 @@ abortpfe:
     pop si
     pop edx
     pop [ioreq.dwSector]
-    jmp rwsectx
+    jmp readsect
 
 putfatentry endp
 
@@ -258,7 +260,7 @@ locationinfirstfat:
     cmp [dwCurSector], eax      ; read that FAT sector if necessary
     je done
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
 done:
     pop ecx
     pop eax
@@ -290,7 +292,7 @@ fat12pad proc                           ; IN: ebx = bytes to fat entry
 
     dec eax
     mov [ioreq.dwSector], eax
-    call rwsectx
+    call readsect
     jc @F
     mov cl, byte ptr [si+bx-1]          ; copy last byte of previous sector
     mov [fat12fix1], cl
@@ -301,14 +303,14 @@ nopred:                                 ; we don't want to read the next
     jae nosucc
     inc eax
     mov [ioreq.dwSector], eax           ; copy first byte of next sector
-    call rwsectx
+    call readsect
     jc nosucc
     mov cl, byte ptr [si]
     mov byte ptr [si+bx], cl
 nosucc:
 done2:
     pop [ioreq.dwSector]
-    call rwsectx                        ; restore current sector
+    call readsect                       ; restore current sector
     mov [handling], ABORT_OPERATION
 done:
     popad

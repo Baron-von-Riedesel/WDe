@@ -76,13 +76,17 @@ done:
 sector2cluster endp
 ;-------------------------------------------------------
 ;
-; getfatentry returns the entry in the fat table for a particular cluster #
+; getfatentry returns the entry in the fat table for a particular cluster#
+; called:
+;   1. when "recursing" ( ctrl-left ) within a FAT ( then may be called quite often).
+;   2. if ctrl-right has been pressed in data region
+;   3. within savechain
+;   4. within restorechain
+;   5. by undelete and unformat
 ;
-;               IN:   eax       cluster number to get
+;               IN:   eax       entry# to get
 ;               OUT:  eax       data stored in the fat
-;                     C if cluster# given in eax is invalid
-; this function may be called quite a few times if
-; "recursing" ( ctrl-left ) within a FAT.
+;                     C if entry# in eax is invalid
 ;-------------------------------------------------------
 getfatentry proc
     push ebx
@@ -114,7 +118,7 @@ f12gfs:
                                       ; to 0FFFFFFxh
 fat1632:
     mov eax, dword ptr [si+bx]
-    test [filesys], FS_FAT32
+    test [filesys], FS_FAT32          ; FAT32 or exFAT?
     jnz f32gfd
 f16gfd:
     movzx eax, ax                     ; clear top word for fat12/fat16
@@ -143,9 +147,10 @@ getfatentry endp
 ;-------------------------------------------------------
 ;
 ; putfatentry writes the entry in the fat table for a particular cluster #
+; called by undelete and unformat.
 ;
-;               IN:   ebx       cluster number to write to
-;                     eax       data to store in the fat
+;               IN:   ebx       entry# that is to be modified
+;                     eax       data to store at that entry
 ;
 ;-------------------------------------------------------
 putfatentry proc
@@ -154,7 +159,7 @@ putfatentry proc
     push si
     mov edx, ebx
 ;    and eax, 0FFFFFFFh
-    call locatefatentry                 ; copy FAT sector into buffer
+    call locatefatentry                 ; will copy FAT sector into sectbuffer
     jc abortpfe
     mov si, offset sectbuffer
     cmp [filesys], FS_FAT12
@@ -186,8 +191,8 @@ fat32pfe:
 dpfe2:
     mov word ptr [si+bx], ax
 dpfe:
-	mov eax,[dwCurSector]               ; currently needed since writesect uses [ioreq.dwSector] now
-	mov [ioreq.dwSector], eax           ; to be improved soon
+    mov eax,[dwCurSector]               ; needed since writesect uses [ioreq.dwSector] since v0.50
+    mov [ioreq.dwSector], eax
     call writesect
 
     cmp bx, 511
@@ -209,6 +214,7 @@ putfatentry endp
 ;-----------------------------------------------------------------
 ;
 ; locatefatentry finds the offset within the fat for a given cluster
+; called by getfatentry and putfatentry.
 ;
 ;               IN:   ebx       cluster number to locate
 ;               OUT:  [dwCurSector]  sector # the entry is in
@@ -220,10 +226,15 @@ putfatentry endp
 locatefatentry proc
     push eax
     push ecx
-                                        
+
+if 0 ; changed in v0.50                                       
     cmp ebx, [dwLastCluster]    ; past the last cluster on the drive?
-    stc
+    stc                         ; ERROR!!!
     ja done                     ; so abort with an error
+else
+    cmp [dwLastCluster], ebx    ; past the last cluster on the drive?
+    jb done                     ; C set if ebx > dwLastCluster
+endif
 
     mov cl, [filesys]           ; convert cluster number to FAT offset
     and cl, FS_FAT12 or FS_FAT16 or FS_FAT32
@@ -319,6 +330,9 @@ fat12pad endp
 ;-----------------------------------------------------------------
 ;
 ; getentrynumber gets the fat entry number the cursor is on
+; called 1. when ENTER has been pressed while in FAT
+;        2. while in FAT, to display entry# in top line
+;        3. from getcurrententry ( only called when inside FAT )
 ;
 ;               IN:   [dwCurSector]  current sector within a fat
 ;                     [spot]    byte offset inside current sector
@@ -332,7 +346,7 @@ getentrynumber proc
     mov [fromfat], 1
     cmp eax, [dwSpF]
     jb @F
-    sub eax, [dwSpF]
+    sub eax, [dwSpF]      ; in second FAT
     inc [fromfat]
 @@:
 
@@ -350,21 +364,21 @@ getentrynumber proc
     add eax, ebx
 
 ;--- here eax contains relative offset of current spot within FAT
+;--- it's now to be divided thru 1.5 (FAT12), 2 (FAT16) or 4 (FAT32/exFAT)
 
-    mov cl, [filesys]     ; 4=FAT32,2=FAT16,1=FAT12
-    and cl, FS_FAT12 or FS_FAT16 or FS_FAT32
+    mov cl, [filesys]                           ; 12=exFAT,4=FAT32,2=FAT16,1=FAT12
+    and cl, FS_FAT12 or FS_FAT16 or FS_FAT32    ; mask out the exFAT bit
     shr cl, 1             ; 4->2, 2->1, 1->0
-    shr eax, cl
-
-;--- here eax contains - for FAT32 and FAT16 - the cluster #
-
-    cmp cl, 0             ; FAT12?
-    jne dlfe13
+    jz isfat12
+    shr eax, cl           ; eax = entry #
+    ret
+isfat12:
+;--- a FAT12-FAT can't have a size > 65536 (max should be 4096*12/8=6144),
+;--- so a 16-bit muldiv should be ok as well.
     xor edx, edx
-    shl eax, 1
+    shl eax, 1            ; eax = muldiv( eax, 2, 3 )
     mov bx, 3
     div ebx
-dlfe13:
     ret
 getentrynumber endp
 ;-----------------------------------------------------------------

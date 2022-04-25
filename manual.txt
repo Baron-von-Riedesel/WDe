@@ -397,7 +397,7 @@ WDe User Manual
 
           It is recommended that multi-clustered directories be
           undeleted manually; locating their clusters cannot
-          be accurately (or easily) done by a peice of software.
+          be accurately (or easily) done by a piece of software.
 
           Undeletion works by attempting to "guess" which clusters
           belong to a file; the concept is unreliable at best,
@@ -421,9 +421,10 @@ WDe User Manual
 
     5.2 - "File Chain Exceeds FAT"
 
-      This is typically an UnDelete error; it means that the end of the
-      fat table was reached before enough free clusters were found to provide
-      to the file being UnDeleted to restore it to its original size.
+      This is an UnDelete error; it means that the end of the FAT table
+      was reached before enough free clusters were found to provide to the
+      file being UnDeleted to restore it to its original size. Nothing
+      happened, though, since the FAT wasn't modified yet.
 
     5.3 - "File Too Small"
 

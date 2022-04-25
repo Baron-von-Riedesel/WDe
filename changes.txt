@@ -4,7 +4,10 @@ WDe V0.50pre2 [--.--.2022]
   - fixed: restore chain didn't work in v0.50pre1.
   - restore exFAT file chains implemented.
   - fixed: restore partition didn't restore last sector.
-  - fixed: menuitem "unformat" removed for exFAT
+  - fixed: menuitem "unformat" removed for exFAT.
+  - fixed: for "undelete", before the FAT is modified, it's first checked
+    if the undelete will be successful - so no corrupted FAT anymore if
+    an error occurs.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

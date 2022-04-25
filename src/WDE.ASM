@@ -652,6 +652,7 @@ dwFilesize      dd ? ; size of current image file, or current file chain to save
 dwCluster       dd ?
 dwBpC           dd ? ; bytes per cluster
 dwSecBackup     dd ? ; sector backup
+dwNumCluster    dd ? ; clusters to be saved in exFAT savechain/restorechain variant
 partitions      dd ?,?,?,? ; partition start sectors
 
 backupbs        dw ? ; backup boot sector location (FAT32)
@@ -711,6 +712,7 @@ if ?MOUNT
 bMount          db ?            ; mount partition + 1
 endif
 bTabSw          db ?
+bSkipFat        db ?
 
 ;--- unformat fields
     align dword
@@ -751,6 +753,7 @@ cdheader        CDREQ <?>       ; cd device request header
 drivepacket     DISKIO <?>      ; used by int 25h/26h and int 21h/ax=7305h
 dapacket        DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
 valuebuffer     db 11 dup (?)
+
 
 ;--- the alignment must observe the fat12fix.
 ;--- the handling of this format requires one byte just before
@@ -2740,11 +2743,6 @@ savechain proc
     mov [fromfat], 1
     call srcommon
 
-_BSS segment
-dwNumCluster dd ?
-bSkipFat db ?
-_BSS ends
-
     mov [bSkipFat], 0
     xor ebp, ebp
     cmp [chainflag], FAT_CHAIN
@@ -3092,30 +3090,18 @@ sr_ok:
     ret
 srcommon endp
 
-;--- menu item "file, save to file, input"
-
-savefile proc
-    call getnos               ; get number of sectors in [dwValue]
-    jc @F
-    call srcommon             ; get filename ( may skip return address if no filename supplied )
-    mov eax, [dwCurSector]
-    jmp endsavedrive
-@@:
-    ret
-savefile endp
-
 ;--- submenu "file options"
 ;--- logical drives: F1=Input F2=Boot F3=Fat1 F4=Fat2 F5=Root F6=Partition [F7=chain]
 
 submenu_fileoptions proc
 
     @mstart cdfileoptmenu
-    @mitem 14, srfile
+    @mitem 14, srsecrange
     @mitem 24, dumpiso
     @mend cdfileoptmenu
 
     @mstart pdfileoptmenu
-    @mitem 16, srfile
+    @mitem 16, srsecrange
     @mitem 17, srsector0
     @mitem 18, srhdcheck
     @mitem 19, srhdcheck
@@ -3125,7 +3111,7 @@ submenu_fileoptions proc
 
 
     @mstart ldfileoptmenu
-    @mitem 16, srfile
+    @mitem 16, srsecrange
     @mitem  8, srsector0
     @mitem 10, srfat1
     @mitem 11, srfat2
@@ -3165,17 +3151,17 @@ submenu_fileoptions proc
 setxxfileopt:
     jmp pushmenustack
 
-
-srfile:                            ; save sector range to file
+srsecrange:                        ; save/restore sector range to/from file
     cmp [srflag], SR_RESTORE
-    je restfile
-    jmp savefile
+    je restsecrange
+    jmp savesecrange
 
-srdisk:                            ; save partition to file
+srdisk:                            ; save/restore partition to/from file
     cmp [srflag], SR_RESTORE
     je restdrive
     jmp dumpiso
-srchain:                           ; save chain to file
+
+srchain:                           ; save/restore chain to/from file
     cmp [chainflag], NO_CHAIN
     je @F
     cmp [srflag], SR_RESTORE
@@ -3184,13 +3170,13 @@ srchain:                           ; save chain to file
 @@:
     ret
 
-;-------------
+;--- save/restore partition
 
-srhdcheck:   ; submenu fileoptions for physical disks
+srhdcheck:                         ; save/restore partition 1-4
 
     mov bx, 1CAh
     mov cx, 4
-    mov al, F3_KEY             ;F3,F4,F5,F6
+    mov al, F3_KEY                 ; F3,F4,F5,F6?
     mov si, offset partitions
 @@:
     cmp ah, al
@@ -3200,50 +3186,7 @@ srhdcheck:   ; submenu fileoptions for physical disks
     add si, 4
     loop @B
     ret
-cdf2check:   ;submenu fileoptions for CDs (+physical disks)
-    cmp ah, F2_KEY
-    je dumpiso
-    ret
-
-submenu_fileoptions endp
-
-;--- submenu file-ops, save/restore root dir
-
-srroot:
-    call srcommon
-
-    mov eax, [dwRootSect]
-    xor edx, edx
-
-    test [filesys], FS_FAT32
-    je userootsects
-    mov dl, [bSpC]       ;known bug: FAT32 root dir may be more than just 1 cluster!
-    jmp dorootsr
-userootsects:
-    mov dx, [wRootsectors]
-
-dorootsr:
-    mov [dwValue], edx
-    cmp [srflag], SR_SAVE
-    je endsavedrive
-    jmp endrestsectors
-;-------------------------------------------------------
-restdrive:
-    mov eax, [dwDataend]
-    inc eax
-    mov [dwValue], eax
-
-    call srcommon
-    xor eax, eax
-endrestsectors:
-    call readfile
-    ret
-
-;--- save/restore partition
-;--- SI -> partitions array
-;--- BX = offset in MBR for partition
-
-srpartition:
+srpartition:                       ; SI -> partitions array, BX = offset in MBR for partition
     mov eax, dword ptr [si]
     test eax, eax
     jz donesr
@@ -3258,24 +3201,45 @@ srpartition:
     mov [dwValue], ebx
     cmp [srflag], SR_RESTORE
     je endrestsectors
-endsavedrive:                            ; <--- by savefile, save bs, save fatx, save root
+endsavedrive:                      ; <--- by srsecrange, srbs, srfatx, srroot
     call savedata
 donesr:
     ret
 
-;--- menu item "file ops, save/restore sectors, fat1"
+srroot:                            ; save/restore root dir
+    call srcommon
+    mov eax, [dwRootSect]
+    xor edx, edx
+    test [filesys], FS_FAT32
+    je @F
+    mov dl, [bSpC]                 ; known bug: FAT32 root dir may be more than just 1 cluster!
+    jmp dorootsr
+@@:
+    mov dx, [wRootsectors]
+dorootsr:
+    mov [dwValue], edx
+    cmp [srflag], SR_SAVE
+    je endsavedrive
+    jmp endrestsectors
 
-srfat1:
-    mov eax, [dwReserved]
-    jmp srfat
+restdrive:                         ; restore partition from file
+    mov eax, [dwDataend]
+    inc eax
+    mov [dwValue], eax
+    call srcommon
+    xor eax, eax
+endrestsectors:
+    call readfile
+    ret
 
-;---  menu item "file ops, save/restore sectors, fat2"
-
-srfat2:
+srfat2:                            ; save/restore FAT-2 to/from file
     cmp [bFats], 2
     jb srfat1
     mov eax, [dwFat1end]
-srfat:
+    jmp srfatx
+srfat1:                            ; save/restore FAT-1 to/from file
+    mov eax, [dwReserved]
+srfatx:
     call srcommon
     mov edx, [dwSpF]
     mov [dwValue], edx
@@ -3283,9 +3247,7 @@ srfat:
     je endsavedrive
     jmp endrestsectors
 
-;--- menu item "file ops, save/restore sectors, boot sector"
-
-srsector0:
+srsector0:                         ; save/restore MBR/BS to/from file
     call srcommon
     xor eax, eax
     mov [dwValue], 1
@@ -3293,30 +3255,32 @@ srsector0:
     je endsavedrive
     jmp endrestsectors
 
-;--- menu item "file ops, restore sectors, input"
+savesecrange:                 ; save sector range
+    call getnos               ; get number of sectors in [dwValue]
+    jc @F
+    call srcommon             ; get filename ( may skip return address if no filename supplied )
+    mov eax, [dwCurSector]
+    jmp endsavedrive
+@@:
+    ret
 
-restfile proc
-    call srcommon                         ; calls findfile
+restsecrange:                 ; restore sector range
+    call srcommon             ; calls findfile
     mov eax, [dwFilesize]
     movzx ebx, [wBps]
     cmp eax, ebx
     jae filesizeok
 toosmallerr:
-    mov dx, offset toosmall               ; "File too small"
+    mov dx, offset toosmall   ; "File too small"
     call printerror
     ret
-
 filesizeok:  
-
 ;    mov eax, [dwFilesize]
-
     xor edx, edx
     div ebx
-
     mov ebx, [dwDataend]
     sub ebx, [dwCurSector]
     inc ebx
-
     cmp eax, ebx                          ; if there are more sectors in the
     jbe mvok                              ; file than there are remaining
     xchg eax, ebx                         ; on the partition; then set number
@@ -3330,8 +3294,9 @@ mvok:                                     ; of partition sectors remaining
     jmp endrestsectors
 @@:
     ret
-restfile endp
-  
+
+submenu_fileoptions endp
+
 ;--- submenu goto
 
 submenu_jumpto proc
@@ -8245,7 +8210,12 @@ spot2bufofs:
     add bx, [spot]
     ret
 
-;------------------------------------------------------
+;--- called from:
+;--- 1. recursechain ( ctrl-left while in FAT )
+;--- 2. jumpcluster  ( ctrl-right while in FAT )
+;--- 3. savechain    ( to save a FAT chain )
+;--- 4. restorechain ( to restore a FAT chain )
+
 getcurrententry:                ; IN:  [dwCurSector], [spot]
     call getentrynumber         ; OUT: eax = data stored at current entry
     mov ebx, eax                ;      ebx = current entry #

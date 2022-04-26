@@ -38,7 +38,7 @@ WDe User Manual
 
   5.0       Error Messages
   5.1       "No (More) Matches Found"
-  5.2       "File Chain Exceeds FAT"
+  5.2       "No more free space at offset X: T(runcate) or A(bort)?"
   5.3       "File Too Small"
   5.4       "File Too Corrupt"
   5.5       "Error Reading File"
@@ -419,12 +419,12 @@ WDe User Manual
       whatever it was searching for (using the "Find" functions) was not
       found.
 
-    5.2 - "File Chain Exceeds FAT"
+    5.2 - "No more free space at offset X; T(runcate) or A(bort)?"
 
-      This is an UnDelete error; it means that the end of the FAT table
-      was reached before enough free clusters were found to provide to the
-      file being UnDeleted to restore it to its original size. Nothing
-      happened, though, since the FAT wasn't modified yet.
+      This is an UnDelete error; it means that there are not enough free
+      contiguous clusters (anymore) where the file was originally stored.
+      Pressing 'T' will undelete the file, but truncate it to the size
+      as displayed; 'A' will leave everything as it is.
 
     5.3 - "File Too Small"
 

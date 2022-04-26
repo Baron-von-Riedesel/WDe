@@ -203,6 +203,9 @@ endif
         F6_KEY           EQU 40h
         F7_KEY           EQU 41h
         F8_KEY           EQU 42h
+if ?DEBUG
+        F12_KEY          EQU 86h
+endif
 
         HOME_KEY         EQU 47h
         CSRUP_KEY        EQU 48h
@@ -564,7 +567,6 @@ szDriveinvalid  db 'Drive invalid',0
 invalclustmsg   db 'Cluster %lX invalid',0
 endofchainmsg   db 'End of cluster chain reached',0
 secsizetoobig   db 'Sector size exceeds 4K',0
-no_bssignature  db 'No Boot Sector signature',0
 errormsg        db ' - Press Any Key',0
 
 inmbrmsg        db '[MBR]',0
@@ -792,6 +794,8 @@ endm
 endm
 endif
 
+    include sprintf.inc
+
 ;--- main menu definition
 
     @mstart initialmenu
@@ -1001,6 +1005,12 @@ getkeyagain:
     je handle_enter
     cmp ax, CTRLENTER_KEY       ; jump to FAT entry for current cluster
     je handle_ctlenter
+if ?DEBUG
+    cmp ah, F12_KEY
+    jnz @F
+    mov [viewmode], VM_DEBUG
+@@:
+endif
 
     call checkmenukey           ; check for menu (=function) keys
 
@@ -1546,7 +1556,7 @@ helpscreen endp
 savetodisk proc
     mov dx, offset writetodiskmsg
     call printbottom
-    call writesect                 ; write it.
+    call writecursect
     jc @F
     mov dx, offset donewritedisk
     call nuprinterror
@@ -1625,8 +1635,6 @@ endif
     jmp pushmenustack
 
 submenu_functions endp
-
-    include sprintf.inc
 
 if ?EXT
 ;------------------------------------------------------
@@ -4241,6 +4249,11 @@ fat32viewmode proc
 
     call chainmenuitem
 
+    xor ebx, ebx
+    call getentrynumberX
+    mov edi, eax
+
+
     mov [scrn_xy], VIEWROW * 100h + 4
     mov [highlight], 07040000h
 
@@ -4251,14 +4264,12 @@ fat32viewmode proc
 loopline2:
     cmp [spot], bx
     jb donesetline2
-
     add si, CLBYTES_PER_ROW
     add bx, CLBYTES_PER_ROW
+    add edi, CLUSTER_PER_ROW
     add [highlight_ofs], CLBYTES_PER_ROW
-
     cmp bx, 12 * CLBYTES_PER_ROW
     jne loopline2
-
 donesetline2:
 
     mov ch, 7
@@ -4270,13 +4281,18 @@ nextcol:
 
     lodsd
 
+    mov dx, CStr("-------")
+    cmp edi, [dwLastCluster]
+    ja @F
     mov dl,7
     call rendernumhex
+@@:
     call printstring
 
     mov dl, SPACE
     call printchar
 
+    inc edi
     add bx, sizeof dword
     cmp bx, 512 + 4 * CLBYTES_PER_ROW
     jz done
@@ -4289,9 +4305,8 @@ nextcol:
     jnz nextrow
     ret
 done:
-    mov al, SPACE
     mov cl, 7 * 7 + 6  ; 7 clusters, 7 digits/cluster, 6 spaces
-    jmp fillchar
+    jmp fillspace
 
 fat32viewmode endp
   
@@ -4305,6 +4320,10 @@ fat16viewmode proc
 
     call chainmenuitem
 
+    xor ebx, ebx
+    call getentrynumberX
+    mov edi, eax
+
     mov [scrn_xy], VIEWROW * 100h + 3
     mov [highlight], 04020000h
 
@@ -4315,14 +4334,12 @@ fat16viewmode proc
 loopline:
     cmp [spot], bx
     jb donesetline
-
     add si, CLBYTES_PER_ROW
     add bx, CLBYTES_PER_ROW
+    add edi, CLUSTER_PER_ROW
     add [highlight_ofs], CLBYTES_PER_ROW
-
     cmp bx, 15 * CLBYTES_PER_ROW
     jne loopline
-
 donesetline:
 
     mov ch, 7
@@ -4335,13 +4352,18 @@ nextcol:
 
     lodsw
 
+    mov dx, CStr("----")
+    cmp edi, [dwLastCluster]
+    ja @F
     mov dl,4
     call rendernumhex
+@@:
     call printstring
 
     mov dl, SPACE
     call printchar
 
+    inc edi
     add bx, sizeof word
     cmp bx, 512 + 4 * CLBYTES_PER_ROW
     je done
@@ -4354,9 +4376,8 @@ nextcol:
     jnz nextrow
     ret
 done:
-    mov al, SPACE
     mov cl, 14 * 4 + 13   ; 14 clusters, 4 digits/cluster, 13 spaces (=69)
-    jmp fillchar
+    jmp fillspace
 
 fat16viewmode endp
 
@@ -4371,6 +4392,10 @@ fat12viewmode proc
 
     call chainmenuitem
 
+    xor ebx, ebx
+    call getentrynumberX
+    mov di, ax
+
     mov [highlight], 03020000h
 
     xor ax, ax                          ; this little loop figures out
@@ -4380,6 +4405,7 @@ buf12fix:                               ; fat12 entries, since an entire
     jb donebuffix                       ; won't fit in the view area.
     sub bx, CLBYTES_PER_ROW
     add ax, CLBYTES_PER_ROW
+    add di, CLUSTER_PER_ROW
     add [highlight_ofs], CLBYTES_PER_ROW
     cmp ax, 300
     jbe buf12fix
@@ -4440,18 +4466,22 @@ ssection:
     inc [highlight_ofs]
     jmp fat12loop
 done:
-    mov al, SPACE
     mov cl, 4
-    jmp fillchar
+    jmp fillspace
 
 print12bits:
     mov dl, SPACE
     call printchar
     call bshighlight
     inc [highlight_ofs]
+    mov dx, CStr("---")
+    cmp di, word ptr [dwLastCluster]
+    ja @F
     mov dl,3
     call rendernumhex
+@@:
     call printstring
+    inc di
     cmp [scrn_col], 75
     jne @F
     mov [scrn_col], 3
@@ -4669,8 +4699,7 @@ mbrcommon:
     mov cl, al
     add cl, 20
     sub cl, [scrn_col]
-    mov al, SPACE
-    call fillchar
+    call fillspace
     pop ax
     pop cx
 
@@ -4781,8 +4810,7 @@ nextitem:
     add di,3*2
 
     mov cl, 9
-    mov al, SPACE
-    call fillchar
+    call fillspace
 
     pop cx
     mov [scrn_col], 40
@@ -4793,6 +4821,25 @@ nextitem:
     inc ch
     dec cl
     jnz nextitem
+
+    mov dx, CStr("Signature")
+    call printstring
+    call spaceandcolon
+    mov word ptr [highlight_ofs],1FEh
+    mov word ptr [highlight_size],0402h
+    call bshighlight
+    mov dl,4
+    mov ax, [si+1FEh]
+    call rendernumhex
+    call printstring
+    cmp ax, 0AA55h
+    jz @F
+    mov dx, CStr(" (invalid)")
+    call printstring
+    ret
+@@:
+    mov cl,10
+    call fillspace
     ret
 
 basicbs:
@@ -4880,8 +4927,7 @@ nextitem:
     add di,3*2
 
     mov cl, 9
-    mov al, SPACE
-    call fillchar
+    call fillspace
 
     pop cx
     mov [scrn_col], 40
@@ -4968,8 +5014,7 @@ nextitem:
     add di,3*2
 
     mov cl, 9
-    mov al, SPACE
-    call fillchar
+    call fillspace
 
     pop cx
     mov [scrn_col], 40
@@ -5375,10 +5420,6 @@ logicalsetvars:
 
     mov si, offset sectbuffer
 
-    mov dx, offset no_bssignature
-    cmp word ptr [si+1FEh], 0AA55h
-    jnz printerror
-
     mov eax, [si+3]
     cmp eax, "SFTN"
     jz isntfs
@@ -5530,8 +5571,9 @@ endif
     mov [dwFat1end], eax
     mov eax, [si].EXFAT.dwClHpOfs
     mov [dwDataStart], eax
-    mov eax, [si].EXFAT.dwClCnt
-    mov [dwLastCluster], eax
+    mov eax, [si].EXFAT.dwClCnt     ; cluster count
+    inc eax                         ; +1, since clusters start with #2
+    mov [dwLastCluster], eax        ; and we need the last valid cluster#
     mov al, [si].EXFAT.bNumFats
     mov [bFats], al
     mov eax, [si].EXFAT.dwRootCl
@@ -6124,8 +6166,7 @@ printtopline proc
 
     mov cl, 36
     sub cl, [scrn_col]
-    mov al, ' '
-    call fillchar
+    call fillspace
     add [scrn_col], cl
 
 ;    mov [scrn_col], 36
@@ -6172,8 +6213,7 @@ continuecount:
 abortdc:
     mov cl, RIGHTCOL                     ; clear to last column
     sub cl, [scrn_col]
-    mov al, SPACE
-    call fillchar
+    call fillspace
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne done
     mov [scrn_xy], 003Fh
@@ -6212,9 +6252,8 @@ firstfat:
     call printchar
     mov dl, ']'
     call printchar
-    mov al, SPACE
     mov cl, 2
-    call fillchar
+    call fillspace
 
     test [filesys], FS_FATXX
     je abortdc
@@ -6602,6 +6641,8 @@ colorchar endp
 ;--- fill char in AL CL times
 ;--- (no screen pos update!)
 
+fillspace:
+    mov al, SPACE
 fillchar:
     push di
     push cx
@@ -6838,16 +6879,12 @@ getchsx proc
 getchsx endp
 
 
-;--- readcursect "rereads" current sector
-
-readcursect:
-    push [dwCurSector]
-    pop [ioreq.dwSector]
-    jmp diskaccess_read
-
 ;--- generic write access.
 ;--- unlike readsect, [ioreq.pBuffer] may be set by caller of writesect()
 ;--- and [dwCurSector] is not modified.
+writecursect:
+    push [dwCurSector]
+    pop [ioreq.dwSector]
 writesect:
 if ?SAFEMODE
     cmp [bSafe], 1   ;clears CF
@@ -6870,11 +6907,16 @@ readsect:
 @@:
     ret
 
+;--- readcursect "rereads" current sector
+
+readcursect:
+    push [dwCurSector]
+    pop [ioreq.dwSector]
 diskaccess_read:
     mov [ioreq.pBuffer], offset sectbuffer
     mov [ioreq.bRW], RW_READ
 
-; discaccess handles all sector reading and writing in WDe for all disk types
+; diskaccess handles all sector reading and writing in WDe for all disk types
 ;       IN:     [ioreq.bRW]      = 0=read, 1=write
 ;               [ioreq.dwSector] = the sector number to read
 ;               [ioreq.pBuffer]  = buffer for transfer
@@ -7170,13 +7212,13 @@ ife ?LFN
     je validchar
     cmp al, PERIOD
     je validchar
+endif
 validfileinputchar::              ; <--- called by undelete
     cmp al, 'a'                   ; lower case letters allowed in paths
     jb validfilechar
     cmp al, 'z'
     ja validfilechar
     jmp validchar
-endif
 extvalidfilechar::                ; <--- called by IsDirectory
     cmp al, PERIOD
     je validchar
@@ -7815,8 +7857,7 @@ clearbottom:
     push ax
     mov cl, RIGHTCOL+1
     sub cl, [scrn_col]
-    mov al, SPACE
-    call fillchar
+    call fillspace
     pop ax
     pop cx
     ret

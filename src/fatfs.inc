@@ -191,9 +191,7 @@ fat32pfe:
 dpfe2:
     mov word ptr [si+bx], ax
 dpfe:
-    mov eax,[dwCurSector]               ; needed since writesect uses [ioreq.dwSector] since v0.50
-    mov [ioreq.dwSector], eax
-    call writesect
+    call writecursect
 
     cmp bx, 511
     jne abortpfe
@@ -340,13 +338,15 @@ fat12pad endp
 ;                               the cluster.
 ;-----------------------------------------------------------------
 getentrynumber proc
+    movzx ebx, [spot]
+getentrynumberX::              ; <--- if just the entry# of the sector start interests
     mov eax, [dwCurSector]
     sub eax, [dwReserved]
 
     mov [fromfat], 1
     cmp eax, [dwSpF]
     jb @F
-    sub eax, [dwSpF]      ; in second FAT
+    sub eax, [dwSpF]           ; in 2. FAT
     inc [fromfat]
 @@:
 
@@ -360,7 +360,6 @@ getentrynumber proc
 
 ;--- here eax contains relative offset of current sector within FAT
 
-    movzx ebx, [spot]
     add eax, ebx
 
 ;--- here eax contains relative offset of current spot within FAT

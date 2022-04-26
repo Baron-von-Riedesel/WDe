@@ -548,9 +548,7 @@ writtenDirType:
 
     mov dword ptr [si+08h], 10202020h           ; extension+attribs
 
-	push [dwCurSector]
-	pop [ioreq.dwSector]
-    call writesect
+    call writecursect
     ;
     ; error checking
     ;
@@ -630,13 +628,12 @@ f1tof2loop:
     dec ecx
     jnz f1tof2loop
 noCopyF1toF2:
-
-    mov eax, [dwSecBackup]
-    mov [ioreq.dwSector], eax
-    call readsect
     mov dx, CStr('Finished UnFormatting')
 unformatError:
     call printerror
+    mov eax, [dwSecBackup]
+    mov [ioreq.dwSector], eax
+    call readsect
     ret
 outofmemory:
     mov dx, CStr('Out of memory')

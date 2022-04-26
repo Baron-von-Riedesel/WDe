@@ -51,7 +51,6 @@ getkeyagain16:
     call cursorgetkey
     cmp al, ESCAPE_KEY
     je done
-ife ?LFN
     call validfileinputchar
     jc getkeyagain16
     cmp al, 'a'
@@ -60,10 +59,6 @@ ife ?LFN
     ja unok1
     sub al, 32
 unok1:
-else
-    call validfirstfilechar
-    jc getkeyagain16
-endif
 ;    call spot2bufofs                   ; should be preserved from above
 ;    and bl, 11100000b
 ;    add bx, offset sectbuffer
@@ -73,28 +68,22 @@ endif
     mov dx, CStr('UnDeleting...')
     call printbottom
 
-;--- UndeleteCore modifies the FAT, but...
-;--- currently only the first FAT!
-
     call UndeleteCore
     pop ax
     jc undelete_err1
 
-    mov [bx], al
-    mov eax, [dwCurSector]
-    mov [ioreq.dwSector], eax
-    call writesect                      ; rewrite directory sector
+    mov [bx+0], al
+    mov eax, [dwFilesize]
+    mov [bx+DIR_FILESIZE], eax
+
+    call writecursect                   ; rewrite directory sector
 
     mov dx, CStr('Finished UnDeleting File')
     call printerror
 done:
     ret
 undelete_err1:
-
-;--- since v0.50, error "file chain exceeds FAT" is harmless, since
-;--- the FAT hasn't been modified yet.
-
-    mov dx, CStr('File Chain Exceeds FAT')
+    mov dx, CStr('Undelete aborted')
     call printerror
     ret
 undelete endp
@@ -126,7 +115,8 @@ getnextentry:
     jc undelCoreError
 
     test eax, eax                       ; is the entry free?
-    jnz getnextentry                    ; if no, just get the next?????
+;    jnz getnextentry                    ; if no, just get the next?????
+    jnz undelCoreError
 
     mov eax, ebx
     xchg ebx, esi
@@ -139,9 +129,28 @@ writeeof:
     jnz nexttry
     mov eax, 0FFFFFFFh
     call putfatentry
-undelCoreError:
+exit:
     popad
     ret
+undelCoreError:
+    mov dx, offset sprintfbuffer
+    mov edx, [dwFilesize]
+    sub edx, edi
+    invoke sprintf, dx, CStr("No more free space at offset %lX; T(runcate) or A(bort)?"), edx
+    call printbottom
+keyloop:
+    call getkey
+    or al,20h
+    cmp al, 't'
+    jz trunc
+    cmp al, 'a'
+    jnz keyloop
+    stc
+    jmp exit
+trunc:
+    mov [dwFilesize], edx
+    jmp writeeof
+
 UndeleteCore endp
 
 ;-------------------------------------------------------

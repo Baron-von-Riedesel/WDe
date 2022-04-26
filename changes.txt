@@ -8,6 +8,8 @@ WDe V0.50pre2 [--.--.2022]
   - fixed: for "undelete", before the FAT is modified, it's first checked
     if the undelete will be successful - so no corrupted FAT anymore if
     an error occurs.
+  - fixed: in v0.50pre, the last cluster of exFAT was not accessible.
+  - in FAT view, entries beyond last cluster# are displayed with "-".
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

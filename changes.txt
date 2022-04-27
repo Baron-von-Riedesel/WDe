@@ -6,10 +6,12 @@ WDe V0.50pre2 [--.--.2022]
   - fixed: restore partition didn't restore last sector.
   - fixed: menuitem "unformat" removed for exFAT.
   - fixed: for "undelete", before the FAT is modified, it's first checked
-    if the undelete will be successful - so no corrupted FAT anymore if
-    an error occurs.
+    if there're enough free contiguous clusters at the required location;
+    if no, the file is optionally truncated or the operation canceled.
+    Hence error "File chain exceeds FAT" obsolete and removed.
   - fixed: in v0.50pre, the last cluster of exFAT was not accessible.
   - in FAT view, entries beyond last cluster# are displayed with "-".
+  - with image files, bytes/sector are no longer fixed to 512.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

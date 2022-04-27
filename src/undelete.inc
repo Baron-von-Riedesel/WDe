@@ -136,14 +136,14 @@ undelCoreError:
     mov dx, offset sprintfbuffer
     mov edx, [dwFilesize]
     sub edx, edi
-    invoke sprintf, dx, CStr("No more free space at offset %lX; T(runcate) or A(bort)?"), edx
+    invoke sprintf, dx, CStr("No more free space at offset %lX; T(runcate) or C(ancel)?"), edx
     call printbottom
 keyloop:
     call getkey
     or al,20h
     cmp al, 't'
     jz trunc
-    cmp al, 'a'
+    cmp al, 'c'
     jnz keyloop
     stc
     jmp exit

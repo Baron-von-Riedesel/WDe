@@ -62,6 +62,7 @@ endif
         COLHEX           equ 10 ; column where hex display starts
         COLBIN           equ 11 ; column where binary display starts
         COLASC           equ 63 ; column where ascii display starts
+        VIEWBYTES        equ 32*16 ; 32 rows a 16 bytes
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
         DIRENTSIZE       EQU 32   ; size of directory entry (FATxx + exFAT)
@@ -671,10 +672,13 @@ viewmode2       db ? ; 0 = autodetect view, 1=force view
 displaymode     db ? ; hex or binary
 editmode        db ? ; what mode being edited in (ascii/default)
 
-highlight       label dword ; area to highlight with viewmode
-highlight_ofs   dw ? ;starting spot (offset in sector buffer)
-highlight_size  db ? ;size of spot
-highlight_scsiz db ? ;num of cells to highlight on screen
+HIGHLIGHT struct
+ofs   dw ?
+siz_  db ?
+scsiz db ?
+HIGHLIGHT ends
+
+highlight       HIGHLIGHT <>; area to highlight with viewmode
 
 seed12          label dword
 seed1           dw ?
@@ -922,7 +926,16 @@ has_drive:
 if ?PM
     call initpm16
     call wdepm16
-endif
+    mov bl,24h                  ; use DPMI to modify int vector, since
+    mov ax, 204h                ; DS MUST hold DGROUP selector when int 21h is called
+    int 31h
+    mov word ptr [old24h+0], dx
+    mov word ptr [old24h+2], cx
+    mov cx, cs
+    mov dx, offset int24h
+    mov al, 5
+    int 31h
+else
     mov ax, 3524h               ; back up old int 24h ( must be done AFTER switch to pm )
     int 21h
     mov word ptr [old24h+0], bx
@@ -934,7 +947,7 @@ endif
     mov ah, 25h                 ; set up new int 24h
     int 21h
     pop ds
-
+endif
     popa
 
     mov [stackbot], sp
@@ -1494,13 +1507,13 @@ quickhelptext label byte
     db "Ctrl+Home     - Jump to first sector on drive",0
     db "Ctrl+Up       - Pop sector from stack and jump to it",0
     db 0
-    db "Keys in FAT of (ex)FAT partitions:",0
+    db "Keys in FAT region of (ex)FAT partitions:",0
     db 0
     db "Ctrl+Right    - Jump to linked FAT entry (successor)",0
     db "Ctrl+Left     - Try to find linking FAT entry (predecessor)",0
     db "Enter         - Jump to current entry's data (=cluster)",0
     db 0
-    db "Keys in Data area of (ex)FAT partitions:",0
+    db "Keys in Data region of (ex)FAT partitions:",0
     db 0    
     db "Ctrl+Right    - Jump to linked cluster in FAT (successor)",0
     db "Ctrl+Enter    - Jump to FAT entry for this cluster",0
@@ -1982,8 +1995,7 @@ jumpstkpop endp
 ;--- jump to cluster entry in FAT
 
 handle_ctlenter proc
-;    cmp [ioreq.drvtype], DT_LOGICAL ; won't work with non-logical drives
-;    jne done
+
     test [filesys], FS_FATXX    ; must be a FAT drive
     je done
     mov eax, [dwCurSector]
@@ -2172,8 +2184,7 @@ invalclusterror endp
 ;--- in DIR area: jump to starting cluster of dir entry
 
 handle_enter proc
-;    cmp [ioreq.drvtype], DT_LOGICAL     ; FAT disk?
-;    jne done
+
     test [filesys], FS_FATXX            ; FAT disk?
     je done
 
@@ -2491,6 +2502,10 @@ submenu_find endp
 updatescreen proc
 
     call printtopline
+    cmp [wBps], VIEWBYTES             ; in case the sector doesn't exactly fit on the screen, update offset
+    jz @F
+    call printoffset
+@@:
     call printsector
 
     cmp [viewmode2], VM2_STATIC       ; forced view?
@@ -3078,13 +3093,17 @@ exfat_restorechain:
 
 restorechain endp
 
-;-------------------------------------------------------
+;--- common routine for save/restore
+;--- 1. prompt user to enter a filename
+;--- 2. if "restore"-branch, check if file exists
+;--- in case an error occurs, skip caller's return address and return.
+
 srcommon proc
     push ax
     mov al, 0
     call getfilename
     pop ax
-    jcxz srskip
+    jcxz srskip               ; cx=0 if user has ESCaped
     cmp [srflag], SR_RESTORE
     jne sr_ok
     call findfileX
@@ -3093,7 +3112,6 @@ srcommon proc
     call printerror
 srskip:
     add sp,2                  ; skip srcommon return address
-    ret
 sr_ok:
     ret
 srcommon endp
@@ -3196,7 +3214,7 @@ srhdcheck:                         ; save/restore partition 1-4
     ret
 srpartition:                       ; SI -> partitions array, BX = offset in MBR for partition
     mov eax, dword ptr [si]
-    test eax, eax
+    test eax, eax                  ; "empty" partition?
     jz donesr
     call srcommon
 
@@ -3304,6 +3322,125 @@ mvok:                                     ; of partition sectors remaining
     ret
 
 submenu_fileoptions endp
+
+;--- menu File, save sectors, bs, fat, ...
+;--- "save chain" isn't handled here, it's in savechain()
+;--- "save partition" is handled by dumpiso() ( why? )
+
+savedata proc
+;
+; IN:   dd:[dwValue]    number of sectors to save
+;       eax             starting sector
+;
+; OUT:  disk is read and sectors are dumped to [wFilehandle]
+;       dw:[wFilehandle] handle of file to write to
+;
+
+    mov edx, eax
+    add edx, [dwValue]
+    jc invalidperror
+    dec edx
+    cmp edx, [dwDataend]
+    ja invalidperror
+
+    push eax
+    mov edx, [dwValue]            ; the plan here is to convert
+    movzx eax, [wBps]             ; "value" into the number of 512-byte
+    mul edx
+    pop eax
+    and edx, edx                  ; more than 4 GB to write?
+    jne toobig
+
+    push ax
+    call createfile
+    pop ax
+    jnc dosavedata
+donesavedata:
+    ret
+dosavedata:
+    xor di, di
+    push [dwValue]
+    call writefile
+    pushf
+    call closefile
+    popf
+    pop eax
+    jc donesavedata
+    mov [menustackidx], 0        ; if file op was successful, go back to main menu
+    jmp sectorswritten2file
+
+toobig::
+    mov dx, offset filetoobigmsg
+    jmp printerror
+
+invalidperror::
+    mov dx, offset invalidpmsg   ;"invalid sector range"
+    jmp printerror
+
+savedata endp
+
+;--- dump cd to .iso-file, partition to image-file
+
+dumpiso proc
+
+    mov edx, [dwDataend]
+    inc edx
+    mov [dwValue], edx
+
+    movzx eax, [wBps]             ; "value" into the number of 512-byte
+    mul edx
+    and edx, edx                  ; more than 4 GB to write?
+    jne toobig
+
+    call srcommon                 ; prompt user for file name
+
+    call createfile
+    jc done
+    cmp [ioreq.drvtype], DT_CDROM
+    jne drivedump
+
+    push ds
+    pop es
+    mov di, offset sectbuffer
+    mov cx, [wBps]
+    mov al, 0
+    rep stosb
+
+    mov cx, [wBps]
+    mov dx, offset sectbuffer
+    mov bx, [wFilehandle]
+    mov si, 10h
+;--- write to file (16 blank sectors)
+;--- to the beginning of the iso
+;--- since we can't read the first 10 sectors on a CD
+isoloop:
+    mov ah, 40h
+    int 21h
+    jnc @F
+    mov dx, offset filewriteerr
+    call printerror
+    stc 
+    jmp donedump
+@@:
+    dec si
+    jnz isoloop
+drivedump:
+    xor eax, eax
+    xor di, di
+    call writefile
+donedump:
+    pushf
+    call closefile
+    popf
+    jc done
+    mov eax, [dwDataend]
+    inc eax
+    call sectorswritten2file
+    mov [menustackidx], 0               ; leave file option menu, back to main menu
+done:
+    ret
+
+dumpiso endp
 
 ;--- submenu goto
 
@@ -3556,13 +3693,13 @@ nextitem:
     push cx
     mov dx, [di]
     call printstring
-    mov bx, [highlight_ofs]
+    mov bx, [highlight.ofs]
 ;   dec bx
 
     mov eax, dword ptr [si+bx]
     cmp eax, -1
     jne vbik
-    mov [highlight_scsiz], 7
+    mov [highlight.scsiz], 7
     call bshighlight
     mov dx, offset unknownmsg
     call printstring
@@ -3573,14 +3710,14 @@ nextitem:
 vbik:
     call word ptr [di+2]
 dtsc:
-    add [highlight_ofs], sizeof dword
+    add [highlight.ofs], sizeof dword
     call printcrlf
     add di, 2*2
     pop cx
     loop nextitem
     ret
 printhex_hl::
-    mov [highlight_scsiz], 8
+    mov [highlight.scsiz], 8
     call bshighlight
     mov dl, 8
     call rendernumhex
@@ -3594,10 +3731,6 @@ fsinfoviewmode endp
 ;---     bx=start entry
 
 lfnview proc
-
-    mov ax, COL_DEFAULT shl 8 or SPACE
-    mov cl, 78
-    call fillcell
 
     mov dx, CStr('LFN entry "')
     call printstring
@@ -3636,7 +3769,7 @@ nextti:
     mov cl, [bp+1] 
     mov ax, bx
     add ax, di
-    mov [highlight_ofs], ax
+    mov [highlight.ofs], ax
     add di, si
     add di, bx
     push bx
@@ -3662,9 +3795,9 @@ namedone:
     sub ax, dx
     mov ah, RIGHTCOL-1
     sub ah, al
-    mov [highlight_scsiz], al
+    mov [highlight.scsiz], al
     shl al, 1
-    mov [highlight_size], al
+    mov [highlight.siz_], al
     jz noprint
     sub ah, [scrn_col]
     jnc @F
@@ -3734,9 +3867,11 @@ printeol:
     mov dl, '"'
     call printchar
     call printcrlf
+if 0
     mov ax, COL_DEFAULT shl 8 or SPACE
     mov cl, 78
     call fillcell
+endif
     mov [scrn_col], 11
     mov dl, '"'
     call printchar
@@ -4019,39 +4154,51 @@ noundeleteadjust:
 
 ;--- attribute value of 0Fh (R/O+hidden+system+volume) indicates a LFN entry
 
+    call clearentryview
+
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
     jz lfnview
+    cmp byte ptr [si+bx],0
+    jz done
 
-    mov cl, 78
-    mov ax, COL_DEFAULT shl 8 or SPACE
-    call fillcell
     mov [scrn_col], 5
-
     mov dx, CStr("Name: ")
     call printstring
     mov di, offset sprintfbuffer
+    mov dx, di
     push ds
     pop es
     push si
     add si, bx
     mov cx, 8
     rep movsb
-    mov cl, 7
+    mov cl, 8
 @@:
     dec di
     cmp byte ptr [di], SPACE
     loopz @B
     inc di
-    cmp word ptr [si],"  "
+    mov cl,3
+@@:
+    lodsb
+    cmp al, SPACE
+    loopz @B
     jz @F
+    dec si
+    inc cx
     mov al,'.'
     stosb
-@@:
-    mov cl, 3
     rep movsb
+@@:
     pop si
     mov [di], cl
-    mov dx, offset sprintfbuffer
+
+    mov [highlight], 0B0000h
+    add [highlight.ofs], bx
+    mov ax, di
+    sub ax, dx
+    mov [highlight.scsiz], al
+    call bshighlight
     call printstring
 
     cmp byte ptr [si+bx],0E5h
@@ -4061,10 +4208,6 @@ noundeleteadjust:
     call printstring
 @@:
     call printcrlf
-
-    mov cl, 78
-    mov ax, COL_DEFAULT shl 8 or SPACE
-    call fillcell
 
     inc [scrn_col]
 
@@ -4093,7 +4236,7 @@ noundeleteadjust:
     call printchar
 
     mov [highlight], 0101000Dh
-    add [highlight_ofs], bx
+    add [highlight.ofs], bx
     call bshighlight
 
     movzx ax, byte ptr [si+bx+0Dh]
@@ -4117,7 +4260,7 @@ noundeleteadjust:
     call printstring
 
     mov [highlight], 0601000Bh
-    add [highlight_ofs], bx
+    add [highlight.ofs], bx
     call bshighlight
 
     mov al, byte ptr [si+bx+DIR_ATTRIBUTES]
@@ -4142,10 +4285,6 @@ noundeleteadjust:
 
     call printcrlf
 
-    mov cl, 78
-    mov ax, COL_DEFAULT shl 8 or SPACE
-    call fillcell
-
 ;--- print last access date
 
     mov dx, offset accessedmsg    ; last accessed
@@ -4164,7 +4303,7 @@ noundeleteadjust:
     call printstring
 
     mov [highlight], 03020014h
-    add [highlight_ofs], bx
+    add [highlight.ofs], bx
     call bshighlight
 
     mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
@@ -4172,8 +4311,8 @@ noundeleteadjust:
     call rendernumhex
     call printstring
 
-    mov [highlight_scsiz], 4
-    add [highlight_ofs], 6
+    mov [highlight.scsiz], 4
+    add [highlight.ofs], 6
     call bshighlight
 
     mov dl, 4
@@ -4185,10 +4324,6 @@ noundeleteadjust:
     call printcrlf
 
 ;--- print last modified date
-
-    mov cl, 78
-    mov ax, COL_DEFAULT shl 8 or SPACE
-    call fillcell
 
     mov dx, offset modifiedmsg    ; last modified
     call printstring
@@ -4209,10 +4344,21 @@ noundeleteadjust:
     call printstring
 
     mov [highlight], 0A04001Ch
-    add [highlight_ofs], bx
+    add [highlight.ofs], bx
     mov eax, dword ptr [si+bx+DIR_FILESIZE]
     call printvalue_hl
+done:
+    ret
+
+clearentryview:
+    mov cx, 4 shl 8 or 78
+    mov ax, COL_DEFAULT shl 8 or SPACE
 @@:
+    call fillcell
+    inc [scrn_row]
+    dec ch
+    jnz @B
+    sub [scrn_row], 4
     ret
 
 ;-------------------------------------------------------
@@ -4267,7 +4413,7 @@ loopline2:
     add si, CLBYTES_PER_ROW
     add bx, CLBYTES_PER_ROW
     add edi, CLUSTER_PER_ROW
-    add [highlight_ofs], CLBYTES_PER_ROW
+    add [highlight.ofs], CLBYTES_PER_ROW
     cmp bx, 12 * CLBYTES_PER_ROW
     jne loopline2
 donesetline2:
@@ -4277,7 +4423,7 @@ nextrow:
     mov cl, CLUSTER_PER_ROW
 nextcol:
     call bshighlight
-    add [highlight_ofs], 4
+    add [highlight.ofs], 4
 
     lodsd
 
@@ -4337,7 +4483,7 @@ loopline:
     add si, CLBYTES_PER_ROW
     add bx, CLBYTES_PER_ROW
     add edi, CLUSTER_PER_ROW
-    add [highlight_ofs], CLBYTES_PER_ROW
+    add [highlight.ofs], CLBYTES_PER_ROW
     cmp bx, 15 * CLBYTES_PER_ROW
     jne loopline
 donesetline:
@@ -4348,7 +4494,7 @@ nextrow:
 nextcol:
 
     call bshighlight
-    add [highlight_ofs], 2
+    add [highlight.ofs], 2
 
     lodsw
 
@@ -4406,7 +4552,7 @@ buf12fix:                               ; fat12 entries, since an entire
     sub bx, CLBYTES_PER_ROW
     add ax, CLBYTES_PER_ROW
     add di, CLUSTER_PER_ROW
-    add [highlight_ofs], CLBYTES_PER_ROW
+    add [highlight.ofs], CLBYTES_PER_ROW
     cmp ax, 300
     jbe buf12fix
 donebuffix:
@@ -4447,7 +4593,7 @@ endif
 
     cmp dl, 0
     je fat12loop
-    dec [highlight_ofs]
+    dec [highlight.ofs]
     dec si
     cmp dl, 1
     je ssection
@@ -4463,7 +4609,7 @@ ssection:
     rol ax, 4
     call print12bits
     jnc done
-    inc [highlight_ofs]
+    inc [highlight.ofs]
     jmp fat12loop
 done:
     mov cl, 4
@@ -4473,7 +4619,7 @@ print12bits:
     mov dl, SPACE
     call printchar
     call bshighlight
-    inc [highlight_ofs]
+    inc [highlight.ofs]
     mov dx, CStr("---")
     cmp di, word ptr [dwLastCluster]
     ja @F
@@ -4526,7 +4672,7 @@ nextpart:
     call printstring
 
     mov word ptr [highlight+2], 0201h
-    mov [highlight_ofs], bx
+    mov [highlight.ofs], bx
     call bshighlight
 
     mov al, byte ptr [si+bx]
@@ -4558,8 +4704,8 @@ donepart:
     call printstring
 
     mov word ptr [highlight+2], 0201h
-    mov [highlight_ofs], bx
-    add [highlight_ofs], 4
+    mov [highlight.ofs], bx
+    add [highlight.ofs], 4
 
     call bshighlight
 
@@ -4662,10 +4808,10 @@ dontshowpart:
     mov dx, offset startlba
     call printstring
 
-    mov [highlight_ofs], bx
-    add [highlight_ofs], 4
+    mov [highlight.ofs], bx
+    add [highlight.ofs], 4
     mov eax, dword ptr [si+bx+04h]
-    mov [highlight_size], 4
+    mov [highlight.siz_], 4
     call printvalue_hl
 
     call mbrcommon
@@ -4673,10 +4819,10 @@ dontshowpart:
     mov dx, offset psize
     call printstring
 
-    mov [highlight_ofs], bx
-    add [highlight_ofs], 8
+    mov [highlight.ofs], bx
+    add [highlight.ofs], 8
     mov eax, dword ptr [si+bx+08h]
-    mov [highlight_size], 4
+    mov [highlight.siz_], 4
     call printvalue_hl
 
     inc cx
@@ -4825,8 +4971,8 @@ nextitem:
     mov dx, CStr("Signature")
     call printstring
     call spaceandcolon
-    mov word ptr [highlight_ofs],1FEh
-    mov word ptr [highlight_size],0402h
+    mov word ptr [highlight.ofs],1FEh
+    mov word ptr [highlight.siz_],0402h
     call bshighlight
     mov dl,4
     mov ax, [si+1FEh]
@@ -4856,8 +5002,8 @@ basicbs:
     jnz @F
     movzx eax, al
 @@:
-    mov word ptr [highlight_ofs], bx
-    mov word ptr [highlight_size], cx
+    mov word ptr [highlight.ofs], bx
+    mov word ptr [highlight.siz_], cx
     call printstring
     call spaceandcolon
     call printvalue_hl
@@ -4953,8 +5099,8 @@ basicbs:
     jnz @F
     movzx eax, al
 @@:
-    mov word ptr [highlight_ofs], bx
-    mov word ptr [highlight_size], cx
+    mov word ptr [highlight.ofs], bx
+    mov word ptr [highlight.siz_], cx
     call printstring
     call spaceandcolon
     call printvalue_hl
@@ -5040,8 +5186,8 @@ basicbs:
     jnz @F
     movzx eax, al
 @@:
-    mov word ptr [highlight_ofs], bx
-    mov word ptr [highlight_size], cx
+    mov word ptr [highlight.ofs], bx
+    mov word ptr [highlight.siz_], cx
     call printstring
     call spaceandcolon
     call printvalue_hl
@@ -5057,14 +5203,14 @@ printcrlf:
 
 ;--- print a value and check if it should be highlighted
 ;--- in: eax=value to display
-;---     [highlight_ofs]
+;---     [highlight.ofs]
 
 printvalue_hl:  
     call rendernumdec
     push ax
     mov ax, offset valuebuffer+10  ;calculate string size
     sub ax, dx
-    mov [highlight_scsiz], al
+    mov [highlight.scsiz], al
     pop ax
     call bshighlight
     jmp printstring
@@ -5082,9 +5228,9 @@ bshighlight proc
 ;--- check if current spot matches highlight.ofs
 
     mov al, COL_DEFAULT
-    mov cl, [highlight_scsiz]    ;no of chars on screen to highlight
-    movzx bx, [highlight_size]
-    mov dx, [highlight_ofs]
+    mov cl, [highlight.scsiz]    ;no of chars on screen to highlight
+    movzx bx, [highlight.siz_]
+    mov dx, [highlight.ofs]
     cmp [spot], dx
     jb nextcell
     add dx, bx
@@ -5237,13 +5383,12 @@ setlogvars proc
     mov ax, 7302h                ; fix: check if this call needs translation in WinXP
     int 21h
     mov dl, RWF_OLDLOGICAL
-    jc donesetlog
+    jc olddpb
     cmp ax,7300h
-    jz donesetlog
+    jz olddpb
     mov ax, [di+4]
-    cmp ax, sizeof sectbuffer    ; refuse sector sizes beyond 4 kB
-    ja donesetlog
-    mov [wBps], ax
+    call setBps
+    jc donesetlog
 
 ;--- if dword [di+35h] != 0, it's FAT32
 
@@ -5278,7 +5423,29 @@ dontlock:
 donesetlog:
     mov [ioreq.rwfunc], dl
     ret
+olddpb:
+    mov dl, [ioreq.bDrive]
+    inc dl
+    mov ah, 32h         ; preFAT32 getdpb function
+    int 21h
+    mov dl, RWF_OLDLOGICAL
+    cmp al, 00
+    jnz donesetlog
+    mov ax, [bx+2]
+    push ss
+    pop ds
+    call setBps
+    jmp donesetlog
+
 setlogvars endp
+
+setBps:
+    cmp ax, sizeof sectbuffer + 1 ; refuse sector sizes beyond 4 kB
+    cmc
+    jc @F
+    mov [wBps], ax
+@@:
+    ret
 
 ;--- set parameters for physical drive access
 ;--- in:  [ioreq.bDrive]
@@ -5322,9 +5489,8 @@ else
 endif
     mov [dwDataend], eax
     mov ax, [si].DINFO1.bps
-    cmp ax, sizeof sectbuffer
-    ja secsizeerror 
-    mov [wBps], ax
+    call setBps
+    jc secsizeerror 
     mov ax,word ptr [si].DINFO1.cyls
     mov bl,byte ptr [si].DINFO1.heads
     mov cl,byte ptr [si].DINFO1.secs
@@ -5381,12 +5547,12 @@ setvariables proc
     mov [filesys], FS_UNDEFINED         ; reset FAT type
 
     cmp [ioreq.drvtype], DT_CDROM
-    je setcdvar
-
+    je cdsetvars
     cmp [ioreq.drvtype], DT_FILE        ; file access?
-    je setffparam
+    je filesetvars
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne logicalsetvars
+
     push ds                             ; sets variables p1-p4
     pop es                              ; for jumping to partitions
     mov di, offset partitions           ; on physical drives
@@ -5397,7 +5563,8 @@ setvariables proc
     add si, 0Ch
     loop @B
     ret
-setcdvar:
+
+cdsetvars:
     mov bx, 50h
     cmp [ioreq.rwfunc], RWF_CDCOOKED
     je @F
@@ -5409,7 +5576,6 @@ setcdvar:
     ret
 
 logicalsetvars:
-
     xor eax, eax
     mov [dwRootCluster], eax                  ; default root cluster = 0
 
@@ -5429,6 +5595,13 @@ logicalsetvars:
     cmp eax, "   T"
     jz isexfat
 assumefat:
+
+    cmp [ioreq.rwfunc], RWF_FILE              ; image file?
+    jnz @F
+    mov ax, [si].BPB.bytes_sector             ; then use sector size from boot sector ( if it's a real
+    call setBps                               ; physical/logical drive, we already got it )
+    jc secsizeerror
+@@:
     mov al, [si].BPB.sectors_cluster          ; sectors per cluster
     mov [bSpC], al
 
@@ -5461,8 +5634,10 @@ assumefat:
     mov eax, [si].BPB.sectors_fat1632
 @@:
     dec eax
+    cmp [ioreq.rwfunc], RWF_FILE              ; don't set dwDataend if image file
+    jz @F
     mov [dwDataend], eax
-
+@@:
     sub eax, [dwSpF]
     cmp [bFats], 2
     jb skipsub2
@@ -5578,12 +5753,15 @@ endif
     mov [bFats], al
     mov eax, [si].EXFAT.dwRootCl
     mov [dwRootCluster], eax
+
+;--- here we use bytes/sector from boot sector - but this should actually
+;--- be done only if the device is an image file ( rwfunc == RWF_FILE )
     mov ax, 1
     mov cl, [si].EXFAT.bBpSShift 
     shl ax, cl
-    cmp ax, sizeof sectbuffer
-    ja secsizeerror
-    mov [wBps], ax
+    call setBps
+    jc secsizeerror
+
     mov al, 1
     mov cl, [si].EXFAT.bSpCShift 
     mov [bSpCshift], cl
@@ -5607,80 +5785,19 @@ secsizeerror:
     mov dx, offset secsizetoobig
     call printerror
     ret
-setffparam:
+
+filesetvars:
     mov eax, [dwRwfilesize]
-    shr eax, 9                          ; \Fix/ ?
-    jz donesetff
+    shr eax, 9                    ; bytes/sector is 512 as long as image file is "physical"
+    jz @F
     dec eax
-donesetff:
+@@:
     sub eax, [dwDrivestart]
     mov [dwDataend], eax
     ret
 
 setvariables endp
 
-;--- dump cd to .iso-file, partition to image-file
-
-dumpiso proc
-
-    mov edx, [dwDataend]
-    inc edx
-    mov [dwValue], edx
-
-    movzx eax, [wBps]             ; "value" into the number of 512-byte
-    mul edx
-    and edx, edx                  ; more than 4 GB to write?
-    jne toobig
-
-    call srcommon
-
-    call createfile
-    jc done
-    cmp [ioreq.drvtype], DT_CDROM
-    jne drivedump
-
-    push ds
-    pop es
-    mov di, offset sectbuffer
-    mov cx, [wBps]
-    mov al, 0
-    rep stosb
-
-    mov cx, [wBps]
-    mov dx, offset sectbuffer
-    mov bx, [wFilehandle]
-    mov si, 10h
-;--- write to file (16 blank sectors)
-;--- to the beginning of the iso
-;--- since we can't read the first 10 sectors on a CD
-isoloop:
-    mov ah, 40h
-    int 21h
-    jnc @F
-    mov dx, offset filewriteerr
-    call printerror
-    stc 
-    jmp donedump
-@@:
-    dec si
-    jnz isoloop
-drivedump:
-    xor eax, eax
-    xor di, di
-    call writefile
-donedump:
-    pushf
-    call closefile
-    popf
-    jc done
-    mov eax, [dwDataend]
-    inc eax
-    call sectorswritten2file
-    mov [menustackidx], 0               ; leave file option menu, back to main menu
-done:
-    ret
-
-dumpiso endp
 ;-------------------------------------------------------
 
 ;*******************************************************
@@ -5692,21 +5809,21 @@ include FATFS.INC
 printchs proc
 
     call printstring
-    mov [highlight_ofs], bx
+    mov [highlight.ofs], bx
 
     movzx eax, byte ptr [si+bx+3]
     mov ah, byte ptr [si+bx+2]
     shr ah, 6
-    add [highlight_ofs], 2
-    mov [highlight_size], 2
+    add [highlight.ofs], 2
+    mov [highlight.siz_], 2
     call printvalue_hl
 
     mov dl, '/'
     call printchar
 
     movzx eax, byte ptr [si+bx+1]
-    dec [highlight_ofs]
-    mov [highlight_size], 1
+    dec [highlight.ofs]
+    mov [highlight.siz_], 1
     call printvalue_hl
 
     mov dl, '/'
@@ -5714,7 +5831,7 @@ printchs proc
 
     movzx eax, byte ptr [si+bx+2]
     and al, 111111b
-    inc [highlight_ofs]
+    inc [highlight.ofs]
     jmp printvalue_hl
 
 printchs endp
@@ -6283,8 +6400,6 @@ dispclust:
     mov dl, SPACE
     call printchar
 
-;    cmp [ioreq.drvtype], DT_LOGICAL
-;    jne abortdc
     test [filesys], FS_FATXX
     je abortdc
 
@@ -7012,12 +7127,15 @@ file_access:
     cmp eax, edx
     ja fa_error
 
-    shl eax, 9                        ; always "sector size" 512 for files
-
+;    shl eax, 9                        ; always "sector size" 512 for files
+    movzx edx, [wBps]
+    mul edx
+if 0                                  ; not needed, since dwDataend tells the file size
     mov edx, [dwRwfilesize]
     sub edx, 512
     cmp eax, edx
     ja fa_error
+endif
 
     mov bx, [rwhandle]
     mov dx, ax                        ; offset into CX:DX
@@ -7031,9 +7149,9 @@ file_access:
     jne @F
     mov ah, 40h
 @@:
+    mov cx, [wBps]
+    imul cx, [dapacket.wNumSec]
     mov bx, [rwhandle]
-    mov cx, [dapacket.wNumSec]        ; get no of sectors to read/write
-    shl cx, 9
     int 21h
     ret
 fa_error:
@@ -7377,7 +7495,7 @@ rendernumdec2 endp
 
 printdate proc
     mov ax, word ptr [si+bx]
-    mov [highlight_ofs], bx
+    mov [highlight.ofs], bx
     mov word ptr [highlight+2], 0202h
     call bshighlight
     and eax, 0FFFFh
@@ -7426,7 +7544,7 @@ printdate endp
 
 printtime proc
     mov ax, word ptr [si+bx]
-    mov [highlight_ofs], bx
+    mov [highlight.ofs], bx
     mov word ptr [highlight+2], 0201h
     call bshighlight
 
@@ -7442,7 +7560,7 @@ hourok:
     call printstring
     mov dl, ':'
     call printchar
-    dec [highlight_ofs]
+    dec [highlight.ofs]
     inc byte ptr [highlight+2]
     call bshighlight
     pop ax
@@ -7466,7 +7584,7 @@ minok:
     cmp ax, 15h
     pop ax
     je nodec
-    dec [highlight_ofs]
+    dec [highlight.ofs]
     jmp dobshl
 nodec:
     dec byte ptr [highlight+2]
@@ -7613,71 +7731,22 @@ else
     mov ah, 2           ;set cursor pos to bottom line
     int 10h
 endif
-
+if ?PM
+    mov bl, 24h
+    mov dx, word ptr [old24h+0]
+    mov cx, word ptr [old24h+2]
+    mov ax, 0205h
+    int 31h
+else
     mov ax, 2524h
     lds dx, [old24h]
     int 21h
+endif
     mov ax, 4c00h
     int 21h
 doret:
     ret
 quit endp
-
-;--- menu File, save sectors, bs, fat, ...
-;--- "save chain" isn't handled here, it's in savechain()
-;--- "save partition" is handled by dumpiso() ( why? )
-
-savedata proc
-;
-; IN:   dd:[dwValue]    number of sectors to save
-;       eax             starting sector
-;
-; OUT:  disk is read and sectors are dumped to [wFilehandle]
-;       dw:[wFilehandle] handle of file to write to
-;
-
-    mov edx, eax
-    add edx, [dwValue]
-    jc invalidperror
-    dec edx
-    cmp edx, [dwDataend]
-    ja invalidperror
-
-    push eax
-    mov edx, [dwValue]            ; the plan here is to convert
-    movzx eax, [wBps]             ; "value" into the number of 512-byte
-    mul edx
-    pop eax
-    and edx, edx                  ; more than 4 GB to write?
-    jne toobig
-
-    push ax
-    call createfile
-    pop ax
-    jnc dosavedata
-donesavedata:
-    ret
-dosavedata:
-    xor di, di
-    push [dwValue]
-    call writefile
-    pushf
-    call closefile
-    popf
-    pop eax
-    jc donesavedata
-    mov [menustackidx], 0        ; if file op was successful, go back to main menu
-    jmp sectorswritten2file
-
-toobig::
-    mov dx, offset filetoobigmsg
-    jmp printerror
-
-invalidperror::
-    mov dx, offset invalidpmsg   ;"invalid sector range"
-    jmp printerror
-
-savedata endp
 
 ;--- print menu at bottom line.
 ;--- menu to print is last item on menu stack.

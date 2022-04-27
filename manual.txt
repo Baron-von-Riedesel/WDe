@@ -78,13 +78,13 @@ WDe User Manual
     Ctrl+Home     - Jump to first sector on drive
     Ctrl+Up       - Pop sector from stack and jump to it
 
-    Keys in FAT of exFAT partitions:
+    Keys in FAT area of FAT partitions:
 
     Ctrl+Right    - Jump to linked FAT entry (successor)
     Ctrl+Left     - Recurse to find linking FAT entry (predecessor)
     Enter         - Jump to current entry's data
 
-    Keys in Data area of exFAT partitions:
+    Keys in Data area of FAT partitions:
 
     Ctrl+Right    - Jump to linked cluster in FAT (successor)
     Ctrl+Enter    - Jump to FAT entry for this cluster
@@ -419,12 +419,12 @@ WDe User Manual
       whatever it was searching for (using the "Find" functions) was not
       found.
 
-    5.2 - "No more free space at offset X; T(runcate) or A(bort)?"
+    5.2 - "No more free space at offset X; T(runcate) or C(ancel)?"
 
       This is an UnDelete error; it means that there are not enough free
       contiguous clusters (anymore) where the file was originally stored.
       Pressing 'T' will undelete the file, but truncate it to the size
-      as displayed; 'A' will leave everything as it is.
+      as displayed; 'C' will leave everything as it is.
 
     5.3 - "File Too Small"
 

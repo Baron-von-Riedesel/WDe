@@ -36,9 +36,7 @@ IRETS ends
 
 oldint13 dd 0
 oldint2f dd 0
-if ?TR217302 or ?LFN
 oldint21 dd 0
-endif
 
     .code
 
@@ -86,10 +84,11 @@ is48:
     iret
 myint13 endp
 
-;--- int 21h interception. This is for NTVDM only
+;--- int 21h interception
 
-if ?TR217302 or ?LFN
 myint21 proc
+    cmp ax, 7305h
+    jz is7305
  if ?LFN
     cmp ah, 71h
     jz is71
@@ -99,6 +98,8 @@ myint21 proc
     jz is7302
  endif
     jmp dword ptr [oldint21]
+is7305:
+    mov [bx].DISKIO.buffseg, DGROUP  ; set segment of buffer
 is71:
 is7302:
     pushd 0
@@ -112,16 +113,20 @@ is7302:
     mov [di].RMCS.rDS, DGROUP
     mov bx, 0021h
     xor cx, cx
+    push ax
     mov ax, 0300h
     int 31h
     mov al, byte ptr [di].RMCS.rFlags
     mov byte ptr [di+sizeof RMCS].IRETS.wFlags, al
+    pop ax
+    cmp ax, 7305h
     popad
+    jnz @F
+    mov [bx].DISKIO.buffseg, ds
+@@:
     add sp, sizeof RMCS-32
     iret
 myint21 endp
-
-endif
 
 ;--- translate int 2Fh, ax=1510h (CD-ROM access)
 ;--- here also the segment part of the transfer buffer is to be set.
@@ -194,8 +199,8 @@ if ?VDD
     cmp [hVdd], -1                ; wdevdd.dll can handle protected-mode
     jnz skip132f
 endif
-    mov bl,13h                    ; intercept int 13h
-    mov ax,0204h
+    mov bl, 13h                   ; intercept int 13h
+    mov ax, 204h
     int 31h
     mov word ptr [oldint13+0], dx
     mov word ptr [oldint13+2], cx
@@ -204,7 +209,7 @@ endif
     mov al, 5
     int 31h
 
-    mov bl,2Fh                    ; intercept int 2Fh
+    mov bl, 2Fh                   ; intercept int 2Fh
     mov al, 4
     int 31h
     mov word ptr [oldint2f+0], dx
@@ -214,13 +219,8 @@ endif
     mov al, 5
     int 31h
 skip132f:
-if ?TR217302 or ?LFN
-    mov ax, 3306h                 ; running in NTVDM?
-    int 21h
-    cmp bx, 3205h
-    jnz @F
-    mov bl,21h                    ; intercept int 21h
-    mov al, 4
+    mov bl, 21h                   ; intercept int 21h
+    mov ax, 204h
     int 31h
     mov word ptr [oldint21+0], dx
     mov word ptr [oldint21+2], cx
@@ -228,8 +228,6 @@ if ?TR217302 or ?LFN
     mov dx, offset myint21
     mov al, 5
     int 31h
-@@:
-endif
 done:
     ret
 error:

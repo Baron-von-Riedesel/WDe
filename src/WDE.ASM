@@ -165,6 +165,12 @@ endif
 
 ; fat directory data offsets
         DIR_ATTRIBUTES   EQU 0Bh
+        DIR_CREATEMSEC   EQU 0Dh
+        DIR_CREATETIME   EQU 0Eh
+        DIR_CREATEDATE   EQU 10h
+        DIR_LASTACCDATE  EQU 12h
+        DIR_LASTUPDTIME  EQU 16h
+        DIR_LASTUPDDATE  EQU 18h
         DIR_FILESIZE     EQU 1Ch
         DIR_CLUST_LOW    EQU 1Ah
         DIR_CLUST_HIGH   EQU 14h
@@ -1523,13 +1529,11 @@ if ?ALTKEYS
 endif
     db "Enter         - If in directory, jump to start cluster of entry",0
     db 0    
-    db "Note that on exFAT disks a file may have no associated FAT chain;",0
-    db "in such cases the file is stored contiguous. Ctrl+Right can't work",0
-    db "then."
+    db "On exFAT disks, a file may have no associated FAT chain; in such",0
+    db "cases the file is stored contiguous and Ctrl+Right can't work.",0
 if ?ALTKEYS
-    db       " Alt+Right will always work, but can't detect a chain's end."
+    db "Alt+Right is no real substitute, it won't detect the chain's end.",0
 endif
-    db 0
     db -1
 
     .code
@@ -3716,14 +3720,17 @@ dtsc:
     pop cx
     loop nextitem
     ret
-printhex_hl::
-    mov [highlight.scsiz], 8
-    call bshighlight
-    mov dl, 8
-    call rendernumhex
-    jmp printstring
 
 fsinfoviewmode endp
+
+;--- print an 8 digit hex number in eax with optional highlight
+
+printhex_hl:
+    mov dl, 8
+    mov [highlight.scsiz], dl
+    call rendernumhex
+    call bshighlight
+    jmp printstring
 
 ;--- display directory LFN entry
 ;--- actually this may span multiple entries
@@ -4047,6 +4054,33 @@ file:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("file, attributes: %X [%s]"), [si+bx].EXFDIRPF.attributes, di
     call printstring
+if 1
+    push [scrn_xy]
+    inc [scrn_row]
+    mov [scrn_col], 1
+
+    mov dx, CStr("created: ")
+    call printstring
+    mov dx, EXFDIRPF.dwCreated + 2
+    mov ax, word ptr [si+bx].EXFDIRPF.dwCreated + 2
+    call printdate
+    xor dx, dx
+    mov cx, EXFDIRPF.dwCreated
+    mov ax, word ptr [si+bx].EXFDIRPF.dwCreated
+    call printtime
+
+    mov dx, CStr(", modified: ")
+    call printstring
+    mov dx, EXFDIRPF.dwModified + 2
+    mov ax, word ptr [si+bx].EXFDIRPF.dwModified + 2
+    call printdate
+    xor dx, dx
+    mov cx, EXFDIRPF.dwModified
+    mov ax, word ptr [si+bx].EXFDIRPF.dwModified
+    call printtime
+
+    pop [scrn_xy]
+endif
     ret
 
 dispcluster:
@@ -4216,30 +4250,29 @@ noundeleteadjust:
     mov dx, offset createdmsg
     call printstring
 
-    push bx
-    add bx, 10h
+    mov ax, [si+bx+DIR_CREATEDATE]
+    mov dx, DIR_CREATEDATE
     call printdate
 
 ;--- minute+second
 
-    movzx dx, byte ptr [si+bx-03h]
+    movzx dx, byte ptr [si+bx+DIR_CREATEMSEC]
     cmp dl, 199
     jb @F
     mov dl, 199
 @@:
-
-    sub bx, 02h
+    mov ax, [si+bx+DIR_CREATETIME]
+    mov cx, DIR_CREATETIME
     call printtime
-    pop bx
 
     mov dl, '.'
     call printchar
 
-    mov [highlight], 0101000Dh
+    mov [highlight], (101h shl 16) or DIR_CREATEMSEC
     add [highlight.ofs], bx
     call bshighlight
 
-    movzx ax, byte ptr [si+bx+0Dh]
+    movzx ax, byte ptr [si+bx+DIR_CREATEMSEC]
     cmp al, 199
     jbe @F
     mov al, 199
@@ -4259,7 +4292,7 @@ noundeleteadjust:
     mov dx, offset attributesmsg
     call printstring
 
-    mov [highlight], 0601000Bh
+    mov [highlight], ( 601h shl 16) or DIR_ATTRIBUTES
     add [highlight.ofs], bx
     call bshighlight
 
@@ -4290,10 +4323,9 @@ noundeleteadjust:
     mov dx, offset accessedmsg    ; last accessed
     call printstring
 
-    push bx
-    add bx, 12h
+    mov ax, [si+bx+DIR_LASTACCDATE]
+    mov dx, DIR_LASTACCDATE
     call printdate
-    pop bx
 
 ;--- print cluster
 
@@ -4302,7 +4334,7 @@ noundeleteadjust:
     mov dx, offset szCluster
     call printstring
 
-    mov [highlight], 03020014h
+    mov [highlight], (0302h shl 16) or DIR_CLUST_HIGH
     add [highlight.ofs], bx
     call bshighlight
 
@@ -4312,14 +4344,13 @@ noundeleteadjust:
     call printstring
 
     mov [highlight.scsiz], 4
-    add [highlight.ofs], 6
+    add [highlight.ofs], (DIR_CLUST_LOW - DIR_CLUST_HIGH)
     call bshighlight
 
     mov dl, 4
     mov ax, word ptr [si+bx+DIR_CLUST_LOW]
     call rendernumhex
     call printstring
-
 
     call printcrlf
 
@@ -4328,13 +4359,13 @@ noundeleteadjust:
     mov dx, offset modifiedmsg    ; last modified
     call printstring
 
-    push bx
-    add bx, 18h
+    mov ax, [si+bx+DIR_LASTUPDDATE]
+    mov dx, DIR_LASTUPDDATE
     call printdate
     xor dx, dx
-    sub bx, 02h
+    mov ax, [si+bx+DIR_LASTUPDTIME]
+    mov cx, DIR_LASTUPDTIME
     call printtime
-    pop bx
 
 ;--- print size
 
@@ -4343,7 +4374,7 @@ noundeleteadjust:
     mov dx, offset sizemsg
     call printstring
 
-    mov [highlight], 0A04001Ch
+    mov [highlight], (0A04h shl 16) or DIR_FILESIZE
     add [highlight.ofs], bx
     mov eax, dword ptr [si+bx+DIR_FILESIZE]
     call printvalue_hl
@@ -7490,89 +7521,105 @@ rendernumdec2 proc
 rendernumdec2 endp
 
 ;--- print date
-;--- in: si = sector buffer
-;---     bx = offset in directory entry
+;--- in: ax = date
+;---     dx = offset
+;---     bx = dir entry start spot
+;--- it's a "word" date:
+;--- bits 0-4: day
+;--- bits 5-8: month
+;--- bits 9-15: year since 1980
 
 printdate proc
-    mov ax, word ptr [si+bx]
+    movzx eax, ax
     mov [highlight.ofs], bx
-    mov word ptr [highlight+2], 0202h
-    call bshighlight
-    and eax, 0FFFFh
+    add [highlight.ofs], dx
+    mov word ptr [highlight.siz_], 0202h
     push ax
     shr ax, 5
     and ax, 1111b
-    jnz monthok1
+    jnz @F
     inc ax
-monthok1:
+@@:
     cmp ax, 12
-    jbe monthok2
+    jbe @F
     mov ax, 12
-monthok2:
+@@:
     call rendernumdec2
-    call printstring
+    call printdatepart
+
     mov dl, '-'
     call printchar
-
-    mov byte ptr [highlight+2], 01h
-    call bshighlight
+    mov [highlight.siz_], 1
     pop ax
     push ax
     and ax, 11111b
-    jnz dayok
+    jnz @F
     inc ax
-dayok:
+@@:
     call rendernumdec2
-    call printstring
+    call printdatepart
+
     mov dl, '-'
     call printchar
-    inc byte ptr [highlight]
-    mov byte ptr [highlight+3], 04h
-    call bshighlight
+    inc byte ptr [highlight.ofs]
+    mov [highlight.scsiz], 4
     pop ax
     shr ax, 9
     add ax, 1980                          ; dates start at 1980
     call rendernumdec
-    call printstring
+    call printdatepart
     inc [scrn_col]
     ret
+
+printdatepart:
+    call bshighlight
+    jmp printstring
+
 printdate endp
 
 ;--- print time
-;--- in: si = sector buffer
-;---     bx = offset in directory entry
+;--- in: ax = time
+;---     cx = offset
+;---     dx = fraction
+;---     bx = start of dir entry offset
+;--- a "word" time:
+;--- bits   0-4: second*2
+;--- bits  5-10: minute
+;--- bits 11-15: hour
 
 printtime proc
-    mov ax, word ptr [si+bx]
+    movzx eax, ax
     mov [highlight.ofs], bx
-    mov word ptr [highlight+2], 0201h
-    call bshighlight
+    add [highlight.ofs], cx
+    mov word ptr [highlight.siz_], 0201h
 
-    and eax, 0FFFFh
     push dx
     push ax
     shr ax, 11
     cmp ax, 23
-    jbe hourok
+    jbe @F
     mov ax, 23
-hourok:
+@@:
     call rendernumdec2
+    call bshighlight
     call printstring
+
     mov dl, ':'
     call printchar
     dec [highlight.ofs]
     inc byte ptr [highlight+2]
-    call bshighlight
     pop ax
     push ax
     shr ax, 5
     and ax, 111111b
     cmp ax, 59
-    jbe minok
+    jbe @F
     mov ax, 59
-minok:
+@@:
     call rendernumdec2
+    call bshighlight
     call printstring
+
     mov dl, ':'
     call printchar
     pop ax
@@ -7589,13 +7636,11 @@ minok:
 nodec:
     dec byte ptr [highlight+2]
 dobshl:
-    call bshighlight
-
     and ax, 11111b
     cmp ax, 29
-    jbe secok
+    jbe @F
     mov ax, 29
-secok:
+@@:
     shl ax, 1
 
     push ax
@@ -7609,11 +7654,11 @@ secok:
     pop ax
     add ax, dx
     cmp ax, 59
-    jbe secok2
+    jbe @F
     mov ax, 59
-secok2:
-
+@@:
     call rendernumdec2
+    call bshighlight
     jmp printstring
 
 printtime endp

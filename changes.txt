@@ -12,7 +12,8 @@ WDe V0.50pre2 [--.--.2022]
   - fixed: in v0.50pre, the last cluster of exFAT was not accessible.
   - in FAT view, entries beyond last cluster# are displayed with "-".
   - with image files, bytes/sector are no longer fixed to 512.
-  - exFAT primary file entries: created & modified timestamps are displayed.
+  - exFAT primary file entries: created & modified timestamps displayed in view.
+  - exFAT file stream entries: 64-bit file size fully displayed in view.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

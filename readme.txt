@@ -51,12 +51,12 @@
   The source can be found at https://github.com/Baron-von-Riedesel/WDe.
 
    The build tools will also create wdex.com, a version of WDe that runs
-  in protected-mode as 16-bit DPMI client. There is currently no benefit in
-  using this binary, it may even be slightly slower than wde.com. However,
-  since protected-mode offers access to huge amounts of memory, it may allow
-  to implement things that the real-mode wde.com can't efficiently do, for
-  example, read in the whole FAT ( or directory structure ) of a drive and
-  thus speed up certain functions significantly.
+  in protected-mode as 16-bit DPMI client. There is currently no real benefit
+  using this binary. However, since protected-mode offers access to huge
+  amounts of memory, it may allow to implement things that the real-mode
+  WDe can't efficiently accomplish, for example, read in the whole FAT
+  ( or directory structure ) of a drive and thus speed up certain functions
+  considerably.
 
 
   5. License

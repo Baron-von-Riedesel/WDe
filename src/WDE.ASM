@@ -169,11 +169,11 @@ endif
         DIR_CREATETIME   EQU 0Eh
         DIR_CREATEDATE   EQU 10h
         DIR_LASTACCDATE  EQU 12h
+        DIR_CLUST_HIGH   EQU 14h
         DIR_LASTUPDTIME  EQU 16h
         DIR_LASTUPDDATE  EQU 18h
-        DIR_FILESIZE     EQU 1Ch
         DIR_CLUST_LOW    EQU 1Ah
-        DIR_CLUST_HIGH   EQU 14h
+        DIR_FILESIZE     EQU 1Ch
 
 ; ascii
 ;        BACKSPACE_KEY    EQU 8
@@ -3690,16 +3690,17 @@ fsinfoviewmode proc
     mov [scrn_xy], VIEWROW * 100h + 1
 
     call bufferinsi
-    mov [highlight], 0A0401E8h
+    mov bx, 01E8h
+    mov [highlight.siz_], 4
     mov di, offset fifields
     mov cx, numfifields
 nextitem: 
     push cx
-    mov dx, [di]
+    mov dx, [di+0]
     call printstring
-    mov bx, [highlight.ofs]
 ;   dec bx
 
+    xor dx, dx
     mov eax, dword ptr [si+bx]
     cmp eax, -1
     jne vbik
@@ -3714,7 +3715,7 @@ nextitem:
 vbik:
     call word ptr [di+2]
 dtsc:
-    add [highlight.ofs], sizeof dword
+    add bx, sizeof dword
     call printcrlf
     add di, 2*2
     pop cx
@@ -3723,9 +3724,17 @@ dtsc:
 
 fsinfoviewmode endp
 
-;--- print an 8 digit hex number in eax with optional highlight
+;--- print an 8 digit hex number
+;--- si=buffer
+;--- bx=entry
+;--- dx=offset
 
 printhex_hl:
+    push bx
+    add bx, dx
+    mov eax, [si+bx]
+    mov [highlight.ofs], bx
+    pop bx
     mov dl, 8
     mov [highlight.scsiz], dl
     call rendernumhex
@@ -4048,13 +4057,11 @@ vollabel:
     call printstring
     ret
 file:
-    mov dx, [si+bx].EXFDIRPF.attributes
-    mov di, offset valuebuffer
-    call renderattributes
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("file, attributes: %X [%s]"), [si+bx].EXFDIRPF.attributes, di
+    mov dx, CStr("file, attributes: ")
     call printstring
-if 1
+    mov dx, EXFDIRPF.attributes
+    call printattr
+
     push [scrn_xy]
     inc [scrn_row]
     mov [scrn_col], 1
@@ -4062,25 +4069,20 @@ if 1
     mov dx, CStr("created: ")
     call printstring
     mov dx, EXFDIRPF.dwCreated + 2
-    mov ax, word ptr [si+bx].EXFDIRPF.dwCreated + 2
     call printdate
-    xor dx, dx
+    mov dx, EXFDIRPF.bCreInc
     mov cx, EXFDIRPF.dwCreated
-    mov ax, word ptr [si+bx].EXFDIRPF.dwCreated
     call printtime
 
     mov dx, CStr(", modified: ")
     call printstring
     mov dx, EXFDIRPF.dwModified + 2
-    mov ax, word ptr [si+bx].EXFDIRPF.dwModified + 2
     call printdate
-    xor dx, dx
+    mov dx, EXFDIRPF.bModInc
     mov cx, EXFDIRPF.dwModified
-    mov ax, word ptr [si+bx].EXFDIRPF.dwModified
     call printtime
-
     pop [scrn_xy]
-endif
+
     ret
 
 dispcluster:
@@ -4090,37 +4092,18 @@ dispcluster:
     push [scrn_xy]
     mov [scrn_col],1
     inc [scrn_row]
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("start cluster: %lX, size: %lu"), [si+bx].EXFDIRP.dwFirstCl, dword ptr [si+bx].EXFDIRP.dqSize
+    mov dx, CStr("start cluster: ")
     call printstring
+    mov [highlight.siz_], 4
+    mov dx, EXFDIRP.dwFirstCl
+    call printhex_hl
+    mov dx, CStr(", size: ")
+    call printstring
+    mov [highlight.siz_], 8
+    mov dx, EXFDIRP.dqSize
+    call printvalue_hl
     pop [scrn_xy]
 nocluster:
-    ret
-
-    .const
-attrchars db "AD?SHR"
-    .code
-
-renderattributes:
-    push si
-    push di
-    push ds
-    pop es
-    mov si, offset attrchars
-    mov cx, sizeof attrchars
-    mov ah, al
-    shl dx, 10   ; skip highest 10 bits
-nextchar:
-    lodsb
-    shl dx, 1
-    jc @F
-    mov al, '-'
-@@:
-    stosb
-    loop nextchar
-    mov [di], cl
-    pop di
-    pop si
     ret
 
 exfat_dirview endp
@@ -4250,19 +4233,13 @@ noundeleteadjust:
     mov dx, offset createdmsg
     call printstring
 
-    mov ax, [si+bx+DIR_CREATEDATE]
     mov dx, DIR_CREATEDATE
     call printdate
 
 ;--- minute+second
 
-    movzx dx, byte ptr [si+bx+DIR_CREATEMSEC]
-    cmp dl, 199
-    jb @F
-    mov dl, 199
-@@:
-    mov ax, [si+bx+DIR_CREATETIME]
     mov cx, DIR_CREATETIME
+    mov dx, DIR_CREATEMSEC
     call printtime
 
     mov dl, '.'
@@ -4292,30 +4269,8 @@ noundeleteadjust:
     mov dx, offset attributesmsg
     call printstring
 
-    mov [highlight], ( 601h shl 16) or DIR_ATTRIBUTES
-    add [highlight.ofs], bx
-    call bshighlight
-
-    mov al, byte ptr [si+bx+DIR_ATTRIBUTES]
-
-    mov dx, 'A' + (100h * ARCHIVE)
-    call testattrib
-
-    mov dx, 'D' + (100h * DIRECTORY)
-    call testattrib
-
-    mov dx, 'V' + (100h * VOLUME)
-    call testattrib
-
-    mov dx, 'S' + (100h * SYSTEM)
-    call testattrib
-  
-    mov dx, 'H' + (100h * HIDDEN)
-    call testattrib
-
-    mov dx, 'R' + (100h * READONLY)
-    call testattrib
-
+    mov dx, DIR_ATTRIBUTES
+    call printattr
     call printcrlf
 
 ;--- print last access date
@@ -4323,7 +4278,6 @@ noundeleteadjust:
     mov dx, offset accessedmsg    ; last accessed
     call printstring
 
-    mov ax, [si+bx+DIR_LASTACCDATE]
     mov dx, DIR_LASTACCDATE
     call printdate
 
@@ -4359,11 +4313,9 @@ noundeleteadjust:
     mov dx, offset modifiedmsg    ; last modified
     call printstring
 
-    mov ax, [si+bx+DIR_LASTUPDDATE]
     mov dx, DIR_LASTUPDDATE
     call printdate
     xor dx, dx
-    mov ax, [si+bx+DIR_LASTUPDTIME]
     mov cx, DIR_LASTUPDTIME
     call printtime
 
@@ -4374,9 +4326,8 @@ noundeleteadjust:
     mov dx, offset sizemsg
     call printstring
 
-    mov [highlight], (0A04h shl 16) or DIR_FILESIZE
-    add [highlight.ofs], bx
-    mov eax, dword ptr [si+bx+DIR_FILESIZE]
+    mov [highlight.siz_], 4
+    mov dx, DIR_FILESIZE
     call printvalue_hl
 done:
     ret
@@ -4392,18 +4343,48 @@ clearentryview:
     sub [scrn_row], 4
     ret
 
-;-------------------------------------------------------
-; IN: AL = attribute bits
-;     DH = bit to test for
-;     DL = character to print if bit is set in AL
-;
-testattrib:
-    test al, dh
-    jnz printchar
-    mov dl, '-'
-    jmp printchar
-
 dirview endp
+
+    .const
+attrchars db "ADVSHR"
+    .code
+
+;--- print attributes
+;--- in: si+bx -> entry
+;---     dx = offset for attributes
+
+printattr proc
+    push di
+    push si
+    mov word ptr [highlight.siz_], 601h
+    push bx
+    add bx, dx
+    mov ah, [si+bx]
+    mov [highlight.ofs], bx
+    pop bx
+    call bshighlight
+
+    mov di, offset valuebuffer
+    push ds
+    pop es
+    mov si, offset attrchars
+    mov cx, sizeof attrchars
+    shl ah, 2   ; use bits 0-5 only
+nextchar:
+    lodsb
+    shl ah, 1
+    jc @F
+    mov al, '-'
+@@:
+    stosb
+    loop nextchar
+    mov [di], cl
+    pop si
+    pop di
+    mov dx, offset valuebuffer
+    jmp printstring
+
+printattr endp
 
 
 chainmenuitem proc
@@ -4839,9 +4820,7 @@ dontshowpart:
     mov dx, offset startlba
     call printstring
 
-    mov [highlight.ofs], bx
-    add [highlight.ofs], 4
-    mov eax, dword ptr [si+bx+04h]
+    mov dx, 4
     mov [highlight.siz_], 4
     call printvalue_hl
 
@@ -4850,9 +4829,7 @@ dontshowpart:
     mov dx, offset psize
     call printstring
 
-    mov [highlight.ofs], bx
-    add [highlight.ofs], 8
-    mov eax, dword ptr [si+bx+08h]
+    mov dx, 8
     mov [highlight.siz_], 4
     call printvalue_hl
 
@@ -5024,21 +5001,13 @@ basicbs:
     mov dx, [di+2]
     mov cx, [di+4]
 
-    mov eax, [si+bx]
-    cmp cl, 2
-    jnz @F
-    movzx eax, ax
-@@:
-    cmp cl, 1
-    jnz @F
-    movzx eax, al
-@@:
-    mov word ptr [highlight.ofs], bx
     mov word ptr [highlight.siz_], cx
     call printstring
     call spaceandcolon
+    mov dx, bx
+    xor bx, bx
     call printvalue_hl
-    cmp bx, BPB.media_byte
+    cmp dx, BPB.media_byte
     jne npldn2
     cmp al, 0F0h
     jb npldn2
@@ -5121,19 +5090,11 @@ basicbs:
     mov dx, [di+2]
     mov cx, [di+4]
 
-    mov eax, [si+bx]
-    cmp cl, 2
-    jnz @F
-    movzx eax, ax
-@@:
-    cmp cl, 1
-    jnz @F
-    movzx eax, al
-@@:
-    mov word ptr [highlight.ofs], bx
     mov word ptr [highlight.siz_], cx
     call printstring
     call spaceandcolon
+    mov dx, bx
+    xor bx, bx
     call printvalue_hl
     ret
 bsntfsview endp
@@ -5208,19 +5169,11 @@ basicbs:
     mov dx, [di+2]
     mov cx, [di+4]
 
-    mov eax, [si+bx]
-    cmp cl, 2
-    jnz @F
-    movzx eax, ax
-@@:
-    cmp cl, 1
-    jnz @F
-    movzx eax, al
-@@:
-    mov word ptr [highlight.ofs], bx
     mov word ptr [highlight.siz_], cx
     call printstring
     call spaceandcolon
+    mov dx, bx
+    xor bx, bx
     call printvalue_hl
     ret
 bsexfatview endp
@@ -5233,10 +5186,39 @@ printcrlf:
     ret
 
 ;--- print a value and check if it should be highlighted
-;--- in: eax=value to display
-;---     [highlight.ofs]
+;--- in: si = buffer
+;---     bx = offset entry
+;---     dx = offset
+;---     [highlight.siz_]
 
-printvalue_hl:  
+printvalue_hl:
+
+    push bx
+    add bx, dx
+    mov [highlight.ofs], bx
+    mov eax, [si+bx]
+    cmp [highlight.siz_], 8
+    jnz @F
+    mov edx, [si+bx+4]
+    invoke i64toa, edx::eax, offset sprintfbuffer, 10
+    pop bx
+    mov dx, ax
+    mov ax, offset sprintfbuffer+22
+    sub ax, dx
+    mov [highlight.scsiz], al
+    call bshighlight
+    jmp printstring
+@@:
+    pop bx
+    cmp [highlight.siz_], 4
+    jae @F
+    movzx eax, ax
+@@:
+    cmp [highlight.siz_], 2
+    jae @F
+    mov ah, 0
+@@:
+printeaxvalue_hl:
     call rendernumdec
     push ax
     mov ax, offset valuebuffer+10  ;calculate string size
@@ -5847,7 +5829,7 @@ printchs proc
     shr ah, 6
     add [highlight.ofs], 2
     mov [highlight.siz_], 2
-    call printvalue_hl
+    call printeaxvalue_hl
 
     mov dl, '/'
     call printchar
@@ -5855,7 +5837,7 @@ printchs proc
     movzx eax, byte ptr [si+bx+1]
     dec [highlight.ofs]
     mov [highlight.siz_], 1
-    call printvalue_hl
+    call printeaxvalue_hl
 
     mov dl, '/'
     call printchar
@@ -5863,7 +5845,7 @@ printchs proc
     movzx eax, byte ptr [si+bx+2]
     and al, 111111b
     inc [highlight.ofs]
-    jmp printvalue_hl
+    jmp printeaxvalue_hl
 
 printchs endp
 
@@ -7521,18 +7503,17 @@ rendernumdec2 proc
 rendernumdec2 endp
 
 ;--- print date
-;--- in: ax = date
-;---     dx = offset
+;--- in: si = buffer
 ;---     bx = dir entry start spot
-;--- it's a "word" date:
-;--- bits 0-4: day
-;--- bits 5-8: month
-;--- bits 9-15: year since 1980
+;---     dx = offset
+;--- it's a "word" date, year is since 1980 (7 bits, 1980+127)
+;--- yyyyyyymmmmddddd
 
 printdate proc
-    movzx eax, ax
+    push bx
+    add bx, dx
     mov [highlight.ofs], bx
-    add [highlight.ofs], dx
+    movzx eax, word ptr [si+bx]
     mov word ptr [highlight.siz_], 0202h
     push ax
     shr ax, 5
@@ -7569,6 +7550,7 @@ printdate proc
     call rendernumdec
     call printdatepart
     inc [scrn_col]
+    pop bx
     ret
 
 printdatepart:
@@ -7578,24 +7560,24 @@ printdatepart:
 printdate endp
 
 ;--- print time
-;--- in: ax = time
+;--- in: si = buffer
+;---     bx = dir entry start spot
 ;---     cx = offset
-;---     dx = fraction
-;---     bx = start of dir entry offset
-;--- a "word" time:
-;--- bits   0-4: second*2
-;--- bits  5-10: minute
-;--- bits 11-15: hour
+;---     dx = msec offset (or 0)
+;--- a "word" time, seconds*2
+;--- hhhhhmmmmmmsssss
 
 printtime proc
-    movzx eax, ax
+    push bx
+    add bx, cx
+    movzx eax, word ptr [si+bx]
+    inc bx
     mov [highlight.ofs], bx
-    add [highlight.ofs], cx
     mov word ptr [highlight.siz_], 0201h
 
     push dx
     push ax
-    shr ax, 11
+    shr ax, 11        ; get "hour" in bits 0-4
     cmp ax, 23
     jbe @F
     mov ax, 23
@@ -7607,10 +7589,10 @@ printtime proc
     mov dl, ':'
     call printchar
     dec [highlight.ofs]
-    inc byte ptr [highlight+2]
+    inc [highlight.siz_]   ; "minutes" cover 2 bytes
     pop ax
     push ax
-    shr ax, 5
+    shr ax, 5         ; get "minute" in bits 0-5
     and ax, 111111b
     cmp ax, 59
     jbe @F
@@ -7625,18 +7607,26 @@ printtime proc
     pop ax
     pop dx
 
-    push ax                               ; \Fix/
-    mov ax, [spot]
-    and ax, 11111b
-    cmp ax, 15h
-    pop ax
-    je nodec
-    dec [highlight.ofs]
+    and dx, dx
+    je  nodec
+    pop bx
+    push bx
+    add bx, dx
+    mov cl, byte ptr [si+bx]
+    cmp cl, 199
+    jb @F
+    mov cl, 199
+@@:
+    cmp dl, DIR_CREATEMSEC   ; fix! this code works for standard creation time only
+    mov dl, cl
+    jnz nodec
+    dec [highlight.ofs]      ; size is 2, and msecs are just 1 byte before hh:mm:ss time
     jmp dobshl
 nodec:
-    dec byte ptr [highlight+2]
+    dec [highlight.siz_]
+    xor dx, dx
 dobshl:
-    and ax, 11111b
+    and ax, 11111b        ; get "seconds*2" in bits 0-4
     cmp ax, 29
     jbe @F
     mov ax, 29
@@ -7644,19 +7634,18 @@ dobshl:
     shl ax, 1
 
     push ax
-    push bx
     mov ax, dx
     xor dx, dx
     mov bx, 10
     div bx
     mov dx, ax
-    pop bx
     pop ax
     add ax, dx
     cmp ax, 59
     jbe @F
     mov ax, 59
 @@:
+    pop bx
     call rendernumdec2
     call bshighlight
     jmp printstring

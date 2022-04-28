@@ -3,7 +3,8 @@
 
 ?SPRBUFSIZE = 12
 
-if ?SN64
+;if ?SN64
+if 1  ; used by exFAT file size rendering
 
 ?SPRBUFSIZE = 24
 

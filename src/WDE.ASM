@@ -355,7 +355,7 @@ EBPB_FAT32 ends
 DAP struct
 bSize       db ?    ;+0 size of structure
 bRes        db ?    ;+1 reserved
-wNumSec     dw ?    ;+2 sectors to transfer
+sectors     dw ?    ;+2 sectors to transfer
 union
 dwBuffer    dd ?    ;+4 transfer buffer SSSS:OOOO
 struct
@@ -596,7 +596,7 @@ szCluster2      db 'Cluster (2-%lX): ',0
 
 partmsg         db 'Part: ',0
 sizemsg         db 'Size: ',0
-entrymsg        db 'Entry:',0
+entrymsg        db 'Entry: ',0
 offsetmsg       db 'Offset: ',0
 createdmsg      db 'Created: ',0
 accessedmsg     db 'Accessed: ',0
@@ -725,6 +725,7 @@ bMount          db ?            ; mount partition + 1
 endif
 bTabSw          db ?
 bSkipFat        db ?
+unlockdrv       db ?            ; unlock this drive if != 0
 
 ;--- unformat fields
     align dword
@@ -805,6 +806,9 @@ endm
 endif
 
     include sprintf.inc
+if ?DEBUG
+	include ..\Test\timer.inc
+endif
 
 ;--- main menu definition
 
@@ -1006,7 +1010,7 @@ Start endp
 main proc
 
     mov sp, [stackbot]
-    mov [handling], ABORT_OPERATION
+    mov [handling], ABORT_OPERATION  ; inside main
     call updatescreen           ; print line 0, sector area and view area
     call printmenu
 
@@ -1279,20 +1283,20 @@ initmenustack::
 pushmenustack endp
 
 
-if 0 ; not used yet
-allocbuffer proc
-    mov ax, [wBps]
-    add ax, [_mem]
-    xchg ax, [_mem]
-    ret
-allocbuffer endp
+;--- alloc AX bytes on the dgroup heap
 
-freebuffer proc
+allocmem proc
+    add ax, [_mem]
+    jc @F             ; out of space?
+    xchg ax, [_mem]
+@@:
+    ret
+allocmem endp
+
+freemem proc
     mov [_mem], ax
     ret
-freebuffer endp
-
-endif
+freemem endp
 
 ;--- try a new device
 ;--- "usually" called after setdrive()
@@ -1319,7 +1323,7 @@ endif
     cmp bh, DT_FILE
     jnz @F
     mov [ioreq.rwfunc], RWF_FILE
-    mov [dapacket.wNumSec], 1     ; used by file access!
+    mov [dapacket.sectors], 1     ; used by file access!
     jmp tryread
 @@:
     mov [ioreq.bDrive], al
@@ -1422,10 +1426,14 @@ getkeyagain:
     jbe done
     jmp getkeyagain
 
-hdphysical:                     ; this is for setting up the
-                                ; editing for a physical
-                                ; rather than logical drive
+hdphysical:
+;--- this is for setting up the editing for a physical
+;--- rather than logical drive. check if floppies are available.
     mov cl, al                  ; back up drive number
+    mov es,[_0000H]
+    test byte ptr es:[410h], 1  ; floppies available?
+    jz nofds                    ; if no, skip asking
+
     mov dx, offset fhdmsg       ; choose between floppy and HD
     call printbottom
 @@:
@@ -1437,6 +1445,7 @@ hdphysical:                     ; this is for setting up the
     je readasfd
     cmp al, 'h'
     jne @B
+nofds:
     add cl, 80h                 ; physical hard drive.
 readasfd:
     mov al, cl
@@ -1444,7 +1453,6 @@ readasfd:
 ;--- al: 00h+ = floppy
     mov bh, DT_PHYSICAL
     jmp done
-
 abort:
     stc
     ret
@@ -2318,7 +2326,7 @@ submenu_find proc
     @mitem 26, finddir
     @mend searchmenu
 
-    mov [handling], QUERY_SKIP    ; useless to do here, it's reset in main
+    mov [handling], QUERY_SKIP    ; inside submenu_find (useless to do here)
     mov dx, searchmenu + lsearchmenu shl 8
     mov cl, 2
     jmp pushmenustack
@@ -3429,9 +3437,23 @@ isoloop:
     dec si
     jnz isoloop
 drivedump:
+if ?DEBUG
+    .data
+starttime dd 0
+    .code
+    call gettimer
+    mov starttime, eax
+endif
     xor eax, eax
     xor di, di
     call writefile
+if ?DEBUG
+    call gettimer
+    sub eax, starttime
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("writefile duration: %lu ms"), eax
+    call printerror
+endif
 donedump:
     pushf
     call closefile
@@ -4288,15 +4310,20 @@ noundeleteadjust:
     mov dx, offset szCluster
     call printstring
 
+;--- hiword cluster only displayed if it's != 0000 or filesys is FAT32/exFAT
     mov [highlight], (0302h shl 16) or DIR_CLUST_HIGH
     add [highlight.ofs], bx
-    call bshighlight
-
     mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
+    and ax, ax
+    jnz @F
+    test [filesys], FS_FAT32
+    jz nohighcl
+@@:
+    call bshighlight
     mov dl, 3
     call rendernumhex
     call printstring
-
+nohighcl:
     mov [highlight.scsiz], 4
     add [highlight.ofs], (DIR_CLUST_LOW - DIR_CLUST_HIGH)
     call bshighlight
@@ -5416,6 +5443,8 @@ endif
 ;--- lock logical valume. Required by Win9x only?
 ;--- there should be a corresponding unlock (86A/486A) when done with the drive
 
+    call unlock
+
     mov cx, 084Ah       ; this is for FAT12/FAT16
     cmp dword ptr [di+35h], 0
     jz @F
@@ -5423,14 +5452,16 @@ endif
 @@:
     mov bl, [ioreq.bDrive]
     inc bl
-    mov dx, 1           ; permission flags (0=allow writes)
+    mov dx, 1           ; permission flags (bit 0: 1=allow writes)
     mov bh, 1           ; lock level (0-4)
-    mov ax, 440Dh       ; lock the drive for windows
+    mov ax, 440Dh       ; lock the drive for windows???
     int 21h
 
-    mov bh, 04h         ; locks the drive for real dos
+    mov bh, 4           ; locks the drive for real dos???
     mov ax, 440Dh       ; i don't quite understand why i must lock it twice
     int 21h             ; some sort of OS bug i guess
+    jc dontlock
+    mov [unlockdrv], bl
 dontlock:
     mov dl, RWF_NEWLOGICAL
 donesetlog:
@@ -5452,6 +5483,24 @@ olddpb:
 
 setlogvars endp
 
+;--- unlock a logical volume that was previously locked
+
+unlock proc
+    mov bl, 0
+    xchg bl, [unlockdrv]
+    cmp bl, 0
+    jz done
+    mov cx,  86Ah
+    mov ax, 440dh
+    int 21h
+    jnc done
+    or ch, 40h
+    mov ax, 440dh
+    int 21h
+done:
+    ret
+unlock endp
+
 setBps:
     cmp ax, sizeof sectbuffer + 1 ; refuse sector sizes beyond 4 kB
     cmc
@@ -5471,7 +5520,7 @@ setBps:
 setphysvars proc
 
     mov [dapacket.bSize], sizeof DAP
-    mov [dapacket.wNumSec], 1           ; default: one sector to transfer
+    mov [dapacket.sectors], 1           ; default: one sector to transfer
     mov dl, [ioreq.bDrive]              ; check if int 13h extensions are implemented
     test dl, 80h
     jz use1308
@@ -6116,7 +6165,7 @@ readfile proc
     mov dx, offset toosmall
     jb nuprinterror
 
-    mov [handling], QUERY_SKIP
+    mov [handling], QUERY_SKIP           ; inside readfile
 
 ;    push [dwCurSector]
 
@@ -6167,7 +6216,7 @@ donefileread:
 ;    pop [ioreq.dwSector]
     pushf
     call closefile
-    mov [handling], ABORT_OPERATION
+    mov [handling], ABORT_OPERATION       ; inside readfile
     call readcursect
     popf
     jc @F
@@ -6186,7 +6235,14 @@ printentry proc                         ; prints the fat entry the cursor
 
     call getentrynumber
     mov [scrn_col], 52
-    mov dl,8
+    mov dl, 8
+    test eax, 0ffff0000h
+    jnz @F
+    test [filesys], FS_FAT32
+    jnz @F
+    mov dl, 4
+    add [scrn_col], 4
+@@:
     call rendernumhex
     call printstring
 
@@ -6382,13 +6438,19 @@ firstfat:
     call printchar
     mov dl, ']'
     call printchar
-    mov cl, 2
-    call fillspace
+
 
     test [filesys], FS_FATXX
     je abortdc
-
-    mov [scrn_col], 45
+    mov cl, 45
+    test [filesys], FS_FAT32
+    jnz @F
+    mov cl, 49
+@@:
+    mov dl, cl
+    sub cl, [scrn_col]
+    call fillspace
+    mov [scrn_col], dl
     mov dx, offset entrymsg           ; "Entry: "
     call printstring
     mov [scrn_col], 60
@@ -6410,21 +6472,39 @@ indata:
     mov dx, offset indatamsg
 dispclust:
     call printstring
-    mov dl, SPACE
-    call printchar
+;    mov dl, SPACE
+;    call printchar
 
     test [filesys], FS_FATXX
     je abortdc
 
     or [bRegion], RG_DATA
 
-    mov dx, offset szCluster          ; "Cluster: "
-    call printstring
-
     mov eax, [dwCurSector]
     call sector2cluster
     mov dl, 7                         ; cluster has max. 7 hex digits (8 for exfat!)
+    test eax, 0ffff0000h
+    jnz @F
+    test [filesys], FS_FAT32
+    jnz @F
+    mov dl, 4
+@@:
+    push dx
     call rendernumhex
+    mov ax, dx
+    pop dx
+    add dl, 9   ; sizeof "Cluster: "
+    neg dl
+    add dl, 60
+    mov cl, dl
+    sub cl, [scrn_col]
+    push ax
+    mov al, SPACE
+    call fillchar
+    pop ax
+    mov [scrn_col], dl
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("%s%s"), offset szCluster, ax
     jmp continuecount
 
 printtopline endp
@@ -7163,7 +7243,7 @@ endif
     mov ah, 40h
 @@:
     mov cx, [wBps]
-    imul cx, [dapacket.wNumSec]
+    imul cx, [dapacket.sectors]
     mov bx, [rwhandle]
     int 21h
     ret
@@ -7230,7 +7310,7 @@ oldint13_access:
     call getchs                 ; translate sector to c/h/s in dh/cx
     pop bx
     mov dl, [ioreq.bDrive]
-    mov al, byte ptr [dapacket.wNumSec]
+    mov al, byte ptr [dapacket.sectors]
     mov ah, 02 
     cmp [ioreq.bRW], RW_WRITE
     jne @F
@@ -7242,6 +7322,7 @@ oldint13_access:
 diskaccess endp
 
 ;--- called if an error occured inside diskaccess
+;--- in: [handling]
 
 access_error proc
     mov dx, offset sectorrerror       ; "Error reading Sector"
@@ -7249,9 +7330,9 @@ access_error proc
     jne @F
     mov dx, offset sectorwerror       ; "Error writing Sector"
 @@:
-    cmp [handling], IGNORE_ERRORS
+    cmp [handling], IGNORE_ERRORS     ; inside access_error
     je done
-    cmp [handling], ABORT_OPERATION
+    cmp [handling], ABORT_OPERATION   ; inside access_error
     je sectorerror2
 
     mov bx, [lastbottomtext]          ; save current menu text in BX
@@ -7261,7 +7342,7 @@ access_error proc
     call printbottom
 
     mov dx, offset sectorrerror3      ; "abort, skip, ignore all"
-    cmp [handling], QUERY_SKIP
+    cmp [handling], QUERY_SKIP        ; inside access_error
     je @F
     mov dx, offset sectorrerror2      ; "abort, zero-fill"
 @@:
@@ -7275,7 +7356,7 @@ gak:
     or al,20h
     cmp al, 'a'
     je secterrhandle
-    cmp [handling], QUERY_SKIP
+    cmp [handling], QUERY_SKIP        ; inside access_error
     je checkskip
     cmp al, 'z'
     jne gak
@@ -7296,7 +7377,7 @@ checkskip:
     je itsS
     cmp al, 'i'
     jne gak
-    mov [handling], IGNORE_ERRORS
+    mov [handling], IGNORE_ERRORS     ; inside access_error
     jmp itsS
 
 sectorerror2:    ;if ABORT_OPERATION is set
@@ -7721,6 +7802,7 @@ quit proc
     call getyn
     jnc doret
 
+    call unlock
 if ?VDD
 ;--- exit vdd on nt platforms
     call exitvdd
@@ -8027,15 +8109,30 @@ closefile:
 ;---     [wFilehandle]   = file to write to
 ;---     di              = function to call for progress display or NULL
 ;--- out: C if error
-;--- this function may be called in a loop by "save chain"
+;--- this function is called:
+;---  1.  once per cluster in savechain ( save a fat/file chain )
+;---  2.  once in savedata ( save sector range, bs, fat, root )
+;---  3.  once in dumpiso ( which is also used to save a partition! )
 
 writefile proc
 
-    push [dwCurSector]
-
     mov [ioreq.dwSector], eax
-;    mov dx, offset writingmsg 
-;    call printbottom          
+
+;--- optimization: use packets of 16 sectors ( 8kB) for file writing.
+;--- use the heap for transfers ( it's not restricted to 4 kB )
+    mov ax, [wBps]
+    mov si, 1
+    cmp ax, 512               ; skip optimization for CDROMs
+    ja @F
+    mov si, 16
+@@:
+    imul ax, si
+    call allocmem
+    jc exit
+    mov [ioreq.pBuffer], ax
+    mov [ioreq.bRW], RW_READ  ; tell discaccess that we want to read
+    movzx esi, si
+
 writefileloop:
     call checktime
     jc wfl1
@@ -8050,27 +8147,43 @@ writefileloop:
     mov cx, offset writingmsg 
     call printprogress
 wfl1:
-    mov [handling], QUERY_FILL
-    call readsect
-    mov [handling], ABORT_OPERATION
+    mov [handling], QUERY_FILL           ; inside writefile
+    cmp esi, [dwValue]
+    jc @F
+    mov esi, [dwValue]
+@@:
+    sub [dwValue], esi
+
+;--- set both physical/logical sectors
+    mov [drivepacket].sectors, si
+    mov [dapacket].sectors, si
+    call diskaccess
     jc done
 
     mov cx, [wBps]                       ; bytes to write
+    imul cx, si
     mov bx, [wFilehandle]
-    mov dx, offset sectbuffer
+    mov dx, [ioreq.pBuffer]
     mov ah, 40h                          ; write to file
     int 21h
     jc errorwrite
     cmp ax, cx
     jb diskfullerr
-    inc [ioreq.dwSector]
-    dec [dwValue]
+    add [ioreq.dwSector], esi
+    cmp [dwValue], 0
     jnz writefileloop
 done:
-    pop [ioreq.dwSector]
-    pushf
-    call readsect
-    popf
+    mov [handling], ABORT_OPERATION      ; inside writefile
+
+;--- reset both sector counts
+    mov si, 1
+    mov [drivepacket].sectors, si
+    mov [dapacket].sectors, si
+
+    mov ax, offset sectbuffer
+    xchg ax, [ioreq.pBuffer]
+    call freemem
+exit:
     ret
 
 abort:

@@ -100,11 +100,15 @@ WDe User Manual
     WDe display the currently accepted arguments, run "WDe -?".
     
      If no (valid) argument is given on the command line, the user will be
-    prompted ("Drive: ") to specify the current drive or disk. The TAB key
-    may be pressed to change the "Drive: " prompt to a "File: " prompt;
-    a full file/path name can then be entered, WDe will interpret this
-    file as a physical disk. The sector restriction function can then be
-    used to make WDe interpret the parts of the file as logical drive.
+    prompted ("Drive: ") to specify the disk or drive to be examined. A digit
+    will select a physical disk while a letter specifies a logical drive. If
+    a physical disk was selected and the system has floppies installed, the
+    user will additionally be asked to select between hard disks and floppies.
+
+     The TAB key may be pressed to change the "Drive:" prompt to a "File:"
+    prompt; a full file/path name can then be entered, WDe will interpret this
+    file as a physical disk. The "restrict" function - see below for details -
+    may then be used to make WDe interpret (parts of) the file as logical drive.
 
 
 
@@ -176,11 +180,11 @@ WDe User Manual
       WDe uses int21h/ax=7305h to do logical drive reading/writing,
       (DOS 7.x functions) and int 25h/26h (cx=0FFFFh) for non-fat32
       partitions/drives.  All drive information is obtained from
-      the bootsector. Note that when running in Windows XP or Vista,
-      the file system of the logical drive may be NTFS or exFAT. In
-      such cases the navigation inside WDe may be limited; NTFS
-      is unsupported, and support for exFAT is in an experimental
-      state.
+      the bootsector, with the exception of the sector size, which
+      is preferably be read from DOS by using function "get DPB".
+       Note that when running in Windows XP or Vista, the file system
+      of the logical drive may be NTFS or exFAT. While exFAT is supported,
+      NTFS is not and hence navigation inside WDe is rather limited then.
 
     3.3 - CD-Rom drives
 

@@ -294,7 +294,7 @@ fat12pad proc                           ; IN: ebx = bytes to fat entry
     mov [fat12fixsec], eax              ; ...this would be a tiny bug if
                                         ; we switch drives on sector 0
     push eax
-    mov [handling], IGNORE_ERRORS
+    mov [handling], IGNORE_ERRORS       ; inside fat12pad
     mov bx, [wBps]
     test eax, eax                       ; if the current sector is 0
     jz nopred                           ; then we can't read the previous
@@ -320,7 +320,7 @@ nosucc:
 done2:
     pop [ioreq.dwSector]
     call readsect                       ; restore current sector
-    mov [handling], ABORT_OPERATION
+    mov [handling], ABORT_OPERATION     ; inside fat12pad
 done:
     popad
     ret

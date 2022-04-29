@@ -14,6 +14,7 @@ WDe V0.50pre2 [--.--.2022]
   - with image files, bytes/sector are no longer fixed to 512.
   - exFAT primary file entries: created & modified timestamps displayed in view.
   - exFAT file stream entries: 64-bit file size fully displayed in view.
+  - significant speed-up for "save to file" function.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

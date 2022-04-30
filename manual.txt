@@ -15,7 +15,7 @@ WDe User Manual
   4.0       Menu System
   4.1       Basics
   4.2       Menu Items & Submenus
-  4.2.1     Item "Save"
+  4.2.1     Item "Help"
   4.2.2     Menu "File"
   4.2.2.1   Menus "Save to File" & "Restore from File"
   4.2.2.1.1 Item "Input"
@@ -35,6 +35,7 @@ WDe User Manual
   4.2.6.2   Item "Restrict"
   4.2.6.3   Item "UnFormat"
   4.2.6.4   Item "UnDelete"
+  4.2.7     Item "Save"
 
   5.0       Error Messages
   5.1       "No (More) Matches Found"
@@ -227,10 +228,10 @@ WDe User Manual
 
     4.2 - Menu Items & Submenus
 
-      4.2.1 - Item "Save"
+      4.2.1 - Item "Help"
 
-        This menu option saves any manual changes made to the sector
-        currently being edited.
+        This menu option displays the quick key reference that shows 
+        how to navigate inside WDe.
 
       4.2.2 - Menu "File"
 
@@ -308,7 +309,8 @@ WDe User Manual
 
         The view feature fills in the blank space below the hex editing
         area with extra details for boot sectors, mbrs, fats and
-        directories when chosen.
+        directories when chosen. "Auto" view lets WDe decide what view
+        seems best, anything else forces that selected view to be used.
 
         4.2.4.1 - View "Directory"
 
@@ -413,6 +415,10 @@ WDe User Manual
           is coming up when in the 32-bytes of a deleted file, there is
           likely some sort of invalid data stored in the directory.
 
+      4.2.7 - Item "Save"
+
+        This menu option saves any manual changes made to the sector
+        currently being edited.
 
 
   5.0 - Error Messages

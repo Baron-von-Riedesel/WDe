@@ -98,6 +98,10 @@ dwFirstCl  dd ?     ; first cluster
 dqSize     dq ?     ; data length
 EXFDIRS ends
 
+;--- secondary typecodes for files
+EXFSTCF_STREAM equ 0 or 0C0h
+EXFSTCF_NAME   equ 1 or 0C0h
+
 ;--- stream extension, critical secondary entry in a file directory entry set,
 ;--- must immediately follow the primary entry, just 1 in a set.
 ;--- typecode is 0.

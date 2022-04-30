@@ -493,7 +493,7 @@ menustrings     label byte
 szPartition     db 'Partition',0                        ; 22
                 db 'Chain',0                            ; 23
                 db 'Dump CD As ISO',0                   ; 24
-                db 'Default',0                          ; 25
+                db 'Auto',0                             ; 25
                 db 'Directory',0                        ; 26
                 db 'String',0                           ; 27
                 db 'Hex',0                              ; 28
@@ -725,7 +725,7 @@ bMount          db ?            ; mount partition + 1
 endif
 bTabSw          db ?
 bSkipFat        db ?
-unlockdrv       db ?            ; unlock this drive if != 0
+;unlockdrv       db ?            ; unlock this drive if != 0
 
 ;--- unformat fields
     align dword
@@ -780,7 +780,7 @@ _BSS ends
 
     .code
 
-getstring proto stdcall :ptr, :word, :word
+getstring proto stdcall :ptr, :word, :word, :word, :ptr
 
 if ?PM
     include initpm16.inc
@@ -813,13 +813,13 @@ endif
 ;--- main menu definition
 
     @mstart initialmenu
-    @mitem  0, savetodisk
+    @mitem 44, helpscreen
     @mitem  1, submenu_file
     @mitem  2, submenu_jumpto
     @mitem  3, submenu_view
     @mitem  4, submenu_find
     @mitem  5, submenu_functions
-    @mitem 44, helpscreen
+    @mitem  0, savetodisk
     @mend initialmenu
 
 Start proc
@@ -1460,10 +1460,16 @@ handle_tabkey:
     xor [driveflag], 1
     jmp setdrive
 
+tabsw:
+    mov [bTabSw], 1
+    stc                         ; exit getstring when TAB is pressed
+    ret
+
 fnreq:
-    mov al, 1
+    mov [bTabSw], 0
+    mov ax, tabsw
     call getfilename
-    cmp [bTabSw], 0             ; exit with TAB?
+    cmp [bTabSw], 1             ; exit with TAB?
     je handle_tabkey
     jcxz abort                  ; no chars entered, or ESC pressed
     call findfileX
@@ -2282,7 +2288,7 @@ handle_enter endp
 submenu_view proc
 
     @mstart viewmenu
-    @mitem 25, defaultview
+    @mitem 25, autoview
     @mitem 17, specview
     @mitem  8, specview
     @mitem 39, specview
@@ -2307,7 +2313,7 @@ specview:
     call checksetview  ;set viewmode to DL
     ret
 ;-------------------------------------------------------
-defaultview:
+autoview:
     mov [viewmode2], VM2_AUTODETECT
     ret
 submenu_view endp
@@ -2771,13 +2777,45 @@ submenu_file proc
 
 submenu_file endp
 
+;--- this routine is called by getstring()
+;--- ax=start of string buffer
+
+getexfatname proc
+    pusha
+    push ds
+    pop es
+    mov di, ax
+    mov bp, ax
+    call bufferinsi
+    mov bx,[spot]
+    and bl, 11100000b
+    add bx, DIRENTSIZE
+    mov cx, sizeof filenamebuffer
+nextchar:
+    test bl, 1Fh
+    jnz @F
+    cmp bx, [wBps]
+    jae done
+    cmp byte ptr [si+bx], EXFSTCF_NAME
+    jnz done
+    add bx, 2
+@@:
+    mov ax, [si+bx]
+    add bx, 2
+    stosb
+    and ax, ax
+    loopnz nextchar
+done:
+    mov byte ptr [di], 0   ; the last char must be 0
+    popa
+    ret
+getexfatname endp
+
 ;--- submenu file options, key F7
 ;--- IN: [chainflag] = FAT_CHAIN or FILE_CHAIN
 
 savechain proc
     mov [fromfat], 1
-    call srcommon
-
     mov [bSkipFat], 0
     xor ebp, ebp
     cmp [chainflag], FAT_CHAIN
@@ -2798,13 +2836,27 @@ savechain proc
     shl eax, 16
     mov ax, word ptr [si+bx+DIR_CLUST_LOW]  ; low cluster word
 
-savefilechain:
+savefilechain:                              ; <- common for both FATxx and exFAT file chain
     mov [dwSecBackup], eax                  ; back the cluster number up
+    push eax
+    mov ax, deliverfn
+    call getfilename
+    pop eax
+    jcxz done                               ; cx=0 if user has ESCaped
     call cluster2sector                     ; returns -1 if outside of valid cluster range
     cmp eax, [dwDataend]
     ja invalclust
     call getnextcluster
     jmp startchainsaving
+
+deliverfn:
+    cmp [filesys], FS_EXFAT
+    jnz @F
+    call getexfatname
+    xor ax, ax
+@@:
+    clc
+    ret
 
 invalclust:
     mov dx, offset invalstartclust          ; "invalid start cluster"
@@ -2843,6 +2895,7 @@ exfat_savechain:
 ;--- in a FAT, start saving cluster chain
 
 beginfatchainsave:
+    call srcommon
     call getcurrententry                  ; get cluster # from sector+spot info
     mov [dwSecBackup], eax                ; current entry's data
     mov eax, ebx
@@ -2890,7 +2943,7 @@ dgnc:
 
 mydisp:
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("Writing file, saving cluster %lX..."), [dwSecBackup]
+    invoke sprintf, dx, CStr("Writing file, %lu sectors written, saving cluster %lX..."), ebp, [dwSecBackup]
     jmp printbottom
 
 donechainsave:
@@ -3112,7 +3165,7 @@ restorechain endp
 
 srcommon proc
     push ax
-    mov al, 0
+    mov ax, sr_ok
     call getfilename
     pop ax
     jcxz srskip               ; cx=0 if user has ESCaped
@@ -3370,8 +3423,8 @@ savedata proc
 donesavedata:
     ret
 dosavedata:
-    xor di, di
     push [dwValue]
+    mov di, offset writeprogress
     call writefile
     pushf
     call closefile
@@ -3388,6 +3441,11 @@ toobig::
 invalidperror::
     mov dx, offset invalidpmsg   ;"invalid sector range"
     jmp printerror
+
+writeprogress::
+    mov eax, [dwValue]
+    mov cx, offset writingmsg 
+    jmp printprogress
 
 savedata endp
 
@@ -3445,14 +3503,16 @@ starttime dd 0
     mov starttime, eax
 endif
     xor eax, eax
-    xor di, di
+    mov di, offset writeprogress
     call writefile
 if ?DEBUG
+    pushf
     call gettimer
     sub eax, starttime
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("writefile duration: %lu ms"), eax
     call printerror
+    popf
 endif
 donedump:
     pushf
@@ -4051,7 +4111,7 @@ namedone:
     jz @F
     cmp bx,[wBps]
     jz @F
-    cmp [si+bx+DIRENTSIZE].EXFDIRS.etype, 0C1h
+    cmp [si+bx+DIRENTSIZE].EXFDIRS.etype, EXFSTCF_NAME
     jnz @F
     add bx, DIRENTSIZE
     cmp [scrn_col], RIGHTCOL-15
@@ -5441,27 +5501,36 @@ if ?VDD
 endif
 
 ;--- lock logical valume. Required by Win9x only?
-;--- there should be a corresponding unlock (86A/486A) when done with the drive
+;--- should there be a corresponding unlock (86A/486A) when done with the drive???
 
-    call unlock
+;    call unlock
+
+;--- just doing what MS-DOS command com does:
+;--- 1. always use ch=08h, never 48h
+;--- 2. first try a level 4 lock, if this fails, a level 0 lock
 
     mov cx, 084Ah       ; this is for FAT12/FAT16
+if 0
     cmp dword ptr [di+35h], 0
     jz @F
     mov ch, 48h
 @@:
+endif
     mov bl, [ioreq.bDrive]
     inc bl
-    mov dx, 1           ; permission flags (bit 0: 1=allow writes)
-    mov bh, 1           ; lock level (0-4)
-    mov ax, 440Dh       ; lock the drive for windows???
-    int 21h
+;--- DX seems to have no meaning???
+    mov dx, 0ffffh      ; permission flags (bit 0: 1=allow writes)
 
-    mov bh, 4           ; locks the drive for real dos???
-    mov ax, 440Dh       ; i don't quite understand why i must lock it twice
-    int 21h             ; some sort of OS bug i guess
+    mov bh, 4           ; lock level (0-4)
+    mov ax, 440Dh
+    int 21h
+    jnc @F
+    mov bh, 0
+    mov ax, 440Dh
+    int 21h
     jc dontlock
-    mov [unlockdrv], bl
+@@:
+;    mov [unlockdrv], bl
 dontlock:
     mov dl, RWF_NEWLOGICAL
 donesetlog:
@@ -5485,6 +5554,7 @@ setlogvars endp
 
 ;--- unlock a logical volume that was previously locked
 
+if 0
 unlock proc
     mov bl, 0
     xchg bl, [unlockdrv]
@@ -5493,13 +5563,11 @@ unlock proc
     mov cx,  86Ah
     mov ax, 440dh
     int 21h
-    jnc done
-    or ch, 40h
-    mov ax, 440dh
-    int 21h
 done:
+
     ret
 unlock endp
+endif
 
 setBps:
     cmp ax, sizeof sectbuffer + 1 ; refuse sector sizes beyond 4 kB
@@ -5909,17 +5977,17 @@ IsExfatDir proc
     mov dl, 0
 nextitem:
     mov al, [si+bx].EXFDIRP.etype
-    cmp al, 81h
+    cmp al, 80h or EXFPTC_ALLOCBM
     jz ok
-    cmp al, 82h
+    cmp al, 80h or EXFPTC_UPCASET
     jz ok
-    cmp al, 83h
+    cmp al, 80h or EXFPTC_VOLLABEL
     jz ok
-    cmp al, 85h
+    cmp al, 80h or EXFPTC_FILE
     jz ok
-    cmp al, 0C0h
+    cmp al, EXFSTCF_STREAM
     jz isc0
-    cmp al, 0C1h
+    cmp al, EXFSTCF_NAME
     jz isc1
     test al, 80h
     jnz notfound
@@ -5935,15 +6003,15 @@ ok:
 isc0:                  ; secondary stream entry must directly follow primary file
     and bx, bx
     jz ok
-    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, 85h
+    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, 80h or EXFPTC_FILE
     jz ok
     jmp notfound
 isc1:                  ; secondary name entry must follow 0C0h or 0C1h entry
     and bx, bx
     jz ok
-    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, 0C1h
+    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, EXFSTCF_NAME
     jz ok
-    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, 0C0h
+    cmp [si+bx-DIRENTSIZE].EXFDIRP.etype, EXFSTCF_STREAM
     jz ok
 notfound:
     pop cx
@@ -6283,7 +6351,7 @@ getdecvalue proc
     mov di, sp
     mov byte ptr [di],0
 tryagain:
-    invoke getstring, di, 80-8, 0
+    invoke getstring, di, 80-8, 0, 80-8, _ret
 ;--- returns ax=chars, dx=cursor ofs
     mov cx, ax
     jcxz abort
@@ -6323,6 +6391,7 @@ donevalue:
 abort:
     add sp,80-8
     stc
+_ret:
     ret
 invalkey:
     dec si
@@ -7497,19 +7566,18 @@ validfirstfilechar endp
 endif
 
 ;--- get a filename entered in menu line
-;--- IN:  AL: 1=called by setdrive (TAB handling)
+;--- IN:  AX: tabproc
 ;--- OUT: CX=length of filename
 ;---      AH=last key scan code (check for TAB)
 ;---      [filenamebuffer]
 ;---      ax/di/dx/cx modified
 
 getfilename proc
-    mov [bTabSw], al
     mov dx, offset szFile
     call printbottom
     mov di, offset filenamebuffer
 if ?LFN
-    invoke getstring, di, 80 - sizeof szFile , 0
+    invoke getstring, di, sizeof filenamebuffer, 0, 80 - sizeof szFile, ax
     mov cx, ax
 else
     xor cx, cx
@@ -7802,7 +7870,7 @@ quit proc
     call getyn
     jnc doret
 
-    call unlock
+;    call unlock
 if ?VDD
 ;--- exit vdd on nt platforms
     call exitvdd
@@ -7931,7 +7999,7 @@ printmenu endp
 ;--- out: string in stringbuffer
 ;---      CX = string length
 
-getstringprompt:
+getstringprompt proc
     cmp [bHexString], 1
     jnz @F
     mov [bHexString], 0
@@ -7940,9 +8008,11 @@ getstringprompt:
     mov dx, offset szString
     call printbottom
     mov di, offset stringbuffer
-    invoke getstring, di, sizeof stringbuffer - 4, 0
+    invoke getstring, di, sizeof stringbuffer - 4, 0, sizeof stringbuffer - 4, _ret
     mov cx, ax
+_ret:
     ret
+getstringprompt endp
 
     include getstrng.inc
 
@@ -8107,7 +8177,7 @@ closefile:
 ;--- in: dword [dwValue] = number of sectors to save
 ;---     eax             = start sector
 ;---     [wFilehandle]   = file to write to
-;---     di              = function to call for progress display or NULL
+;---     di              = function to call for progress display
 ;--- out: C if error
 ;--- this function is called:
 ;---  1.  once per cluster in savechain ( save a fat/file chain )
@@ -8130,38 +8200,30 @@ writefile proc
     call allocmem
     jc exit
     mov [ioreq.pBuffer], ax
-    mov [ioreq.bRW], RW_READ  ; tell discaccess that we want to read
+    mov [ioreq.bRW], RW_READ             ; tell discaccess that we want to read
+    mov [handling], QUERY_FILL           ; inside writefile
     movzx esi, si
 
 writefileloop:
     call checktime
-    jc wfl1
+    jc @F
     call checkabort
     je abort
-    and di, di
-    jz @F
     call di
-    jmp wfl1
-@@:
-    mov eax, [dwValue]
-    mov cx, offset writingmsg 
-    call printprogress
-wfl1:
-    mov [handling], QUERY_FILL           ; inside writefile
-    cmp esi, [dwValue]
-    jc @F
-    mov esi, [dwValue]
 @@:
     sub [dwValue], esi
-
+    jnc @F
+    add esi, [dwValue]
+    mov [dwValue], 0
+@@:
 ;--- set both physical/logical sectors
     mov [drivepacket].sectors, si
     mov [dapacket].sectors, si
     call diskaccess
     jc done
 
-    mov cx, [wBps]                       ; bytes to write
-    imul cx, si
+    mov cx, [wBps]
+    imul cx, si                          ; bytes to write = sectorsize * sectors
     mov bx, [wFilehandle]
     mov dx, [ioreq.pBuffer]
     mov ah, 40h                          ; write to file
@@ -8173,16 +8235,14 @@ wfl1:
     cmp [dwValue], 0
     jnz writefileloop
 done:
+;--- do not modify flags until RET!
     mov [handling], ABORT_OPERATION      ; inside writefile
-
-;--- reset both sector counts
-    mov si, 1
-    mov [drivepacket].sectors, si
-    mov [dapacket].sectors, si
-
+    mov cx, 1
+    mov [drivepacket].sectors, cx        ; reset both sector counts
+    mov [dapacket].sectors, cx
     mov ax, offset sectbuffer
     xchg ax, [ioreq.pBuffer]
-    call freemem
+    call freemem                         ; restore heap ( won't change flags )
 exit:
     ret
 
@@ -8407,7 +8467,7 @@ invalvalue:
 dogethex:
     call printbottom
 dogethex2:
-    invoke getstring, di, 80-8, 0
+    invoke getstring, di, 80-8, 0, 80-8, done
     mov si, di
     mov cx, ax
 tryagain:

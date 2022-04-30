@@ -15,6 +15,10 @@ WDe V0.50pre2 [--.--.2022]
   - exFAT primary file entries: created & modified timestamps displayed in view.
   - exFAT file stream entries: 64-bit file size fully displayed in view.
   - significant speed-up for "save to file" function.
+  - in "save to file", file "chain" in exFAT, pressing TAB presets filename
+    with the exFAT filename.
+  - up to 255 chars may be entered as long filenames in bottom line.
+  - main menu: F1 display help now, "Save" moved to F7.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

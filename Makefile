@@ -8,9 +8,12 @@
 odir=build
 idir=src
 
-incfiles=$(idir)\undelete.inc $(idir)\unformat.inc $(idir)\fatfs.inc
+incfiles=$(idir)\undelete.inc $(idir)\unformat.inc $(idir)\fatfs.inc $(idir)\getstrng.inc
 
-all: $(odir)\wde.com $(odir)\setm43.exe $(odir)\wdevdd.dll $(odir)\wdex.com
+all: $(odir) $(odir)\wde.com $(odir)\setm43.exe $(odir)\wdevdd.dll $(odir)\wdex.com
+
+$(odir):
+	@mkdir $(odir)
 
 $(odir)\wde.com: $(idir)\wde.asm  $(incfiles)
 	@jwasm -mz -nologo -Sg -Fl=$(odir)\wde.lst -Fo=$(odir)\WDE.COM $(idir)\wde.asm

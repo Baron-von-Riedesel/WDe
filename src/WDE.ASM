@@ -513,6 +513,7 @@ part0B0C        db 'Fat32',0                            ; 41
                 db 'Inverse',0                          ; 42
                 db 'Next',0                             ; 43
                 db 'Help',0                             ; 44
+                db '$MFT',0                             ; 45
 
 ;--- a few menu items are dynamically (de)activated. 
 ;--- in those cases the menu string# must be known;
@@ -522,10 +523,10 @@ MENUF_RESTORE equ 15
 MENUF_CHAIN   equ 23
 
 if ?EXT
-MENUF_UNFORMAT equ 45
-MENUF_UNDELETE equ 46
-                db 'UnFormat',0                         ; 45
-                db 'UnDelete',0                         ; 46
+MENUF_UNFORMAT equ 46
+MENUF_UNDELETE equ 47
+                db 'UnFormat',0                         ; 46
+                db 'UnDelete',0                         ; 47
 endif
 
 
@@ -733,6 +734,7 @@ maxsize         dd ?            ; maximum filesize to recover
 minsize         dd ?            ; minimum filesize to recover
 dwNextsize      dd ?            ; next smallest filesize to recover
 fat12fixsec     dd ?            ; sector # for fat12 fix
+dwLastread      dd ?            ; small "read ahead" cache for find hex/string
 lostdirs        dw ?            ; total lost directories found
 rootdirs        dw ?            ; total root directories found
 wDirs           dw ?            ; total dirs found
@@ -758,7 +760,8 @@ filenamebuffer  db 256 dup (?)
 else
 filenamebuffer  db 72 dup (?)   ; size must be at least 69, 72 used for alignment
 endif
-stringbuffer    db 76 dup (?)   ; buffered string for find/fill (pos 74: length)
+stringbuffer    db 74 dup (?)   ; buffered string for find/fill
+stringlen       dw ?
 sprintfbuffer   db 80 dup (?)   ; buffer for sprintf
 ioreq           IOREQ <?>
 diskinfobuffer  DINFO1 <?>      ; buffer for int13h "get drive info"
@@ -1770,12 +1773,11 @@ fillinvrand::                           ;<--- entry for RANDOM/INVERSE
     push [dwCurSector]
     pop [ioreq.dwSector]
 
-;--- better use buffinsi() than sectbuffer directly;
-;--- it differs if sector size is != 512
     mov di, offset sectbuffer
+    call setfilllen
 
-keeprandomfill:
-    mov cx, [wBps]                      ; \Fixed?/
+keeprandomfill:                         ; <--- next "block"
+    mov cx, bp
     mov bl,[fillflag]
 
     cmp bl, FL_BIT12
@@ -1790,11 +1792,21 @@ dontshift:
     cmp bl, FL_INVERSE
     jne randomloop                      ; inverse function requires reading
     mov si, di                          ; every sector to reverse that data
+
+;--- todo: optimize the "sector restriction" thing
+
+    movzx eax, [dapacket.sectors]
+    cmp eax, [dwValue]
+    jbe @F
+    mov ax, word ptr [dwValue]
+    mov [dapacket.sectors], ax
+    mov [drivepacket.sectors], ax
+@@:
     call diskaccess_read
     jc fillerror
     push ds
     pop es
-randomloop:
+randomloop:                             ; <--- next byte/word/dword
     cmp bl, FL_INVERSE
     jne @F
     lodsd                               ; reverse a dword at a time
@@ -1838,7 +1850,7 @@ do12fill:
     call fillcommon
     jc fillerror
     jz done
-    mov cx, [wBps]              ; \Fixed?/
+    mov cx, bp
 @@:
     mov bh, ah                  ; save cur bits 8-11 in BH
     and bh, 0Fh
@@ -1852,7 +1864,7 @@ do12fill:
     call fillcommon
     jc fillerror
     jz done
-    mov cx, [wBps]              ; \Fixed?/
+    mov cx, bp
 @@:
     mov ax, dx
     shr ax, 4                   ;get next 4-11 in AL
@@ -1861,7 +1873,7 @@ do12fill:
     call fillcommon
     jc fillerror
     jz done
-    mov cx, [wBps]              ; \Fixed?/
+    mov cx, bp
 @@:
     mov ax, dx
     movsx dx,[fillflag+1]
@@ -1869,20 +1881,32 @@ do12fill:
     jmp do12fill
 
 ;--- done/fillerror
-;--- this code expects old value of [dwCurSector] pushed onto the stack!
 
+fillerror:
 done:
+    pushf
+    mov [dapacket.sectors],1
+    mov [drivepacket.sectors],1
     call readcursect
-    jc @F
+    popf
+    jc exit
     call updatescreen           ; let the user see how it looks like
     mov dx, offset donewritedisk
     call nuprinterror
-@@:
+exit:
     ret
 
-fillerror::
-    call readcursect
-exit:
+setfilllen:
+    mov bp, [wBps]
+    mov ax, sizeof sectbuffer
+    xor dx, dx
+    div bp
+    and dx, dx
+    jnz @F
+    mov [drivepacket.sectors], ax
+    mov [dapacket.sectors], ax
+    mov bp, sizeof sectbuffer
+@@:
     ret
 
 ;--- menu item "hex" of submenu "fill"
@@ -1898,11 +1922,32 @@ fillstring::
     call getstringprompt
 dofill:                               ; <--- entry "fill hex"
     jcxz exit
+    mov [stringlen], cx
     call getnos                       ; get number of sectors in [dwValue]
     jc exit
 
-;    mov dx, offset writetodiskmsg
-;    call printbottom
+;--- here string in stringbuffer, size in CX
+
+    mov si, offset stringbuffer
+    mov di, si
+    add di, cx
+
+;--- 1. get in cx a multiple of the string len that still fits in string buffer
+    mov ax, sizeof stringbuffer
+    cwd
+    div cx
+    mov dx, cx
+    imul cx, ax
+
+;--- 2. repeat string in buffer
+
+    push cx
+    sub cx, dx
+    push ds
+    pop es
+    rep movsb
+    pop cx
+
     push [dwCurSector]
     pop [ioreq.dwSector]
 
@@ -1910,38 +1955,55 @@ dofill:                               ; <--- entry "fill hex"
     pop es
     mov di, offset sectbuffer
 
-    mov ax, [wBps]
-    mov dx, cx
-
-kfi:
+    call setfilllen   ; adjust sector buffer length for the fill op (returned in BP)
+    mov ax, bp
+    mov dx, cx        ; save stringbuffer length in DX
+kfi:                  ; <--- new string copy op
     mov si, offset stringbuffer
-fillstringloop:
-    movsb
-    dec ax
-    jz dfs
-cfloop:
-    loop fillstringloop
     mov cx, dx
-    jmp kfi
-
-dfs:                  ;sector copied
-    call fillcommon   ;check ESC, write to disk, update top line
-    jc fillerror
-    jz done           ;[dwCurSector] = zero?
-    mov ax, [wBps]
-    jmp cfloop        ;continue copying
+    cmp ax, cx        ; 3. check if enough space in sector buffer for a full copy
+    jc @F
+    rep movsb         ; yes, just copy
+    sub ax, dx
+    jmp kfi           ; and restart
+@@:
+    xchg cx, ax       ; no, copy until sector buffer end
+    sub ax, cx
+    rep movsb
+    mov cx, ax        ; hold in cx what remains in string buffer
+    call fillcommon   ; buffer copied, so write to disk, check ESC, print progress
+    jbe @F            ; C:error, Z:dwValue==zero
+    mov ax, bp
+    sub ax, cx
+    rep movsb         ; 4. copy the rest of string buffer to cleaned sector buffer
+    jmp kfi           ; and restart
+@@:
+    mov si, [stringlen] ; don't change flags in next lines
+    lea si, [si + offset stringbuffer]
+    mov byte ptr [si], 0;clean multiples from string buffer, so it can be edited
+    jmp done
 
 fillamount endp
 
-;--- this routine must not modify EAX or CX!
+;--- this routine must not modify EAX, CX or DX!
 ;--- decrements [dwValue] (=number of sectors)
 ;--- out: C if ESC pressed or error
 ;---      Z set if no more sectors to fill
 
 fillcommon proc
+    push eax
+    movzx eax, [dapacket.sectors]
+    sub [dwValue], eax
+    jnc @F
+    add eax, [dwValue]
+    mov [dapacket.sectors], ax
+    mov [drivepacket.sectors], ax
+    mov [dwValue], 0
+@@:
+    pop eax
     call writesect
     jc error
-    dec [dwValue]
+    cmp [dwValue], 0
     jz done
 
     call checktime
@@ -1956,7 +2018,8 @@ fillcommon proc
     pop cx
     pop eax
 @@:
-    inc [ioreq.dwSector]
+	movzx edi, [dapacket.sectors]
+    add [ioreq.dwSector], edi
     push ds
     pop es
     mov di, offset sectbuffer
@@ -2494,7 +2557,7 @@ findmbr2:
 
 findnext:
     mov al, 1
-    mov cx, word ptr [stringbuffer+74]
+    mov cx, [stringlen]
     and cx, cx
     jnz stringsearch
     mov dx, offset nosearchstring
@@ -2601,18 +2664,18 @@ updatescreen endp
 
 stringsearch proc
 
-    mov word ptr [stringbuffer+74], cx  ; save length in last 2 bytes of buffer
-
     push [dwCurSector]
     pop [ioreq.dwSector]
-
-    push [sectofs]
 
     call spot2bufofs                    ; bx = sectofs + spot
 
     mov si, offset stringbuffer
-    mov cx, word ptr [stringbuffer+74]
+    mov di, offset sectbuffer
+    mov [stringlen], cx                 ; save length
     mov dx, [wBps]
+
+    mov [dwLastread], -1                ; init the "read ahead" cache
+
     cmp al,1
     jnz nextbyte
     lodsb
@@ -2620,19 +2683,19 @@ stringsearch proc
 nextbyte:
     lodsb
 @@:
-    cmp al, [sectbuffer+bx]
+    cmp al, [di+bx]
     je comparenextbyte
 contfindstring:
     inc bx
     cmp bx, dx
     jnz @B
-    call nextfindsector
+    call getnextsector              ; read next sector, NOT in string compare op
     mov al,[si-1]
     jmp @B
 
 nextbyteinstring:
     lodsb
-    cmp al, [sectbuffer+bx]
+    cmp al, [di+bx]
     jnz resetsearch
 comparenextbyte:
     inc bx
@@ -2640,48 +2703,74 @@ comparenextbyte:
     jz  stringfound
     cmp bx, dx
     jnz nextbyteinstring
-    call nextfindsector
+    call getnextsector              ; read next sector, in string compare op
     jmp nextbyteinstring
 
 resetsearch:
     sub si, offset stringbuffer + 2
     sub bx, si
     mov si, offset stringbuffer
-    mov cx, word ptr [stringbuffer+74]
+    mov cx, [stringlen]
     jnc nextbyte
     add bx, dx
     dec [ioreq.dwSector]
-    call diskaccess_read
-    jmp nextbyte
+    mov di, [_mem]                  ; no more need to read "backwards".
+;    call diskaccess_read           ; this allows that simple "read forward" cache that
+    jmp nextbyte                    ; is used below.
 
 stringfound:
+    call findreadreset              ; reset io to default ( 1 sector )
+    call findreadadjust             ; the sector of the found string must be at sectbuffer+0
     sub si, offset stringbuffer
-    sub bx, si
+    sub bx, si                      ; did the found string begin in the previous sector?
     jnc @F
     add bx, [wBps]
-    dec [ioreq.dwSector]
+    dec [ioreq.dwSector]            ; then just read it, don't care about the cache here!
     call diskaccess_read
 @@:
     mov ax, bx
-    and ax, 0FE00h
+    and ax, 0FE00h                  ; in case sector size is > 512 set offset
     mov [sectofs],ax
     and bx,1FFh
 
-    mov ax, bx                          ; set new spot (start of found string)
+    mov ax, bx                      ; set new spot (start of found string)
     mov dl,0
     call movecursor
-;    add sp,2+4                          ; skip [sectofs] + [dwCurSector]
-    add sp,2                            ; skip [sectofs]
     mov eax, [ioreq.dwSector]
     mov [dwCurSector], eax
     ret
 
-nextfindsector:
+getnextsector:
     mov eax, [dwDataend]
     cmp eax, [ioreq.dwSector]
     je stringnotfound
+
+    cmp di, [_mem]                 ; is current buffer the "heap"?
+    jnz @F
+    inc [ioreq.dwSector]           ; then we can be sure that the next sector
+    call findread                  ; is already read and cached.
+    xor bx, bx
+    ret
+@@:
+    mov ax, [stringlen]
+    cmp cx, ax                     ; in a compare op?
+    je @F                          ; if cx != stringlen, the stringlen is > 1
+    dec ax
+    jz @F
+    push cx                        ; to avoid to read the "previous" sector in case
+    push si                        ; the search op isn't successful, copy the remainder
+    push di                        ; onto the "heap".
+    sub cx, ax
+    neg cx
+    lea si, [di+bx]
+    mov di, [_mem]
+    rep movsb
+    pop di
+    pop si
+    pop cx
+@@:
     inc [ioreq.dwSector]
-    call diskaccess_read
+    call findread
     jc abort
 
     call checktime
@@ -2702,10 +2791,68 @@ stringnotfound:
     mov dx, offset searcherror    ; "no (nore) matches found"
     call nuprinterror
 abort:
-    pop ax                        ; skip "nextfindsector" return address
-    pop [sectofs]
+    call findreadreset
+    pop ax                        ; skip "getnextsector" caller address
     call readcursect
     ret
+
+;--- since stringsearch reads just forward now, 
+;--- a small cache is implemented ( consists of just the 4 kB sector buffer ).
+;--- this improves speed significantly.
+
+findread:
+	mov eax, [ioreq.dwSector]
+	sub eax, [dwLastread]
+	jb @F
+	cmp ax, [dapacket.sectors]
+	jb found
+@@:
+	mov eax, [dwDataend]
+	inc eax
+	sub eax, [ioreq.dwSector]
+	cmp eax, sizeof sectbuffer  shr 9
+	jb @F
+	mov ax, sizeof sectbuffer shr 9
+@@:
+	cmp [wBps], 512                ; currently we only cache if sector size is 512
+	ja @F                          ; ( could be improved by maintaining a shift factor )
+	mov [dapacket.sectors], ax
+	mov [drivepacket.sectors], ax
+@@:
+	call diskaccess_read
+	jc @F
+	mov eax, [ioreq.dwSector]
+	mov [dwLastread], eax
+	mov di, offset sectbuffer
+@@:
+	ret
+found:
+	shl ax, 9                      ; fix sector size 512
+	add ax, offset sectbuffer
+	mov di, ax
+	ret
+
+findreadreset:
+	mov [dapacket.sectors], 1
+	mov [drivepacket.sectors], 1
+	ret
+
+findreadadjust:
+;--- string has been found. Since we don't bother to copy sector
+;--- contents around ( just DI is adjusted ), we have to copy the
+;--- content now to the start of sectbuffer.
+	cmp di, offset sectbuffer  ; it it already there?
+	jz @F
+	pusha
+	mov si, di
+	mov di, offset sectbuffer
+	mov cx, [wBps]
+	push ds
+	pop es
+	rep movsb
+	popa
+@@:
+	ret
 
 stringsearch endp
 
@@ -2811,6 +2958,47 @@ done:
     ret
 getexfatname endp
 
+;--- this routine is called by getstring()
+;--- ax=start of string buffer
+
+getfatxname proc
+    pusha
+    push ds
+    pop es
+    mov di, ax
+    mov bp, ax
+    call bufferinsi
+    mov bx,[spot]
+    and bl, 11100000b
+    mov cx, 8
+@@:
+    mov al, [si+bx]
+    cmp al, SPACE
+    jz @F
+    stosb
+    inc bx
+    loop @B
+@@:
+    add bx, cx
+    mov al,[si+bx]
+    cmp al,' '
+    jz done
+    mov al,'.'
+    stosb
+    mov cl,3
+@@:
+    mov al,[si+bx]
+    cmp al, SPACE
+    jz done
+    stosb
+    inc bx
+    loop @B
+done:
+    mov byte ptr [di], 0   ; the last char must be 0
+    popa
+    ret
+getfatxname endp
+
 ;--- submenu file options, key F7
 ;--- IN: [chainflag] = FAT_CHAIN or FILE_CHAIN
 
@@ -2854,7 +3042,9 @@ deliverfn:
     jnz @F
     call getexfatname
     xor ax, ax
+    ret
 @@:
+    call getfatxname
     clc
     ret
 
@@ -3551,17 +3741,23 @@ submenu_jumpto proc
     @mitem 13, jumptodata
     @mend ldjumpmenu
 
+    @mstart ntfsjumpmenu
+    @mitem  7, jumptosector
+    @mitem  8, jumptobootsector
+    @mitem 45, jumptomft
+    @mend ntfsjumpmenu
+
     mov cl, 2
 ;--- set menu "input, MBR, partition1, ..."
     mov dx, pdjumpmenu + lpdjumpmenu shl 8
     cmp [ioreq.drvtype], DT_PHYSICAL
     je @F
+    mov dx, ntfsjumpmenu + lntfsjumpmenu shl 8
+    cmp [filesys], FS_NTFS
+    jz @F
     mov dx, ldjumpmenu + 1 shl 8  ; for CDFS, just jump to sector
     cmp [ioreq.drvtype], DT_CDROM
     je @F
-    mov dh, 2                     ; for NTFS logical devices, allow jump to boot sector
-    test [filesys], FS_NTFS
-    jnz @F
     mov dh, lldjumpmenu
 @@:
     jmp pushmenustack
@@ -3581,6 +3777,10 @@ jumptop4:
 
 jumptodata:
     mov ebx, [dwDataStart]
+    jmp donejump
+
+jumptomft:
+    mov ebx, [dwRootSect]
     jmp donejump
 
 jumptocluster:
@@ -5134,6 +5334,9 @@ bsntfsviewtab label word
     dw BPB.bytes_sector
     dw DStr('Bytes Per Sector')
     dw 0502h
+    dw BPB.sectors_cluster
+    dw DStr('Sectors Per Cluster')
+    dw 0301h
     dw BPB.reserved_sectors
     dw DStr('Reserved Sectors')
     dw 0502h
@@ -5146,6 +5349,12 @@ bsntfsviewtab label word
     dw 28h
     dw DStr('Sectors In Partition')
     dw 0A04h
+    dw 30h
+    dw DStr('$MFT Cluster')
+    dw 1408h
+    dw 38h
+    dw DStr('Backup $MFT Cluster')
+    dw 1408h
 lbsntfsviewtab equ ($ - offset bsntfsviewtab) / ( 3 * sizeof word )
 
     .code
@@ -5853,7 +6062,13 @@ isntfs:
     mov eax, [si+28h]
     dec eax
     mov [dwDataend], eax
-    mov [dwReserved], 1
+    mov al, [si].BPB.sectors_cluster
+    mov [bSpC], al
+    mov ecx, [si][30h]   ; it's actually a qword
+    movzx eax,al
+    mul ecx
+    mov [dwRootSect], eax
+    mov [dwReserved], eax
     ret
 
 isexfat:
@@ -8008,7 +8223,7 @@ getstringprompt proc
     mov dx, offset szString
     call printbottom
     mov di, offset stringbuffer
-    invoke getstring, di, sizeof stringbuffer - 4, 0, sizeof stringbuffer - 4, _ret
+    invoke getstring, di, sizeof stringbuffer, 0, sizeof stringbuffer, _ret
     mov cx, ax
 _ret:
     ret
@@ -8416,7 +8631,6 @@ nextnibble:
     mov cx, bx
     sub cx, si
     shr cx, 2
-    mov word ptr [stringbuffer+74], cx
     mov [bHexString], 1         ; hexstring in stringbuffer
 done:
     ret

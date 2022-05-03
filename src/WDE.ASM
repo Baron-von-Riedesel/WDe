@@ -727,6 +727,7 @@ endif
 bTabSw          db ?
 bSkipFat        db ?
 ;unlockdrv       db ?            ; unlock this drive if != 0
+bCacheSecs      db ?            ; small "read ahead" cache for find hex/string
 
 ;--- unformat fields
     align dword
@@ -734,7 +735,6 @@ maxsize         dd ?            ; maximum filesize to recover
 minsize         dd ?            ; minimum filesize to recover
 dwNextsize      dd ?            ; next smallest filesize to recover
 fat12fixsec     dd ?            ; sector # for fat12 fix
-dwLastread      dd ?            ; small "read ahead" cache for find hex/string
 lostdirs        dw ?            ; total lost directories found
 rootdirs        dw ?            ; total root directories found
 wDirs           dw ?            ; total dirs found
@@ -2674,7 +2674,7 @@ stringsearch proc
     mov [stringlen], cx                 ; save length
     mov dx, [wBps]
 
-    mov [dwLastread], -1                ; init the "read ahead" cache
+    mov [bCacheSecs], 1                 ; init the "read ahead" cache
 
     cmp al,1
     jnz nextbyte
@@ -2712,12 +2712,10 @@ resetsearch:
     mov si, offset stringbuffer
     mov cx, [stringlen]
     jnc nextbyte
-    add bx, dx
-    dec [ioreq.dwSector]
-;    call diskaccess_read           ; no more need to read the "previous" sector
-    lea di, [si+1]                  ; this allows that simple "read forward" cache that
-    sub di, bx                      ; is used below.
-    jmp nextbyte
+    add bx, dx                      ; a sector boundary was crossed during string compare. 
+    lea di, [si+1]                  ; we don't care about the previous sector content, since
+    sub di, bx                      ; the searchstring equals it. so just set DI to searchstring+1
+    jmp nextbyte                    ; and restart the compare.
 
 stringfound:
     call findreadreset              ; reset io to default ( 1 sector )
@@ -2726,7 +2724,7 @@ stringfound:
     sub bx, si                      ; did the found string begin in the previous sector?
     jnc @F
     add bx, [wBps]
-    dec [ioreq.dwSector]            ; then just read it, don't care about the cache here!
+    dec [ioreq.dwSector]            ; then just read it, don't care about the cache anymore!
     call diskaccess_read
 @@:
     mov ax, bx
@@ -2748,13 +2746,11 @@ getnextsector:
 
     cmp di, offset sectbuffer      ; is current "buffer" not inside sectbuffer?
     jae @F
-    inc [ioreq.dwSector]           ; then we can be sure that the next sector
-    call findread                  ; is already read and cached.
+    call findgetcur                 ; and has already been read - just DI must be set.
     xor bx, bx
     ret
 @@:
-    inc [ioreq.dwSector]
-    call findread
+    call findreadnext
     jc abort
 
     call checktime
@@ -2784,35 +2780,33 @@ abort:
 ;--- a small cache is implemented ( consists of just the 4 kB sector buffer ).
 ;--- this improves speed significantly.
 
-findread:
-    mov eax, [ioreq.dwSector]
-    sub eax, [dwLastread]
-    jb @F
-    cmp ax, [dapacket.sectors]
-    jb found
-@@:
-    mov eax, [dwDataend]
+findreadnext:
+    inc [ioreq.dwSector]
+    cmp [wBps], 512                ; currently we only cache if sector size is 512
+    jnz diskaccess_read            ; ( could be improved by maintaining a shift factor )
+    dec [bCacheSecs]               ; something in cache?
+    jz @F
+    add di, [wBps]                 ; then adjust DI to point to next sector
+    ret
+@@:                                ; cache has to be refilled.
+    mov eax, [dwDataend]           ; how many sectors exist until end?
     inc eax
     sub eax, [ioreq.dwSector]
     cmp eax, sizeof sectbuffer  shr 9
     jb @F
     mov ax, sizeof sectbuffer shr 9
 @@:
-    cmp [wBps], 512                ; currently we only cache if sector size is 512
-    ja @F                          ; ( could be improved by maintaining a shift factor )
+    mov [bCacheSecs], al           ; set cache size and numsecs for both log/phys drives
     mov [dapacket.sectors], ax
     mov [drivepacket.sectors], ax
-@@:
     call diskaccess_read
-    jc @F
-    mov eax, [ioreq.dwSector]
-    mov [dwLastread], eax
-    mov di, offset sectbuffer
-@@:
+    mov di, offset sectbuffer      ; and return DI pointing to the first sector read.
     ret
-found:
-    shl ax, 9                      ; fix sector size 512
-    add ax, offset sectbuffer
+findgetcur:                        ; reload DI with the last sector read.
+    mov ax, [dapacket.sectors]     ; needed when a sector boundary was crossed during
+    sub al, [bCacheSecs]           ; a string compare. When the search has to be reset,
+    shl ax, 9                      ; DI must be set to the current sector's offset.
+    add ax, offset sectbuffer      ; Should work even if cache is not setup due to wBps != 512.
     mov di, ax
     ret
 

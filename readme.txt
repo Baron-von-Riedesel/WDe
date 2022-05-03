@@ -25,10 +25,10 @@
   standard text mode, but loads the 8x8 font instead of the usual 8x16 one
   and restricts the scan lines to 350, thus achieving the needed 43 rows.
 
-   There's a small tool, SETM43, supplied. This may allow WDE to use a better
-  looking font (8x14) with still 43 lines, but SETM43 won't run with all
-  graphics cards - it uses a heavily modified VESA mode 0x102, something
-  that may work or not.
+   There are 2 small tools, SETM43/SETM432, supplied. These may allow WDE
+  to use a better looking font (8x14) with still 43 lines, but there is no
+  guarantee that any of those tools runs with your graphics card - they use
+  a heavily modified VESA mode 0x102, something that may work or not.
 
 
   3. Environment

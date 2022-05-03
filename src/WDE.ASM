@@ -2714,9 +2714,10 @@ resetsearch:
     jnc nextbyte
     add bx, dx
     dec [ioreq.dwSector]
-    mov di, [_mem]                  ; no more need to read "backwards".
-;    call diskaccess_read           ; this allows that simple "read forward" cache that
-    jmp nextbyte                    ; is used below.
+;    call diskaccess_read           ; no more need to read the "previous" sector
+    lea di, [si+1]                  ; this allows that simple "read forward" cache that
+    sub di, bx                      ; is used below.
+    jmp nextbyte
 
 stringfound:
     call findreadreset              ; reset io to default ( 1 sector )
@@ -2745,29 +2746,12 @@ getnextsector:
     cmp eax, [ioreq.dwSector]
     je stringnotfound
 
-    cmp di, [_mem]                 ; is current buffer the "heap"?
-    jnz @F
+    cmp di, offset sectbuffer      ; is current "buffer" not inside sectbuffer?
+    jae @F
     inc [ioreq.dwSector]           ; then we can be sure that the next sector
     call findread                  ; is already read and cached.
     xor bx, bx
     ret
-@@:
-    mov ax, [stringlen]
-    cmp cx, ax                     ; in a compare op?
-    je @F                          ; if cx != stringlen, the stringlen is > 1
-    dec ax
-    jz @F
-    push cx                        ; to avoid to read the "previous" sector in case
-    push si                        ; the search op isn't successful, copy the remainder
-    push di                        ; onto the "heap".
-    sub cx, ax
-    neg cx
-    lea si, [di+bx]
-    mov di, [_mem]
-    rep movsb
-    pop di
-    pop si
-    pop cx
 @@:
     inc [ioreq.dwSector]
     call findread
@@ -2801,58 +2785,58 @@ abort:
 ;--- this improves speed significantly.
 
 findread:
-	mov eax, [ioreq.dwSector]
-	sub eax, [dwLastread]
-	jb @F
-	cmp ax, [dapacket.sectors]
-	jb found
+    mov eax, [ioreq.dwSector]
+    sub eax, [dwLastread]
+    jb @F
+    cmp ax, [dapacket.sectors]
+    jb found
 @@:
-	mov eax, [dwDataend]
-	inc eax
-	sub eax, [ioreq.dwSector]
-	cmp eax, sizeof sectbuffer  shr 9
-	jb @F
-	mov ax, sizeof sectbuffer shr 9
+    mov eax, [dwDataend]
+    inc eax
+    sub eax, [ioreq.dwSector]
+    cmp eax, sizeof sectbuffer  shr 9
+    jb @F
+    mov ax, sizeof sectbuffer shr 9
 @@:
-	cmp [wBps], 512                ; currently we only cache if sector size is 512
-	ja @F                          ; ( could be improved by maintaining a shift factor )
-	mov [dapacket.sectors], ax
-	mov [drivepacket.sectors], ax
+    cmp [wBps], 512                ; currently we only cache if sector size is 512
+    ja @F                          ; ( could be improved by maintaining a shift factor )
+    mov [dapacket.sectors], ax
+    mov [drivepacket.sectors], ax
 @@:
-	call diskaccess_read
-	jc @F
-	mov eax, [ioreq.dwSector]
-	mov [dwLastread], eax
-	mov di, offset sectbuffer
+    call diskaccess_read
+    jc @F
+    mov eax, [ioreq.dwSector]
+    mov [dwLastread], eax
+    mov di, offset sectbuffer
 @@:
-	ret
+    ret
 found:
-	shl ax, 9                      ; fix sector size 512
-	add ax, offset sectbuffer
-	mov di, ax
-	ret
+    shl ax, 9                      ; fix sector size 512
+    add ax, offset sectbuffer
+    mov di, ax
+    ret
 
 findreadreset:
-	mov [dapacket.sectors], 1
-	mov [drivepacket.sectors], 1
-	ret
+    mov [dapacket.sectors], 1
+    mov [drivepacket.sectors], 1
+    ret
 
 findreadadjust:
 ;--- string has been found. Since we don't bother to copy sector
 ;--- contents around ( just DI is adjusted ), we have to copy the
 ;--- content now to the start of sectbuffer.
-	cmp di, offset sectbuffer  ; it it already there?
-	jz @F
-	pusha
-	mov si, di
-	mov di, offset sectbuffer
-	mov cx, [wBps]
-	push ds
-	pop es
-	rep movsb
-	popa
+    cmp di, offset sectbuffer  ; it it already there?
+    jz @F
+    pusha
+    mov si, di
+    mov di, offset sectbuffer
+    mov cx, [wBps]
+    push ds
+    pop es
+    rep movsb
+    popa
 @@:
-	ret
+    ret
 
 stringsearch endp
 

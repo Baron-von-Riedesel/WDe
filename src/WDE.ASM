@@ -39,7 +39,7 @@ ifndef ?EXT
 ?EXT             EQU 1  ; 1=enable "undelete" & "unformat" functions
 endif
 ifndef ?PM
-?PM              EQU 0  ; 1=running as 16-bit DPMI client
+?PM              EQU 0  ; 1=running as DPMI client
 endif
 ifndef ?VDD
 ?VDD             EQU 1  ; 1=winXP VDD supported
@@ -617,7 +617,6 @@ numfifields equ ($ - offset fifields) / (2 * sizeof word)
 
 _BSS segment
 
-old24h          dd ?
 vidaddr         dd ? ; start video buffer
 stackbot        dw ? ; stack bottom
 vidcolsize      dw ?
@@ -741,14 +740,17 @@ wDirs           dw ?            ; total dirs found
 lasttick        dw ?            ; timer ticks since last call
 
 if ?DEBUG
-  storedeax     dd ?
-  storedebx     dd ?
-  storedecx     dd ?
-  storededx     dd ?
-  storedsi      dw ?
-  storeddi      dw ?
+starttime       dd ?
+storedeax       dd ?
+storedebx       dd ?
+storedecx       dd ?
+storededx       dd ?
+storedsi        dw ?
+storeddi        dw ?
 endif
 
+oldint24        dd ?
+                dw ?            ; add a word to oldint24 in case it runs in dpmi32
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
 
@@ -786,8 +788,8 @@ _BSS ends
 getstring proto stdcall :ptr, :word, :word, :word, :ptr
 
 if ?PM
-    include initpm16.inc
-    include wdepm16.inc
+    include initpm.inc
+    include wdepm.inc
 endif
 
 ;--- code to access WDEVDD on NT platforms.
@@ -810,8 +812,29 @@ endif
 
     include sprintf.inc
 if ?DEBUG
-	include ..\Test\timer.inc
+    include ..\Test\timer.inc
 endif
+@getstarttime macro
+if ?DEBUG
+    pushad
+    call gettimer
+    mov starttime, eax
+    popad
+endif
+endm
+@printtime macro formstr 
+if ?DEBUG
+    pushf
+    pushad
+    call gettimer
+    sub eax, starttime
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr(formstr), eax
+    call printerror
+    popad
+    popf
+endif
+endm
 
 ;--- main menu definition
 
@@ -937,24 +960,23 @@ has_drive:
     call setseeds1
     call vinit                  ; init video mode, init screen
 if ?PM
-    call initpm16
-    call wdepm16
+    call initpm
+    call wdepm
     mov bl,24h                  ; use DPMI to modify int vector, since
     mov ax, 204h                ; DS MUST hold DGROUP selector when int 21h is called
     int 31h
-    mov word ptr [old24h+0], dx
-    mov word ptr [old24h+2], cx
+    @storevec [oldint24]
     mov cx, cs
-    mov dx, offset int24h
+    @movofs dx, offset myint24
     mov al, 5
     int 31h
 else
     mov ax, 3524h               ; back up old int 24h ( must be done AFTER switch to pm )
     int 21h
-    mov word ptr [old24h+0], bx
-    mov word ptr [old24h+2], es
+    mov word ptr [oldint24+0], bx
+    mov word ptr [oldint24+2], es
     push ds
-    mov dx, offset int24h       ; new address in DS:DX
+    mov dx, offset myint24      ; new address in DS:DX
     push cs
     pop ds
     mov ah, 25h                 ; set up new int 24h
@@ -967,7 +989,11 @@ endif
     mov [_mem], sp              ; set start of heap ( currently used by unformat only )
     cmp al, -1
     jnz disk_entered
+
 enter_disk:
+if ?MOUNT
+    mov [bMount], 0             ; reset any mount option
+endif
     call setdrive
     jnc disk_entered
     call quit
@@ -976,19 +1002,16 @@ disk_entered:
     call trydevice
     jc enter_disk
     call clearsecarea           ; clear sector rectangle (contains copyright msg)
-
-drive_ok::
+;drive_ok::
     call setvariables           ; set all obtainable parameter variables
 
 if ?MOUNT
-    cmp [bMount], 0
-    jz @F
-    mov al,0
-    xchg al, [bMount]
     cmp [ioreq.drvtype], DT_PHYSICAL
     jnz @F
+    movzx eax, [bMount]
+    cmp al, 0
+    jz @F
 ;--- setvariables moved partition startsectors in [partitions]
-    movzx eax, al
     dec ax
     mov eax, [partitions+eax*4]
     mov [ioreq.dwSector], eax
@@ -2096,14 +2119,17 @@ done:
 
 ;--- if we're on a logical drive, attempt
 ;--- to jump to respective phys. drive.
-;--- won't work for ramdisks.
+;--- won't work for ramdisks - also, the HD number in 
+;--- the boot sector is generally a rather unreliable info.
 log2phys:
     mov al, [hdnumber]
     and al, al
     jz @F
     mov bh, DT_PHYSICAL
     call trydevice
-    jnc drive_ok
+;    jnc drive_ok
+    jc @F
+    call setvariables           ; set all obtainable parameter variables
 @@:
     ret
 
@@ -2676,6 +2702,8 @@ stringsearch proc
 
     mov [bCacheSecs], 1                 ; init the "read ahead" cache
 
+    @getstarttime
+
     cmp al,1
     jnz nextbyte
     lodsb
@@ -2713,6 +2741,7 @@ resetsearch:
     mov cx, [stringlen]
     jnc nextbyte
     add bx, dx                      ; a sector boundary was crossed during string compare. 
+    shl edi, 16                     ; save current sector address in hiword(edi)
     lea di, [si+1]                  ; we don't care about the previous sector content, since
     sub di, bx                      ; the searchstring equals it. so just set DI to searchstring+1
     jmp nextbyte                    ; and restart the compare.
@@ -2720,6 +2749,9 @@ resetsearch:
 stringfound:
     call findreadreset              ; reset io to default ( 1 sector )
     call findreadadjust             ; the sector of the found string must be at sectbuffer+0
+
+    @printtime "stringsearch; duration %lu ms"
+
     sub si, offset stringbuffer
     sub bx, si                      ; did the found string begin in the previous sector?
     jnc @F
@@ -2746,7 +2778,7 @@ getnextsector:
 
     cmp di, offset sectbuffer      ; is current "buffer" not inside sectbuffer?
     jae @F
-    call findgetcur                 ; and has already been read - just DI must be set.
+    shr edi, 16                    ; then restore current sector address from hiword(edi)
     xor bx, bx
     ret
 @@:
@@ -2768,6 +2800,7 @@ getnextsector:
     ret
 
 stringnotfound:
+    @printtime "stringsearch; duration %lu ms"
     mov dx, offset searcherror    ; "no (nore) matches found"
     call nuprinterror
 abort:
@@ -2801,13 +2834,6 @@ findreadnext:
     mov [drivepacket.sectors], ax
     call diskaccess_read
     mov di, offset sectbuffer      ; and return DI pointing to the first sector read.
-    ret
-findgetcur:                        ; reload DI with the last sector read.
-    mov ax, [dapacket.sectors]     ; needed when a sector boundary was crossed during
-    sub al, [bCacheSecs]           ; a string compare. When the search has to be reset,
-    shl ax, 9                      ; DI must be set to the current sector's offset.
-    add ax, offset sectbuffer      ; Should work even if cache is not setup due to wBps != 512.
-    mov di, ax
     ret
 
 findreadreset:
@@ -3663,25 +3689,13 @@ isoloop:
     dec si
     jnz isoloop
 drivedump:
-if ?DEBUG
-    .data
-starttime dd 0
-    .code
-    call gettimer
-    mov starttime, eax
-endif
+
+    @getstarttime
     xor eax, eax
     mov di, offset writeprogress
     call writefile
-if ?DEBUG
-    pushf
-    call gettimer
-    sub eax, starttime
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("writefile duration: %lu ms"), eax
-    call printerror
-    popf
-endif
+    @printtime "writefile duration: %lu ms"
+
 donedump:
     pushf
     call closefile
@@ -6525,6 +6539,7 @@ aspotcalc:
     add dl, COLASC
 ;    inc dh
     add dh, ROWXXX                ; lines start at 1
+@ret:
     ret
 
 ;-------------------------------------------------------
@@ -6544,7 +6559,7 @@ getdecvalue proc
     mov di, sp
     mov byte ptr [di],0
 tryagain:
-    invoke getstring, di, 80-8, 0, 80-8, _ret
+    invoke getstring, di, 80-8, 0, 80-8, offset @ret
 ;--- returns ax=chars, dx=cursor ofs
     mov cx, ax
     jcxz abort
@@ -6584,7 +6599,6 @@ donevalue:
 abort:
     add sp,80-8
     stc
-_ret:
     ret
 invalkey:
     dec si
@@ -8109,14 +8123,13 @@ else
     int 10h
 endif
 if ?PM
+    @loadvec [oldint24]
     mov bl, 24h
-    mov dx, word ptr [old24h+0]
-    mov cx, word ptr [old24h+2]
     mov ax, 0205h
     int 31h
 else
     mov ax, 2524h
-    lds dx, [old24h]
+    lds dx, [oldint24]
     int 21h
 endif
     mov ax, 4c00h
@@ -8201,9 +8214,8 @@ getstringprompt proc
     mov dx, offset szString
     call printbottom
     mov di, offset stringbuffer
-    invoke getstring, di, sizeof stringbuffer, 0, sizeof stringbuffer, _ret
+    invoke getstring, di, sizeof stringbuffer, 0, sizeof stringbuffer, offset @ret
     mov cx, ax
-_ret:
     ret
 getstringprompt endp
 
@@ -8659,7 +8671,7 @@ invalvalue:
 dogethex:
     call printbottom
 dogethex2:
-    invoke getstring, di, 80-8, 0, 80-8, done
+    invoke getstring, di, 80-8, 0, 80-8, offset @ret
     mov si, di
     mov cx, ax
 tryagain:
@@ -8881,9 +8893,13 @@ checktime proc
 checktime endp
 
 ;-------------------------------------------------------
-int24h:         ; this is the new int 24h to catch any critical errors
+myint24:        ; this is the new int 24h to catch any critical errors
     mov al, 3   ; abort operation code
+if ?PM
+    @iret
+else
     iret        ; int 24h would otherwise crash WDe with Abort/Retry/Fail
+endif
 ;-----------------------------------------------------------------
 
 END Start

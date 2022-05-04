@@ -1,8 +1,11 @@
 
-;*** startup code to run a small model program as 16-bit DPMI client
-;*** will try to load HDPMI16.EXE if no DPMI host is active
+;*** startup code to run a small model program as DPMI client
+;*** will try to load HDPMI if no DPMI host is active
 
-?LIMITCS equ 1  ;1=limit CS to real code size 
+?LIMITCS equ 1  ; 1=limit CS to real code size 
+ifndef ?32BIT
+?32BIT   equ 1  ; 1=run as 32-bit client
+endif
 
 EXECRM struct
 environ dw ?
@@ -17,7 +20,11 @@ EXECRM ends
 
 szPath db 'PATH='
 
+if ?32BIT
+szHDPMI db 'HDPMI32.EXE',00
+else
 szHDPMI db 'HDPMI16.EXE',00
+endif
 LHDPMI  equ $ - szHDPMI
 
 errNoHost db "no DPMI host found",13,10,'$'
@@ -27,7 +34,7 @@ errInit   db "DPMI initialization failed",13,10,'$'
 
 ;--- DPMI initialization
 
-initpm16 proc
+initpm proc
 
     mov ax, 1687h           ; DPMI host installed?
     int 2fh
@@ -59,7 +66,11 @@ if ?LIMITCS
     dec dx
 endif
     mov bp, sp
+if ?32BIT
+    mov ax, 1               ; run as 32-bit client
+else
     xor ax, ax              ; run as 16-bit client
+endif
     call dword ptr [bp]
     jc initerr
 if ?LIMITCS
@@ -82,9 +93,9 @@ errexit:
     int 21h
     mov ax, 4CFFh
     int 21h
-initpm16 endp
+initpm endp
 
-;*** search and load hdpmi16.exe
+;*** search and load hdpmixx.exe
 
 loadserver proc
 
@@ -102,7 +113,7 @@ local pgmname[80]:byte
     mov env, ax
 
     call searchpath                  ; search PATH= variable -> SI, SI=0000 if error
-    call searchpgm                   ; search HDPMI16
+    call searchpgm                   ; search HDPMIxx
     jb error                         ; error "not found"
 
     mov AX, env
@@ -126,9 +137,9 @@ local pgmname[80]:byte
 error:
     ret
 
-;*** search HDPMI16 in current directory and directories of PATH
+;*** search HDPMIxx in current directory and directories of PATH
 ;*** Input: SI=address of PATH Variable or NULL (no PATH defined)
-;***      : DI=name of executable (=hdpmi16.exe)
+;***      : DI=name of executable (=hdpmixx.exe)
 
 searchpgm:
     push si

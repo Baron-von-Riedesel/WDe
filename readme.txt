@@ -51,7 +51,7 @@
   The source can be found at https://github.com/Baron-von-Riedesel/WDe.
 
    The build tools will also create wdex.com, a version of WDe that runs
-  in protected-mode as 16-bit DPMI client. There is currently no real benefit
+  in protected-mode as DPMI client. There is currently no real benefit
   using this binary. However, since protected-mode offers access to huge
   amounts of memory, it may allow to implement things that the real-mode
   WDe can't efficiently accomplish, for example, read in the whole FAT

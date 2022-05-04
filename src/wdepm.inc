@@ -25,18 +25,67 @@ rCSIP   dd ?
 rSSSP   dd ?
 RMCS    ends
 
-IRETS struct    ; structure of registered saved by INT
+if ?32BIT
+
+    .486        ; make jwasm generate "MOV SP, BP" "POP BP" instead of LEAVE in procs
+IRETS struct    ; IRETD struct on stack in INT
+wIP    dd ?
+wCS    dd ?
+wFlags dd ?
+IRETS ends
+
+@fp     equ <df>
+@iret   equ <iretd>
+
+@movr macro dst, src
+	mov e&dst, e&src
+endm
+@storevec macro addr
+	mov dword ptr addr[0], edx
+	mov word ptr addr[4], cx
+endm
+@loadvec macro addr
+	mov edx, dword ptr addr[0]
+	mov cx, word ptr addr[4]
+endm
+@movofs macro dst, src
+	mov e&dst, src
+endm
+
+else
+
+IRETS struct    ; IRETW struct on stack in INT
 wIP    dw ?
 wCS    dw ?
 wFlags dw ?
 IRETS ends
 
+@fp     equ <dd>
+@iret   equ <iret>
+
+@movr macro dst, src
+	mov dst, src
+endm
+@storevec macro addr
+	mov word ptr addr[0], dx
+	mov word ptr addr[2], cx
+endm
+@loadvec macro addr
+	mov dx, word ptr addr[0]
+	mov cx, word ptr addr[2]
+endm
+@movofs macro dst, src
+	mov dst, src
+endm
+
+endif
+
 
     .data
 
-oldint13 dd 0
-oldint2f dd 0
-oldint21 dd 0
+oldint13 @fp 0
+oldint2f @fp 0
+oldint21 @fp 0
 
     .code
 
@@ -53,8 +102,7 @@ myint13 proc
     jz is43
     cmp ah, 48h
     jz is48
-    jmp dword ptr [oldint13]
-
+    jmp [oldint13]
 is42:
 is43:
     mov [si].DAP.wBufferSeg, DGROUP ; set segment of transfer buffer
@@ -63,7 +111,7 @@ is48:
     sub sp, sizeof RMCS-(32+4+2)
     pushf
     pushad
-    mov di, sp
+    @movr di, sp
     push ss
     pop es
     mov [di].RMCS.rDS, DGROUP       ; request ptr is in DS:SI
@@ -81,7 +129,7 @@ is48:
     mov byte ptr [di+sizeof RMCS].IRETS.wFlags, al
     popad
     add sp, sizeof RMCS-32
-    iret
+    @iret
 myint13 endp
 
 ;--- int 21h interception
@@ -97,7 +145,11 @@ myint21 proc
     cmp ax, 7302h
     jz is7302
  endif
-    jmp dword ptr [oldint21]
+ if ?32BIT
+    cmp ah, 4Ch
+    jnz is71
+ endif
+    jmp [oldint21]
 is7305:
     mov [bx].DISKIO.buffseg, DGROUP  ; set segment of buffer
 is71:
@@ -106,7 +158,7 @@ is7302:
     sub sp, sizeof RMCS - (32+4+2)
     pushf
     pushad
-    mov di, sp
+    @movr di, sp
     push ss
     pop es
     mov [di].RMCS.rES, DGROUP
@@ -125,7 +177,7 @@ is7302:
     mov [bx].DISKIO.buffseg, ds
 @@:
     add sp, sizeof RMCS-32
-    iret
+    @iret
 myint21 endp
 
 ;--- translate int 2Fh, ax=1510h (CD-ROM access)
@@ -134,14 +186,14 @@ myint21 endp
 myint2f proc
     cmp ax, 1510h
     jz is1510
-    jmp dword ptr [oldint2f]
+    jmp [oldint2f]
 is1510:
     mov [bx].CDREQ.bufseg, DGROUP  ; set transfer buffer segment part
     pushd 0
     sub sp, sizeof RMCS-(32+4+2)
     pushf
     pushad
-    mov di, sp
+    @movr di, sp
     push ss
     pop es
     mov [di].RMCS.rES, DGROUP
@@ -154,7 +206,7 @@ is1510:
     popad
     add sp, sizeof RMCS-32
     mov [bx].CDREQ.bufseg, ds      ; restore selector of transfer buffer
-    iret
+    @iret
 myint2f endp
 
 ;--- alloc descriptors for _0000H and vidseg
@@ -191,7 +243,7 @@ getdescriptors endp
 ;--- WDe protected-mode init
 ;--- in: DS=SS=DGROUP, ES=PSP, CS=_TEXT
 
-wdepm16 proc
+wdepm proc
     mov [_psp], es                ; update PSP to a selector
     call getdescriptors           ; get descriptors for _0000H & vidseg
     jc error
@@ -202,30 +254,27 @@ endif
     mov bl, 13h                   ; intercept int 13h
     mov ax, 204h
     int 31h
-    mov word ptr [oldint13+0], dx
-    mov word ptr [oldint13+2], cx
+    @storevec [oldint13]
     mov cx, cs
-    mov dx, offset myint13
+    @movofs dx, myint13
     mov al, 5
     int 31h
 
     mov bl, 2Fh                   ; intercept int 2Fh
     mov al, 4
     int 31h
-    mov word ptr [oldint2f+0], dx
-    mov word ptr [oldint2f+2], cx
+    @storevec [oldint2f]
     mov cx, cs
-    mov dx, offset myint2f
+    @movofs dx, myint2f
     mov al, 5
     int 31h
 skip132f:
     mov bl, 21h                   ; intercept int 21h
     mov ax, 204h
     int 31h
-    mov word ptr [oldint21+0], dx
-    mov word ptr [oldint21+2], cx
+    @storevec [oldint21]
     mov cx, cs
-    mov dx, offset myint21
+    @movofs dx, myint21
     mov al, 5
     int 31h
 done:
@@ -233,5 +282,5 @@ done:
 error:
     mov ax,4cffh
     int 21h
-wdepm16 endp
+wdepm endp
 

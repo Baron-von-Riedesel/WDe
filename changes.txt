@@ -28,7 +28,7 @@ WDe V0.50pre1 [24.04.2022]
   - directory view changed, displays 1 item only, detects and shows
     LFN entries.
   - option -s ( safe mode ) added.
-  - optionally build wdex.com, a WDe running as 16-bit DPMI client.
+  - optionally build wdex.com, a WDe running as DPMI client.
   - fixed: recursing a chain searched "below" the current cluster only;
     this didn't guarantee that the linking cluster ( the predecessor )
     was found. OTOH, this fix has the effect that the recurse scan will

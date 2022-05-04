@@ -373,7 +373,9 @@ WDe User Manual
           "Sector 0" as a bootsector and sets all variables accordingly;
           P(hysical) treats the drive as a hard drive with a master boot record
           - that's likely to be useful if one has to navigate thru extended
-          DOS partitions.
+          DOS partitions. If L(ogical) is selected and the bootsector contains
+          no data that can be interpreted as FAT, NTFS or exFAT, then the
+          result might be "unsatisfying".
 
         4.2.6.3 - Item "UnFormat"
 

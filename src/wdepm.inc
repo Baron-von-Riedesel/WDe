@@ -27,7 +27,8 @@ RMCS    ends
 
 if ?32BIT
 
-    .486        ; make jwasm generate "MOV SP, BP" "POP BP" instead of LEAVE in procs
+    .486        ; make jwasm/masm avoid to generate LEAVE in procs with locals
+
 IRETS struct    ; IRETD struct on stack in INT
 wIP    dd ?
 wCS    dd ?

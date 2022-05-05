@@ -666,7 +666,7 @@ partitions      dd ?,?,?,? ; partition start sectors
 
 backupbs        dw ? ; backup boot sector location (FAT32)
 fsinfo          dw ? ; fsinfo sector (FAT32)
-wBps            dw ? ; bytes per sector
+wBps            dw ? ; current bytes per sector ( both physical/logical )
 lastbottomtext  dw ? ; printbottom backs up string pointer for readsect/writesect
                      ; to reprint it when there's a sector error
 hdnumber        db ? ; hard drive number partition belongs to
@@ -726,7 +726,7 @@ endif
 bTabSw          db ?
 bSkipFat        db ?
 ;unlockdrv       db ?            ; unlock this drive if != 0
-bCacheSecs      db ?            ; small "read ahead" cache for find hex/string
+bSecSh          db ?            ; shift factor for wBps
 
 ;--- unformat fields
     align dword
@@ -779,7 +779,11 @@ valuebuffer     db 11 dup (?)
     align 4
                 db 3 dup (?)    ; ensure sectbuffer is dword aligned
 fat12fix1       db ?            ; stores first borrowed byte for fat12
-sectbuffer      db 4096 dup (?) ; read buffer for sector reading
+
+BUFFSHIFT equ 12                ; sectbuffer must be a factor of 2
+
+sectbuffer      db (1 shl BUFFSHIFT) dup (?) ; read buffer for sector reading
+
 
 _BSS ends
 
@@ -835,6 +839,17 @@ if ?DEBUG
     popf
 endif
 endm
+@dprintf macro formstr, args:vararg 
+if ?DEBUG
+    pushf
+    pushad
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr(formstr), args
+    call printerror
+    popad
+    popf
+endif
+endm
 
 ;--- main menu definition
 
@@ -868,6 +883,7 @@ if 1 ;free memory beyond 64kB dgroup
     add bx, 1000h
     mov ah, 4ah
     int 21h
+    jc quit
 endif
     push ds
     pop es
@@ -1345,7 +1361,10 @@ endif
     mov [ioreq.pBuffer], offset sectbuffer
     mov [ioreq.drvtype], bh
     mov [dwDrivestart], 0
-    mov [wBps], 512
+    push ax
+    mov ax, 512
+    call setBps
+    pop ax
     cmp bh, DT_FILE
     jnz @F
     mov [ioreq.rwfunc], RWF_FILE
@@ -1386,7 +1405,8 @@ driveinvalid:
     call nuprinterror
 driveerror:
     pop [dwDrivestart]                ; if reading the new drive failed
-    pop [wBps]
+    pop ax
+    call setBps
     pop dword ptr [ioreq.bDrive]      ; restores bDrive, rwfunc, drvtype, bRW
     stc
     ret
@@ -1416,7 +1436,8 @@ iscdrom:
     mov [ioreq.rwfunc], RWF_CDRAW
     mov bx, 2352
 @@:
-    mov [wBps], bx                    ; set sector size to 2048/2352
+    mov ax, bx
+    call setBps                 ; set sector size to 2048/2352
     jmp tryread
 
 trydevice endp
@@ -2041,7 +2062,7 @@ fillcommon proc
     pop cx
     pop eax
 @@:
-	movzx edi, [dapacket.sectors]
+    movzx edi, [dapacket.sectors]
     add [ioreq.dwSector], edi
     push ds
     pop es
@@ -2697,91 +2718,123 @@ stringsearch proc
 
     mov si, offset stringbuffer
     mov di, offset sectbuffer
-    mov [stringlen], cx                 ; save length
     mov dx, [wBps]
+    add dx, di
+    mov [stringlen], cx                 ; save length
+    add di, bx
 
-    mov [bCacheSecs], 1                 ; init the "read ahead" cache
+    call findreadreset
+
+;--- about timings: this compare version uses "repnz scasb"
+;--- and "repz cmpsb". This avoids hand-coded loops and thus may make
+;--- code easier to understand, but one shouldn't expect speed advantages on
+;--- "modern" cpus. On the contrary, execution time may be slightly slower.
+;--- Another problem with those repeated scans and compares is that they tend
+;--- to behave "unexpected" if they run with cx=0.
 
     @getstarttime
 
+    push ds
+    pop es
     cmp al,1
     jnz nextbyte
     lodsb
-    jmp contfindstring
+    inc di
+    cmp di, dx
+    jz nexts
+    jmp @F
 nextbyte:
     lodsb
 @@:
-    cmp al, [di+bx]
-    je comparenextbyte
-contfindstring:
-    inc bx
-    cmp bx, dx
-    jnz @B
+    mov cx, dx
+    sub cx, di
+    repnz scasb
+    je comparestring
+nexts:
     call getnextsector              ; read next sector, NOT in string compare op
-    mov al,[si-1]
+    mov al, [si-1]
     jmp @B
+comparestring:                      ; ok, first chars do match
+    mov ax, [stringlen]
+    dec ax
+    jz stringfound                  ; done if string is just 1 char
+    cmp di, dx
+    jnz maybesplit
+    mov cx, ax
+    call getnextsector
+    mov bx, di
+    repz cmpsb
+    jz stringfound
+    mov di, bx                      ; not matching. this case is without sector bounds crossing
+    mov si, offset stringbuffer     ; just restore DI and reset SI
+    jmp nextbyte
 
-nextbyteinstring:
-    lodsb
-    cmp al, [di+bx]
-    jnz resetsearch
-comparenextbyte:
-    inc bx
-    dec cx
-    jz  stringfound
-    cmp bx, dx
-    jnz nextbyteinstring
-    call getnextsector              ; read next sector, in string compare op
-    jmp nextbyteinstring
+maybesplit:
+    mov bx, di
+    cmp cx, ax                      ; check if there's enough space in sector
+    jb splitcompare
+    mov cx, ax                      ; yes, use stringlen-1 to compare
+    repz cmpsb
+    jz stringfound
+noboundcross:
+    mov di, bx                      ; not matching. this case is without sector bounds crossing
+    mov si, offset stringbuffer     ; just restore DI and reset SI
+    jmp nextbyte
 
-resetsearch:
-    sub si, offset stringbuffer + 2
-    sub bx, si
-    mov si, offset stringbuffer
-    mov cx, [stringlen]
-    jnc nextbyte
-    add bx, dx                      ; a sector boundary was crossed during string compare. 
-    shl edi, 16                     ; save current sector address in hiword(edi)
-    lea di, [si+1]                  ; we don't care about the previous sector content, since
-    sub di, bx                      ; the searchstring equals it. so just set DI to searchstring+1
-    jmp nextbyte                    ; and restart the compare.
+splitcompare:
+    mov bp, cx
+    sub ax, cx                      ; remember in AX what's left to compare
+    repz cmpsb                      ; compare the first part
+    jnz noboundcross
+    mov cx, ax                      ; fill cx with the rest len to compare
+    call getnextsector
+    repz cmpsb                      ; and compare the second part ( no search string may cross 2 sector boundaries! )
+    jz stringfound2
+;--- a sector boundary has been crossed during compare.
+;--- we don't want to "reread" the old sector.
+    mov si, offset stringbuffer     ; reset SI
+    lea di, [si+1]
+    lea dx, [di+bp]
+    jmp nextbyte                    ; and restart the compare...
 
+stringfound2:                       ; string found, sector border crossed
 stringfound:
     call findreadreset              ; reset io to default ( 1 sector )
-    call findreadadjust             ; the sector of the found string must be at sectbuffer+0
-
-    @printtime "stringsearch; duration %lu ms"
-
-    sub si, offset stringbuffer
-    sub bx, si                      ; did the found string begin in the previous sector?
-    jnc @F
-    add bx, [wBps]
-    dec [ioreq.dwSector]            ; then just read it, don't care about the cache anymore!
+    sub di, [stringlen]
+    sub di, offset sectbuffer
+    jnc @F                          ; C if the found string began in the previous sector
+    add di, [wBps]
+    dec [ioreq.dwSector]            ; just read it, don't care about the cache anymore!
     call diskaccess_read
+    jmp sx1
 @@:
-    mov ax, bx
-    and ax, 0FE00h                  ; in case sector size is > 512 set offset
-    mov [sectofs],ax
-    and bx,1FFh
+    mov ax, di
+    mov cl, [bSecSh]
+    shr ax, cl
+    call findreadadjust             ; expects sec# in AL
+    movzx eax, ax
+    add eax, [ioreq.dwSector]
+    mov [dwCurSector], eax
+sx1:
+;--- set sector offset
+    mov ax, 1
+    mov cl, [bSecSh]
+    shl ax, cl
+    dec ax
+    xor ax, VIEWBYTES - 1
+    and ax, di
+    mov [sectofs], ax
 
-    mov ax, bx                      ; set new spot (start of found string)
+;--- set spot
+    mov ax, di
+    and ax, VIEWBYTES - 1
     mov dl,0
     call movecursor
-    mov eax, [ioreq.dwSector]
-    mov [dwCurSector], eax
     ret
 
 getnextsector:
-    mov eax, [dwDataend]
-    cmp eax, [ioreq.dwSector]
-    je stringnotfound
-
     cmp di, offset sectbuffer      ; is current "buffer" not inside sectbuffer?
-    jae @F
-    shr edi, 16                    ; then restore current sector address from hiword(edi)
-    xor bx, bx
-    ret
-@@:
+    jb @F                          ; then we did just compare inside the search string
     call findreadnext
     jc abort
 
@@ -2789,23 +2842,35 @@ getnextsector:
     jc @F
     call checkabort
     je abort
+    push es
     push cx
     mov eax, [dwDataend]
     sub eax, [ioreq.dwSector]
     mov cx, offset searchingmsg
     call printprogress
     pop cx
+    pop es
 @@:
-    xor bx, bx
+    mov di, offset sectbuffer      ; return DI pointing to the first sector read
+    mov dx, [dapacket.sectors]     ; and DX points to end of sectors
+    push cx
+    mov cl, [bSecSh]
+    shl dx, cl
+    add dx, di
+    pop cx
     ret
 
+;	@dprintf "programming error in searchstring, di=%X dx=%X sector=%lu", di, dx, [ioreq.dwSector]
+;	ret
+
 stringnotfound:
+    pop ax
     @printtime "stringsearch; duration %lu ms"
     mov dx, offset searcherror    ; "no (nore) matches found"
     call nuprinterror
 abort:
-    call findreadreset
     pop ax                        ; skip "getnextsector" caller address
+    call findreadreset
     call readcursect
     ret
 
@@ -2814,26 +2879,32 @@ abort:
 ;--- this improves speed significantly.
 
 findreadnext:
-    inc [ioreq.dwSector]
-    cmp [wBps], 512                ; currently we only cache if sector size is 512
-    jnz diskaccess_read            ; ( could be improved by maintaining a shift factor )
-    dec [bCacheSecs]               ; something in cache?
-    jz @F
-    add di, [wBps]                 ; then adjust DI to point to next sector
-    ret
-@@:                                ; cache has to be refilled.
     mov eax, [dwDataend]           ; how many sectors exist until end?
     inc eax
-    sub eax, [ioreq.dwSector]
-    cmp eax, sizeof sectbuffer  shr 9
+    movzx edx, [dapacket.sectors]
+    add [ioreq.dwSector], edx
+    add edx, [ioreq.dwSector]
+    cmp edx, eax
+    jae stringnotfound
+    sub eax, edx
+
+    push cx
+    mov cl, BUFFSHIFT
+    sub cl, [bSecSh]
+    mov dl, 1
+    shl dl, cl
+    pop cx
+    movzx edx, dl
+
+    cmp eax, edx
     jb @F
-    mov ax, sizeof sectbuffer shr 9
+    mov ax, dx
 @@:
-    mov [bCacheSecs], al           ; set cache size and numsecs for both log/phys drives
+    cmp [bSecSh], 0
+    je diskaccess_read
     mov [dapacket.sectors], ax
     mov [drivepacket.sectors], ax
     call diskaccess_read
-    mov di, offset sectbuffer      ; and return DI pointing to the first sector read.
     ret
 
 findreadreset:
@@ -2845,17 +2916,18 @@ findreadadjust:
 ;--- string has been found. Since we don't bother to copy sector
 ;--- contents around ( just DI is adjusted ), we have to copy the
 ;--- content now to the start of sectbuffer.
-    cmp di, offset sectbuffer  ; it it already there?
-    jz @F
     pusha
-    mov si, di
     mov di, offset sectbuffer
+    mov si, di
+    mov cl, [bSecSh]
+    shl ax, cl
+    add si, ax
     mov cx, [wBps]
     push ds
     pop es
     rep movsb
-    popa
 @@:
+    popa
     ret
 
 stringsearch endp
@@ -2879,7 +2951,7 @@ findcommon proc
 @@:
 
     mov ax, [wBps]            ; reached end of physical sector?
-    sub ax, 512
+    sub ax, VIEWBYTES
     cmp [sectofs], ax
     jb dontrw
     mov eax, [ioreq.dwSector] ; check if end of disk has been reached
@@ -2892,7 +2964,7 @@ findcommon proc
     mov [sectofs], 0
     jmp dontinc
 dontrw:
-    add [sectofs], 512
+    add [sectofs], VIEWBYTES
 dontinc:
     call bufferinsi
     ret
@@ -3841,7 +3913,7 @@ movefirst:
     jmp domove
 
 movelast:
-    mov ax, 512
+    mov ax, VIEWBYTES
     dec ax
     sub ax,[spot]
     mov dl, 0
@@ -3905,7 +3977,7 @@ dohexadd:     ; hex move left/right
 
 domove proc
     add ax, [spot]
-    cmp ax, 512
+    cmp ax, VIEWBYTES
     jae done
 
     push [spot]                   ; back old cursor spot up
@@ -5593,7 +5665,7 @@ nextsect1000:
 ;--- main menu, pgdn key
 
 nextsect:
-    add [sectofs], 512
+    add [sectofs], VIEWBYTES
 checkcursorbounds:
     mov dx, [sectofs]
     mov ax, [wBps]                        ; if (sectofs <= bps), then
@@ -5631,7 +5703,7 @@ prevsect:
     dec eax
     jmp dolastsect
 @@:
-    sub [sectofs], 512
+    sub [sectofs], VIEWBYTES
     jnc @F
     mov [sectofs], 0
 @@:
@@ -5655,7 +5727,7 @@ golastsect:
     call readsect
     jc @F
     mov dx, [wBps]
-    sub dx, 512
+    sub dx, VIEWBYTES
     mov [sectofs], dx
     jmp checkcursorbounds
 @@:
@@ -5770,13 +5842,29 @@ done:
 unlock endp
 endif
 
-setBps:
+;--- set wBps and bSecSh variables
+
+setBps proc
+    cmp ax, 1
+    jc done
     cmp ax, sizeof sectbuffer + 1 ; refuse sector sizes beyond 4 kB
     cmc
-    jc @F
-    mov [wBps], ax
+    jc done
+    mov [wBps], ax     ;0x200 -> 9, 0x100 -> 8
+    mov [bSecSh], 0
+    mov cl, 0
 @@:
+    shr ax, 1
+    jz @F
+    jc done
+    inc cl
+    jmp @B
+@@:
+    mov [bSecSh], cl
+    clc
+done:
     ret
+setBps endp
 
 ;--- set parameters for physical drive access
 ;--- in:  [ioreq.bDrive]
@@ -5852,7 +5940,8 @@ use1308:
     and cl,3
     xchg cl,ch
     mov [cylinders], cx
-    mov [wBps], 512
+    mov ax, 512
+    call setBps
     movzx eax, [cylinders]              ; CHS -> LBA
     movzx ebx, dh                       ; heads*cylinders
     mul ebx
@@ -6452,7 +6541,7 @@ readfile proc
 
 readfileloop:
 
-    mov ah, 3Fh                           ; read 512 bytes of the file
+    mov ah, 3Fh                           ; read "one sector" of the file
     mov bx, [wFilehandle]
     mov cx, [wBps]
     mov dx, offset sectbuffer
@@ -6951,7 +7040,7 @@ nextchar1:
     inc [scrn_row]
     mov [scrn_col], COLASC
 @@:
-    cmp cx, 512
+    cmp cx, VIEWBYTES
     jnz nextchar1
     pop si
 
@@ -6984,7 +7073,7 @@ donechar1:
     inc [scrn_row]
     mov [scrn_col], COLHEX
 @@:
-    cmp cx, 512
+    cmp cx, VIEWBYTES
     jne nextchar2
     jmp printaddresses
 nibout:
@@ -8879,8 +8968,10 @@ endif
 
 checktime proc
     push ax
-    mov es,[_0000H]
-    mov ax, es:[46Ch]
+    push ds
+    mov ds,[_0000H]
+    mov ax, ds:[46Ch]
+    pop ds
     push ax
     sub ax, [lasttick]
     cmp ax, 5

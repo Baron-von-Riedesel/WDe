@@ -4110,17 +4110,19 @@ lfntab label byte
 
     push bx
 @@:
-    mov cl, [si+bx]
-    and cl, 3Fh
-    cmp cl, 1
-    jz foundfirst
-    cmp bx,  512 - DIRENTSIZE
-    jz foundfirst
     cmp byte ptr [si+bx+DIR_ATTRIBUTES+DIRENTSIZE], 0Fh
     jnz foundfirst
+    mov cl, [si+bx]
+    and cl, 3Fh                 ; the LFN entries are located BEFORE the file entry
+    cmp cl, 1                   ; and the first byte is an index, starting with 1
+    jz foundfirst
+    cmp bx,  512 - DIRENTSIZE   ; last entry in this sector?
+    jz foundfirst               ; then stop. This is then not the first, name is truncated
     add bx, DIRENTSIZE
     jmp @B
 foundfirst:
+
+;--- now display the entries, descending, until last entry or sector begin is reached.
 
 nextentry:
     push bp
@@ -4350,15 +4352,51 @@ isfilename:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr('file name')
     call printstring
-fncont_nextrow:
+
+    mov di, 0
+
+;--- scan downwards (remaining in sector) to get the name predecessors
+
+    and bx, bx
+    jz fncont_nextrow
+@@:
+    cmp [si+bx-DIRENTSIZE].EXFDIRS.etype, EXFSTCF_NAME
+    jnz fncont_nextrow
+    dec di
+    sub bx, DIRENTSIZE
+    jnz @B
+
+fncont_nextrow:          ;<--- next row
     inc [scrn_row]
     mov [scrn_col], 1
     mov dl,'"'
     call printchar
-fncont:
+fncont:                  ;<--- next name entry
+
+    cmp di, 0            ; displaying current entry?
+    jnz notfirst
+    push bx              ; yes, then highlight
+    lea bx, [bx].EXFDIRSN.name_
+    mov [highlight.ofs], bx
+    mov cl, 0
+@@:
+    mov ax, [si+bx]
+    and ax, ax
+    jz @F
+    add bx, 2
+    inc cl
+    cmp cl, length EXFDIRSN.name_
+    jnz @B
+@@:
+    pop bx
+    mov [highlight.scsiz], cl
+    shl cl, 1
+    mov [highlight.siz_], cl
+    call bshighlight
+notfirst:
+    mov cx, length EXFDIRSN.name_
     push si
     lea si, [si+bx].EXFDIRSN.name_
-    mov cx, 15
 nextwchar:
     lodsw
     and ax, ax
@@ -4377,6 +4415,7 @@ namedone:
     jz @F
     cmp [si+bx+DIRENTSIZE].EXFDIRS.etype, EXFSTCF_NAME
     jnz @F
+    inc di
     add bx, DIRENTSIZE
     cmp [scrn_col], RIGHTCOL-15
     jb fncont
@@ -7330,8 +7369,8 @@ vmode_ok:
 
     call clearscreen
 
-    mov cx, 2000h
-    mov ah, 01h                           ; hide cursor
+    mov cx, 2000h                         ; hide cursor
+    mov ah, 01h                           ; set text mode cursor shape
     int 10h
 
     mov [scrn_xy], 1423h                  ; print version

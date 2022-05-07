@@ -21,6 +21,7 @@ WDe V0.50pre2 [--.--.2022]
   - main menu: F1 display help now, "Save" moved to F7.
   - huge speed-up for "find" and "fill" (string & hex).
   - another variant of tool setm43, setm432, added.
+  - check for invalid LFNs added in dirview.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

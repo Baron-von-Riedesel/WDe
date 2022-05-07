@@ -727,6 +727,7 @@ bTabSw          db ?
 bSkipFat        db ?
 ;unlockdrv       db ?            ; unlock this drive if != 0
 bSecSh          db ?            ; shift factor for wBps
+bIdx            db ?            ; curr index if lfns are displayed in dirview
 
 ;--- unformat fields
     align dword
@@ -4113,6 +4114,8 @@ lfntab label byte
     cmp byte ptr [si+bx+DIR_ATTRIBUTES+DIRENTSIZE], 0Fh
     jnz foundfirst
     mov cl, [si+bx]
+    test cl, 0C0h
+    jnz foundfirst
     and cl, 3Fh                 ; the LFN entries are located BEFORE the file entry
     cmp cl, 1                   ; and the first byte is an index, starting with 1
     jz foundfirst
@@ -4124,6 +4127,8 @@ foundfirst:
 
 ;--- now display the entries, descending, until last entry or sector begin is reached.
 
+    mov al, [si+bx]
+    mov [bIdx], al
 nextentry:
     push bp
     mov bp, offset lfntab
@@ -4182,6 +4187,12 @@ noprint:
     cmp bx, 0
     jz done
     sub bx, DIRENTSIZE
+	mov al, [si+bx]
+	inc [bIdx]
+	cmp al, [bIdx]
+	jz @F
+	mov [bIdx],-1
+@@:
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
     jz nextentry
 done:
@@ -4198,10 +4209,14 @@ done:
     jmp @B
 @@:
     pop bx
-    test byte ptr [si+bx], 80h
-    jz @F
-    mov [scrn_xy], (VIEWROW+1) * 100h + 1
     mov dx, CStr('(deleted)')
+    cmp byte ptr [si+bx], 0E5h
+    jz wronglfn
+    mov dx, CStr("(invalid)")
+    cmp [bIdx], -1
+    jnz @F
+wronglfn:
+    mov [scrn_xy], (VIEWROW+1) * 100h + 1
     call printstring
 @@:
     ret

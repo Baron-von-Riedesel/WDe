@@ -56,7 +56,7 @@ endif
 ?ALTKEYS         EQU 1  ; 1=handle Alt-Left/Right
 
         BOTTOMROW        equ 42 ; last row (menu, messages)
-        RIGHTCOL         equ 79 ; last col
+        MAXCOL           equ 79 ; last col
         ROWXXX           equ 1  ; row where all displays start
         VIEWROW          equ 34 ; start of "view" area
         COLHEX           equ 10 ; column where hex display starts
@@ -66,6 +66,9 @@ endif
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
         DIRENTSIZE       EQU 32   ; size of directory entry (FATxx + exFAT)
+
+        DARKMASK         equ 0F700h
+        NORMMASK         equ 0FF08h
 
 ; "bRW" variable
         RW_READ          EQU 0
@@ -728,6 +731,7 @@ bSkipFat        db ?
 ;unlockdrv       db ?            ; unlock this drive if != 0
 bSecSh          db ?            ; shift factor for wBps
 bIdx            db ?            ; curr index if lfns are displayed in dirview
+bDark           db ?            ; 1=screen foreground color not bright
 
 ;--- unformat fields
     align dword
@@ -1452,6 +1456,7 @@ setdrive proc
     jne fnreq
     mov dx, offset szDrive      ; prompt
     call printbottom            ; print on the bottom of the screen
+    call darkclr
 getkeyagain:
     call cursorgetkey           ; cursorgetkey turns the cursor on, gets
                                 ; a key and then shuts the cursor back off
@@ -2090,6 +2095,13 @@ printprogress:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("%s (sector %lu, remaining %lu)"), cx, [ioreq.dwSector], eax
     call printbottom
+    cmp [bDark], 3
+    jz @F
+    inc [bDark]
+    cmp [bDark], 3
+    jnz @F
+    call darkclr
+@@:
     pop dx
     ret
 
@@ -2630,6 +2642,12 @@ submenu_find endp
 
 updatescreen proc
 
+    cmp [bDark],0
+    jz @F
+    push NORMMASK
+    call swtclr
+    mov [bDark],0
+@@:
     call printtopline
     cmp [wBps], VIEWBYTES             ; in case the sector doesn't exactly fit on the screen, update offset
     jz @F
@@ -2806,7 +2824,7 @@ stringfound:
     jnc @F                          ; C if the found string began in the previous sector
     add di, [wBps]
     dec [ioreq.dwSector]            ; just read it, don't care about the cache anymore!
-    call diskaccess_read
+    call readsect                   ; use readsect to update dwCurSector
     jmp sx1
 @@:
     mov ax, di
@@ -2861,8 +2879,8 @@ getnextsector:
     pop cx
     ret
 
-;	@dprintf "programming error in searchstring, di=%X dx=%X sector=%lu", di, dx, [ioreq.dwSector]
-;	ret
+;   @dprintf "programming error in searchstring, di=%X dx=%X sector=%lu", di, dx, [ioreq.dwSector]
+;   ret
 
 stringnotfound:
     pop ax
@@ -4162,7 +4180,7 @@ namedone:
     pop bx
     mov dx, offset sprintfbuffer
     sub ax, dx
-    mov ah, RIGHTCOL-1
+    mov ah, MAXCOL-1
     sub ah, al
     mov [highlight.scsiz], al
     shl al, 1
@@ -4187,11 +4205,11 @@ noprint:
     cmp bx, 0
     jz done
     sub bx, DIRENTSIZE
-	mov al, [si+bx]
-	inc [bIdx]
-	cmp al, [bIdx]
-	jz @F
-	mov [bIdx],-1
+    mov al, [si+bx]  ; LFN entries must have an "descending" index
+    inc [bIdx]
+    cmp al, [bIdx]
+    jz @F
+    mov [bIdx], -1   ; mark LFN as invalid
 @@:
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
     jz nextentry
@@ -4432,7 +4450,7 @@ namedone:
     jnz @F
     inc di
     add bx, DIRENTSIZE
-    cmp [scrn_col], RIGHTCOL-15
+    cmp [scrn_col], MAXCOL-15
     jb fncont
     mov dl,'"'
     call printchar
@@ -6698,15 +6716,21 @@ getdecvalue proc
 
     call printbottom
     mov [dwMaxvalue], eax
+    call darkclr
+    push bp
     sub sp, 80-8
     mov si, sp
     mov byte ptr [si],0
     xor cx, cx
+    mov al, MAXCOL
+    sub al, [scrn_col]
+    mov ah, 0
+    mov bp, ax
 tryagain:
-    invoke getstring, si, 80-8, cx, 80-8, offset @ret
-;--- returns ax=chars, dx=cursor ofs
-    mov di, dx
+    invoke getstring, si, 80-8, cx, bp, offset @ret
+    mov di, dx                 ; returns ax=chars, dx=cursor ofs
     mov cx, ax
+    stc
     jcxz abort
     push cx
     push cx
@@ -6738,11 +6762,10 @@ donevalue:
     ja invalvalue
     mov ecx, ebx
     mov [dwValue], ecx
-    add sp, 80-8
-    ret
+    clc
 abort:
-    add sp,80-8
-    stc
+    lea sp, [esp+80-8]
+    pop bp
     ret
 invalkey:
     dec si
@@ -6820,7 +6843,7 @@ notinfat:                          ; not in reserved and not in fat
 continuecount:
     call printstring
 abortdc:
-    mov cl, RIGHTCOL                     ; clear to last column
+    mov cl, MAXCOL                     ; clear to last column
     sub cl, [scrn_col]
     call fillspace
     cmp [ioreq.drvtype], DT_PHYSICAL
@@ -7408,7 +7431,7 @@ clearscreen proc
     mov ax, COL_DEFAULT shl 8 or SPACE
 @@:
     push di
-    mov cx,RIGHTCOL+1
+    mov cx,MAXCOL+1
     rep stosw
     pop di
     add di, [vidcolsize]
@@ -7833,9 +7856,44 @@ nuprinterror::
     call printbottom
     mov dx, offset errormsg
     call printstring
+    call darkclr
     call getkey
     stc
     ret
+
+darkclr::
+    push DARKMASK
+    call swtclr
+    mov [bDark], 1
+    ret
+swtclr::
+    pushf
+    pusha
+    mov bp, sp
+    mov ax, [bp+16+2+2]
+    les di,[vidaddr]
+    mov ch, BOTTOMROW
+    mov dl, MAXCOL
+    inc di
+nextrow:
+    push di
+    mov cl, dl
+nextattr:
+    mov dh, es:[di]
+    and dh, ah
+    or  dh, al
+    mov es:[di], dh
+    add di, 2
+    dec cl
+    jnz nextattr
+    pop di
+    add di, [vidcolsize]
+    dec ch
+    jnz nextrow
+    popa
+    popf
+    ret 2
+
 printerror endp
 
 ;--- check char if it is a valid filename char
@@ -7931,6 +7989,7 @@ getfilename proc
     call printbottom
     mov di, offset filenamebuffer
 if ?LFN
+    call darkclr
     invoke getstring, di, sizeof filenamebuffer, 0, 80 - sizeof szFile, ax
     mov cx, ax
 else
@@ -8258,7 +8317,7 @@ else
 
     call cbuffer_offset
     mov ax, 07*100h+SPACE; 07=white on black
-    mov cx, RIGHTCOL+1
+    mov cx, MAXCOL+1
     rep stosw
 
     pop dx
@@ -8353,6 +8412,7 @@ printmenu endp
 ;---      CX = string length
 
 getstringprompt proc
+    call darkclr
     cmp [bHexString], 1
     jnz @F
     mov [bHexString], 0
@@ -8422,7 +8482,7 @@ clearviewarea::
     push di
     push cx
     mov ax, COL_DEFAULT shl 8 or SPACE
-    mov cx, RIGHTCOL+1
+    mov cx, MAXCOL+1
     rep stosw
     pop cx
     pop di
@@ -8462,7 +8522,7 @@ printbottom:
 clearbottom:
     push cx
     push ax
-    mov cl, RIGHTCOL+1
+    mov cl, MAXCOL+1
     sub cl, [scrn_col]
     call fillspace
     pop ax
@@ -8735,6 +8795,8 @@ gethexstring proc
 @@:
     mov dx, offset szHex
     mov di, offset stringbuffer
+    mov bx, sizeof stringbuffer
+    xor ax, ax
     call gethexdi
     jc done
     mov bx, sp
@@ -8784,14 +8846,25 @@ gethexstring endp
 gethexvalue proc
 
     mov [dwMaxvalue], eax
-    sub sp, 80-8
+    mov bx, 80-8
+    sub sp, bx
     mov di, sp
     mov byte ptr [di], 0
-nexttry:
+    mov ax, chkrou
     call gethexdi
-    mov di, bx     ; save cursor pos within string
-    jc done2
+    lea sp, [esp+80-8]
+    ret
+
+;--- callback
+;--- si=hex chars
+;--- cx=no of chars
+;--- out: ebx=hex value
+;--- if error, dx and bx must be restored
+
+chkrou:
+    push bx               ; bx must be restored if error
     xor ebx, ebx
+    push cx
 nextdigit:
     lodsb
     sub al, '0'
@@ -8805,44 +8878,47 @@ nextdigit:
     shl ebx, 4
     or bl, al
     loop nextdigit
-    cmp ebx, [dwMaxvalue]                 ; value smaller or equal to maximum?
+    cmp ebx, [dwMaxvalue] ; value smaller or equal to maximum?
     ja invalvalue
-    add sp, 80-8
-    ret
-done2:
-    add sp, 80-8
-    stc
+    pop cx
+    add sp, 2
     ret
 invalvalue:
-    mov bh, [vidpg]
-    mov ax, 0E07h   ; beep!
-    int 10h
-    xor dx, dx      ; no prompt display in gethexdi
-    mov cx, di      ; cursor in string
-    mov di, sp
-    jmp nexttry
+    pop cx
+    pop bx
+    stc
+    ret
 
 gethexvalue endp
 
 
-;--- DX != 0: print prompt DX, then get hex number at DI
-;--- DX == 0: enter string at DI, cursor pos in CX, 
+;--- DX != 0: print prompt DX
+;--- DX == 0: cursor pos in CX
+;--- DI : start buffer
+;--- BX = sizeof buffer
+;--- AX = check routine or NULL
 ;--- out: si = buffer
 
 gethexdi proc
 
+    call darkclr
+    push bp
     and dx, dx
-    jz tryagain
+    jz @F
     call printbottom
     xor cx, cx
+@@:
+    mov dl, MAXCOL
+    sub dl, [scrn_col]
+    mov dh, 0
+    mov bp, dx
+    push ax
 tryagain:
-    invoke getstring, di, 80-8, cx, 80-8, offset @ret
-    mov bx, dx                 ; save current cursor within string
+    invoke getstring, di, bx, cx, bp, offset @ret
     mov si, di
-    mov cx, ax
+    mov cx, ax                 ; ax=chars, dx=cursor
     stc
-    jcxz dogethex_ex
-    mov dx, cx
+    jcxz exit
 @@:
     lodsb
     cmp al,' '                 ; skip leading blanks
@@ -8866,16 +8942,26 @@ validchar:
     loop nextchar
     pop si
     pop cx
-    clc
-dogethex_ex:
+    pop ax
+    push ax
+    cmp ax, 0
+    jz @F
+    call ax
+    jc beepandcont
+@@:
+exit:
+    pop ax
+    pop bp
     ret
 invalchar:
-    pop si
-    pop cx
-    mov cx, bx
+    add sp,2+2      ; skip saved si and cx
+beepandcont:
+    mov cx, dx      ; get saved cursor within string
+    push bx
     mov bh, [vidpg]
     mov ax, 0E07h   ; beep!
     int 10h
+    pop bx
     jmp tryagain
 
 gethexdi endp

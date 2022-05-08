@@ -22,6 +22,7 @@ WDe V0.50pre2 [--.--.2022]
   - huge speed-up for "find" and "fill" (string & hex).
   - another variant of tool setm43, setm432, added.
   - check for invalid LFNs added in dirview.
+  - screen color softened if no user input possible in main area.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

@@ -38,35 +38,38 @@ local   csrsta:CSRPOS  ; start cursor position
 
     mov cx, wSizeBuf
     sub sp, cx
-    mov di, sp            ; di -> current char
+    mov di, sp            ; copy string to edit in temp buffer
     mov strsta, di
     mov si, pBuffer
-    xor cx, cx
-    dec cx
     push ds
     pop es
 @@:
     lodsb
     stosb
-    inc cx
     and al, al
-    jnz @B
+    loopnz @B
 
-    xor ax, ax
-    mov flags, ax
-    mov ax, cx            ; string length -> ax
-    mov cx, wSizeBuf      ; string is temporary
-    mov di, strsta
-
-    mov ax, wCursor       ; cursor offset
-    mov dx, [scrn_xy]
-    sub dl, al
-    mov csrsta, dx
-
+    xor cx, cx
+    mov flags, cx
+    mov di, sp
     mov si, di
-    add di, ax            ; current pointer
-    sub cx, ax            ; wSizeBuf - cursor
-    jbe strex
+
+    mov cx, wSizeBuf
+    mov ax, wCursor
+    add di, ax            ; DI=current pointer
+    sub cx, ax            ; CX=wSizeBuf - cursor
+    jbe strex             ; C if cursor beyond string len
+
+    mov dx, [scrn_xy]
+    cmp ax, wChars        ; cursor beyond display window?
+    jb @F
+    sub ax, wChars
+    add si, ax
+    mov ax, wChars
+    dec al                ; leave room for 1 char
+@@:
+    sub dl, al
+    mov csrsta, dx        ; start screen pos for str_out
 
 wingx:                    ; <---- get next key
 

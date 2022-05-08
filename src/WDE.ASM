@@ -6699,14 +6699,15 @@ getdecvalue proc
     call printbottom
     mov [dwMaxvalue], eax
     sub sp, 80-8
-    mov di, sp
-    mov byte ptr [di],0
+    mov si, sp
+    mov byte ptr [si],0
+    xor cx, cx
 tryagain:
-    invoke getstring, di, 80-8, 0, 80-8, offset @ret
+    invoke getstring, si, 80-8, cx, 80-8, offset @ret
 ;--- returns ax=chars, dx=cursor ofs
+    mov di, dx
     mov cx, ax
     jcxz abort
-    mov si, sp
     push cx
     push cx
     pop ecx
@@ -6751,7 +6752,10 @@ invalkey:
     loopz @B
     jz donevalue
 invalvalue:
-    mov ax, 0E07h
+    mov cx, di
+    mov si, sp
+    mov bh, [vidpg]
+    mov ax, 0E07h ; "display" bell
     int 10h
     jmp tryagain
 
@@ -7334,13 +7338,13 @@ clearsecarea endp
 vinit proc
 
 ;--- check if video mode suits, else set 43x80 mode.
-    mov di, 0B800h
     push ds
     push 0
     pop ds
     mov ax, ds:[44Ah] ;cols
     add ax, ax
     mov bx, ds:[44Eh] ;start offset video page
+    mov di, 0B800h
     cmp byte ptr ds:[463h],0b4h           ; monochrome mode?
     jnz @F
     mov di, 0B000h
@@ -8227,22 +8231,22 @@ if ?VDD
 endif
 
 if 0
-    mov ax, 500h  ;select active page
+    mov ax, 500h  ; select active page
     int 10h
-    mov ax, 1200h ;get EGA info
-    mov bl, 10h
+    mov ah, 12h
+    mov bl, 10h   ; get EGA info
     xor cx, cx
     int 10h
-    or cx, cx
-    jz doneset
+    or cx, cx     ; returns CH=feature, CL=switch, BH:00=color,01=mono
+    jz doneset    ; jump if no EGA/VGA
     mov bl, 30h
-    mov ax, 1202h
+    mov ax, 1202h ; set 400 scan lines
     int 10h
     mov ax, 7
     or bh, bh
-    jnz label2
+    jnz @F
     mov al, 3
-label2:
+@@:
     int 10h
 doneset:
 else
@@ -8253,16 +8257,16 @@ else
     push ax
 
     call cbuffer_offset
-    mov ax, 07*100h+SPACE;07=white on black
+    mov ax, 07*100h+SPACE; 07=white on black
     mov cx, RIGHTCOL+1
     rep stosw
-  
-    mov cx, 0808h       ;make cursor visible and set shape
-    mov ah, 01h
-    int 10h
+
     pop dx
     mov bh, [vidpg]
-    mov ah, 2           ;set cursor pos to bottom line
+    mov ah, 2           ; set cursor pos to bottom line
+    int 10h
+    mov cx, 0808h       ; make cursor visible and set shape
+    mov ah, 1
     int 10h
 endif
 if ?PM
@@ -8731,7 +8735,7 @@ gethexstring proc
 @@:
     mov dx, offset szHex
     mov di, offset stringbuffer
-    call dogethex
+    call gethexdi
     jc done
     mov bx, sp
     test cl,1
@@ -8768,6 +8772,8 @@ nextnibble:
 done:
     ret
 
+gethexstring endp
+
 ;------------------------------------------------------
 ; gethexvalue:  used by "jumpto cluster" and "fill inc/dec".
 ; IN:           EAX: maxvalue
@@ -8775,14 +8781,15 @@ done:
 ; OUT:          NC if ok
 ;               EBX: value gotten
 
+gethexvalue proc
 
-gethexvalue::
     mov [dwMaxvalue], eax
     sub sp, 80-8
     mov di, sp
     mov byte ptr [di], 0
-    call dogethex
 nexttry:
+    call gethexdi
+    mov di, bx     ; save cursor pos within string
     jc done2
     xor ebx, ebx
 nextdigit:
@@ -8807,17 +8814,32 @@ done2:
     stc
     ret
 invalvalue:
-    mov si, sp
-    push offset nexttry
-    jmp inval
+    mov bh, [vidpg]
+    mov ax, 0E07h   ; beep!
+    int 10h
+    xor dx, dx      ; no prompt display in gethexdi
+    mov cx, di      ; cursor in string
+    mov di, sp
+    jmp nexttry
 
-dogethex:
+gethexvalue endp
+
+
+;--- DX != 0: print prompt DX, then get hex number at DI
+;--- DX == 0: enter string at DI, cursor pos in CX, 
+;--- out: si = buffer
+
+gethexdi proc
+
+    and dx, dx
+    jz tryagain
     call printbottom
-dogethex2:
-    invoke getstring, di, 80-8, 0, 80-8, offset @ret
+    xor cx, cx
+tryagain:
+    invoke getstring, di, 80-8, cx, 80-8, offset @ret
+    mov bx, dx                 ; save current cursor within string
     mov si, di
     mov cx, ax
-tryagain:
     stc
     jcxz dogethex_ex
     mov dx, cx
@@ -8850,12 +8872,13 @@ dogethex_ex:
 invalchar:
     pop si
     pop cx
-inval:
-    mov ax, 0e07h   ; beep!
+    mov cx, bx
+    mov bh, [vidpg]
+    mov ax, 0E07h   ; beep!
     int 10h
-    jmp dogethex2
+    jmp tryagain
 
-gethexstring endp
+gethexdi endp
 
 ;-------------------------------------------------------
 ; OUT:  si -> offset to current sectofs buffer

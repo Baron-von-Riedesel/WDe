@@ -58,10 +58,11 @@ local   csrsta:CSRPOS  ; start cursor position
     mov cx, wSizeBuf      ; string is temporary
     mov di, strsta
 
+    mov ax, wCursor       ; cursor offset
     mov dx, [scrn_xy]
+    sub dl, al
     mov csrsta, dx
 
-    mov ax, wCursor       ; cursor offset
     mov si, di
     add di, ax            ; current pointer
     sub cx, ax            ; wSizeBuf - cursor
@@ -120,7 +121,8 @@ wingx:                    ; <---- get next key
 str_1:
     add sp, wSizeBuf
 strex:
-    mov dx, cx
+    mov dx, wSizeBuf
+    sub dx, cx
     ret
 
 chkctl:

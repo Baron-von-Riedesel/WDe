@@ -126,6 +126,7 @@ else
         COL_DEFAULT      EQU 1fh         ; white on blue
         COL_INACTIVE     EQU 17h         ; light grey on blue
         COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
+        COL_GREENFG      EQU 1Ah         ; light green on blue
 endif
 
 ; "editmode" variable
@@ -4116,38 +4117,93 @@ lfnview proc
     mov dx, CStr('LFN entry "')
     call printstring
 
-    .const
-
-lfntab label byte
-    db 1,5
-    db 14,6
-    db 28,2
-
-    include oemchars.inc
-
-    .code
-
     push bx
+
+;--- scan forward to find first entry
+
 @@:
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES+DIRENTSIZE], 0Fh
-    jnz foundfirst
     mov cl, [si+bx]
-    test cl, 0C0h
+    test cl, 080h               ; stop if a "deleted" entry occurs
     jnz foundfirst
     and cl, 3Fh                 ; the LFN entries are located BEFORE the file entry
     cmp cl, 1                   ; and the first byte is an index, starting with 1
     jz foundfirst
     cmp bx,  512 - DIRENTSIZE   ; last entry in this sector?
     jz foundfirst               ; then stop. This is then not the first, name is truncated
+    cmp byte ptr [si+bx+DIRENTSIZE+DIR_ATTRIBUTES], 0Fh
+    jnz foundfirst              ; stop if next entry is "non-lfn"
     add bx, DIRENTSIZE
     jmp @B
 foundfirst:
 
 ;--- now display the entries, descending, until last entry or sector begin is reached.
+;--- check if the indices increment nicely, else mark the LFN as "invalid" in view.
 
     mov al, [si+bx]
+    and al, 3Fh
     mov [bIdx], al
 nextentry:
+    call dispentry
+    mov al, [si+bx]
+    and al, 0C0h
+    cmp al, 40h      ; last entry?
+    jz entriesdone
+    cmp bx, 0        ; start of sector reached?
+    jz entriesdone
+    sub bx, DIRENTSIZE
+    mov al, [si+bx]  ; LFN entries must have an "descending" index
+    inc [bIdx]
+    and al, 3Fh
+    cmp al, [bIdx]   ; is index incrementing?
+    jz @F
+    mov [bIdx], -1   ; mark LFN as invalid
+@@:
+    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    jz nextentry
+    mov [bIdx], -1
+entriesdone:
+    mov dl, '"'
+    call printchar
+
+;--- clear rest of view region
+
+@@:
+    cmp [scrn_row], VIEWROW+5
+    jz @F
+    call printcrlf
+    mov ax, COL_DEFAULT shl 8 or SPACE
+    mov cl, 78
+    call fillcell
+    jmp @B
+@@:
+    pop bx           ; restore current entry
+
+    mov dx, CStr('(deleted)')
+    cmp byte ptr [si+bx], 0E5h
+    jz wronglfn
+    cmp [bIdx], -1   ; chain correct?
+    jnz done
+    mov dx, CStr("(invalid)")
+wronglfn:
+    mov [scrn_xy], (VIEWROW+1) * 100h + 1
+    call printstring
+done:
+    ret
+
+    .const
+
+lfntab label byte  ; LFN char position & size within dir entry
+    db 1,5         ; pos  1, length 5
+    db 14,6        ; pos 14, length 6
+    db 28,2        ; pos 28, length 2
+
+    include oemchars.inc
+
+    .code
+
+;--- display ONE entry
+
+dispentry:
     push bp
     mov bp, offset lfntab
     mov ch, 3
@@ -4197,47 +4253,10 @@ noprint:
     dec ch
     jnz nextti
     pop bp
-
-    mov al, [si+bx]
-    and al, 0C0h
-    cmp al, 40h      ; last entry?
-    jz done
-    cmp bx, 0
-    jz done
-    sub bx, DIRENTSIZE
-    mov al, [si+bx]  ; LFN entries must have an "descending" index
-    inc [bIdx]
-    cmp al, [bIdx]
-    jz @F
-    mov [bIdx], -1   ; mark LFN as invalid
-@@:
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
-    jz nextentry
-done:
-    mov dl, '"'
-    call printchar
-
-@@:
-    cmp [scrn_row], VIEWROW+5
-    jz @F
-    call printcrlf
-    mov ax, COL_DEFAULT shl 8 or SPACE
-    mov cl, 78
-    call fillcell
-    jmp @B
-@@:
-    pop bx
-    mov dx, CStr('(deleted)')
-    cmp byte ptr [si+bx], 0E5h
-    jz wronglfn
-    mov dx, CStr("(invalid)")
-    cmp [bIdx], -1
-    jnz @F
-wronglfn:
-    mov [scrn_xy], (VIEWROW+1) * 100h + 1
-    call printstring
-@@:
     ret
+
+;--- translate character
+
 translatechar:
     and ah, ah
     jnz qmark
@@ -6664,13 +6683,20 @@ donefileread:
     ret
 readfile endp
 
-;-------------------------------------------------------
-printentry proc                         ; prints the fat entry the cursor
-    cmp [bRegion], RG_FAT               ; is currently in, in the top
-    jne abortentry                      ; right of the screen
+;--- prints the fat entry the cursor is currently in,
+;--- in the top right of the screen
+
+printentry proc
+    cmp [bRegion], RG_FAT
+    jne abortentry
+
+    mov [scrn_col], 52
+;--- reset color to default
+    mov cl, 8
+    mov ax, COL_DEFAULT shl 8 or SPACE
+    call fillcell
 
     call getentrynumber
-    mov [scrn_col], 52
     mov dl, 8
     test eax, 0ffff0000h
     jnz @F
@@ -6681,13 +6707,14 @@ printentry proc                         ; prints the fat entry the cursor
 @@:
     call rendernumhex
     call printstring
-
 abortentry:
     ret
 printentry endp
-;-------------------------------------------------------
+
+;--- get a key from keyboard; use 10h instead of 00 to get ctrl-up, ctrl-dn, ... codes
+
 getkey:
-    mov ah, 10h    ; use 10h instead of 00 to get ctrl-up, ctrl-dn, ... codes
+    mov ah, 10h
     int 16h
     ret
 
@@ -6848,14 +6875,14 @@ abortdc:
     call fillspace
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne done
-    mov [scrn_xy], 003Fh
     mov eax, [dwCurSector]
     cmp [ioreq.rwfunc], RWF_NEWINT13
     jnz @F
-    test [diskinfobuffer.flags], 2   ;CHS valid?
+    test [diskinfobuffer.flags], 2     ; CHS valid?
     jz done
 @@:
     call getchsx
+    mov [scrn_xy], (0 shl 8) or 63     ; column 63
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("CHS: %u/%u/%u"), ax, bx, cx
     call printstring
@@ -6899,7 +6926,7 @@ firstfat:
     mov [scrn_col], dl
     mov dx, offset entrymsg           ; "Entry: "
     call printstring
-    mov [scrn_col], 60
+    mov [scrn_col], 60                ; column where ascii region starts
     jmp abortdc
 
 setmbrview:
@@ -6937,8 +6964,10 @@ dispclust:
 @@:
     push dx
     call rendernumhex
+    mov ebx, eax
     mov ax, dx
     pop dx
+    mov ch, dl
     add dl, 9   ; sizeof "Cluster: "
     neg dl
     add dl, 60
@@ -6947,11 +6976,27 @@ dispclust:
     push ax
     mov al, SPACE
     call fillchar
-    pop ax
     mov [scrn_col], dl
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("%s%s"), offset szCluster, ax
-    jmp continuecount
+    mov dx, offset szCluster
+    call printstring
+
+if 1  ; display cluster# green/magenta depending on its state
+	mov eax, ebx
+	call getfatentry
+	mov cl, COL_DEFAULT
+	and eax, eax
+	jz @F
+	mov cl, COL_GREENFG  ; green if cluster used
+@@:
+    call cbuffer_offset  ; get screen offset
+@@:
+	mov es:[di+1], cl
+	add di, 2
+	dec ch
+	jnz @B
+endif
+    pop dx            ; get rendered cluster#
+    jmp continuecount ; and display it
 
 printtopline endp
 

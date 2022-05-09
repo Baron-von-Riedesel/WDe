@@ -4,7 +4,9 @@ WDe User Manual
 
   0.0       Hot-Key Quick Reference
   1.0       Initial Screen and Commandline
-  2.0       Editing
+  2.0       Basics
+  2.1       Screen Regions
+  2.2       Editing
   3.0       Drive Support
   3.1       Physical Disks
   3.1.1     BIOS Notes
@@ -113,45 +115,75 @@ WDe User Manual
 
 
 
-  2.0 - Editing
+  2.0 - Basics
 
-    All hex and ascii editing must be saved with 'F1' before changing
-    sectors or quitting the program as changes will be lost.
+    2.1 - Screen Regions
 
-    Page Down/Page Up changes the current sector being edited.
-    Holding CTRL while pressing pgdn/pgup will jump by 100
-    sectors at a time.
+      The WDe screen has the following structure:
 
-    Ctrl+Home & Ctrl+End jump to the beginning and end of the drive,
-    respectively.
+      - The top line, showing
+        + the offset where the cursor currently is positioned,
+        + the current sector number,
+        + the current region ( boot, FAT, root directory, data),
+        + for FAT file systems, the current cluster# or - if the current
+          sector is within a FAT - the entry#,
+        + for physical disks, if available, the CHS information
+      - The sector region, consisting of 32 lines, showing
+        + on the left the offset,
+        + in the middle the contents in hexadecimal or binary,
+        + on the right the contents in ascii.
+      - The view region, starting at line 34, max. 7 lines, showing
+        the interpreted data of parts of the current sector.
+      - The menu bar, at the bottom line.
 
-    The current sector, offset, area and cluster/fat-entry is displayed
-    along the top for convenience.
+      For FAT file systems, the drive space is divided into four parts,
+      shortly called "boot/reserved", "FAT", "root" and "data". While in
+      the "data" part, WDe will show the cluster# the current sector 
+      belongs to. Furthermore, the number will be written in light green
+      if the cluster is marked as "non-free" in the FAT, that is, it is
+      - or rather should be - associated with a file.
 
-    When in the fat area, Ctrl+Right will jump to the next entry
-    in the fat chain and Ctrl+Left will attempt to recurse to the previous
-    entry in the fat.  Hitting enter will jump directly to the first
-    sector in that cluster in the data area.  Note that Ctrl+Right within
-    the Fat will not jump to entries belonging to non-existant clusters
-    (those that go beyond the end of the drive).
 
-    When in the data area, Ctrl+Enter will jump to the corresponding
-    fat entry.  Hitting Ctrl+Right will jump directly to the cluster
-    connected to it within the fat. Hitting Enter while in a directory
-    will jump to the beginning of the first cluster of that entry.
+    2.2 - Editing
 
-    Hitting Enter, Ctrl+Enter or Ctrl+Right key will save the current sector#
-    on a stack; using Ctrl+Up will retrieve this information and thus allow
-    to go back to the saved position.
+      All hex and ascii editing must be saved with 'F1' before changing
+      sectors or quitting the program as changes will be lost.
 
-    Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
-    to change to the physical drive that partition belongs to, if it exists.
+      Page Down/Page Up changes the current sector being edited.
+      Holding CTRL while pressing pgdn/pgup will jump by 100
+      sectors at a time.
 
-    Hitting TAB will switch between hex & ascii editing.
+      Ctrl+Home & Ctrl+End jump to the beginning and end of the drive,
+      respectively.
 
-    If you hit the SHIFT+TAB key combination, you'll switch between
-    hex and binary editing.  In this mode, you can use 0 and 1 to set
-    bits or use the space bar to invert them.
+      When in the FAT area, Ctrl+Right will jump to the next entry
+      in the fat chain and Ctrl+Left will attempt to recurse to the previous
+      entry in the fat.  Hitting enter will jump directly to the first
+      sector in that cluster in the data area.  Note that Ctrl+Right within
+      the Fat will not jump to entries belonging to non-existant clusters
+      (those that go beyond the end of the drive).
+
+      When in the data area, Ctrl+Enter will jump to the corresponding
+      fat entry.  Hitting Ctrl+Right will jump directly to the cluster
+      connected to it within the fat. Hitting Enter while in a directory
+      will jump to the beginning of the first cluster of that entry.
+
+      Hitting Enter, Ctrl+Enter or Ctrl+Right key will save the current
+      sector# on a stack; using Ctrl+Up will retrieve this information and
+      thus allow to go back to the saved position.
+
+      Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
+      to change to the physical drive that partition belongs to, if it exists.
+      However, this is usually not a very reliable information, for example,
+      ramdisks won't have a physical drive associated with them at all - or
+      a physical disk may have been moved to another computer, residing as
+      quite another disk# there.
+
+      Hitting TAB will switch between hex & ascii editing.
+
+      If you hit the SHIFT+TAB key combination, you'll switch between
+      hex and binary editing.  In this mode, you can use 0 and 1 to set
+      bits or use the space bar to invert them.
 
 
 

@@ -23,6 +23,9 @@ WDe V0.50pre2 [--.--.2022]
   - another variant of tool setm43, setm432, added.
   - check for invalid LFNs added in dirview.
   - screen color softened if no user input possible in main area.
+  - in data region of FAT file systems, if the current cluster# is
+    associated with a file ( that is, not a free cluster# ), it is shown
+    in light green.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

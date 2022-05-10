@@ -188,6 +188,7 @@ WDe User Manual
                     (those that go beyond the end of the drive).
         Ctrl+Enter: will scan the directory tree for an entry with a starting
                     cluster that matches the one the cursor is currently on.
+                    NOT implemented for exFAT yet!
 
        When in the data area:
 

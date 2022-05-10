@@ -33,7 +33,7 @@ CGROUP group _TEXT, _TEXT2
 DGROUP group _DATA2, _BSS
 
 ifndef ?DEBUG
-?DEBUG           EQU 0  ; 1=debug features on
+?DEBUG           EQU 0  ; 1=debug displays on ( prints on stdout or menu row )
 endif
 ifndef ?EXT
 ?EXT             EQU 1  ; 1=enable "undelete" & "unformat" functions
@@ -102,12 +102,6 @@ endif
         VM_FAT16         EQU 4
         VM_FAT32         EQU 5
         VM_DIRECTORY     EQU 6
-if ?DEBUG
-        VM_DEBUG         EQU 7
-        VM_LAST          EQU VM_DEBUG
-else
-        VM_LAST          EQU VM_DIRECTORY
-endif
         VM_FSINFO        EQU 10000000b  ; not manually set mode     
 
 ; "viewmode2"
@@ -214,9 +208,6 @@ endif
         F6_KEY           EQU 40h
         F7_KEY           EQU 41h
         F8_KEY           EQU 42h
-if ?DEBUG
-        F12_KEY          EQU 86h
-endif
 
         HOME_KEY         EQU 47h
         CSRUP_KEY        EQU 48h
@@ -568,6 +559,7 @@ toosmall        db 'File Too Small',0
 filenotfound    db 'File Not Found',0
 filetoobigmsg   db 'File Size Cannot Exceed 4GB-1',0
 nodirentryfound db 'No Directory Entry Found With Start Cluster %lX',0
+directoryscanmsg db 'Scanning Directory Tree..., curr. cluster %lX',0
 
 errorread       db 'Error Reading File',0
 filewriteerr    db 'Error Writing File',0
@@ -755,13 +747,7 @@ wDirs           dw ?            ; total dirs found
 lasttick        dw ?            ; timer ticks since last call
 
 if ?DEBUG
-starttime       dd ?
-storedeax       dd ?
-storedebx       dd ?
-storedecx       dd ?
-storededx       dd ?
-storedsi        dw ?
-storeddi        dw ?
+starttime       dd ?            ; to measure time for lengthy operations
 endif
 
 oldint24        dd ?
@@ -827,6 +813,9 @@ endif
 if ?DEBUG
     include ..\Test\timer.inc
 endif
+
+;--- get time in ms
+
 @getstarttime macro
 if ?DEBUG
     pushad
@@ -835,27 +824,57 @@ if ?DEBUG
     popad
 endif
 endm
+
+;--- print measured time on menu row
+
 @printtime macro formstr 
 if ?DEBUG
     pushf
     pushad
     call gettimer
     sub eax, starttime
-    mov dx, offset sprintfbuffer
+    sub sp, 80
+    mov dx, sp
     invoke sprintf, dx, CStr(formstr), eax
     call printerror
+    add sp, 80
     popad
     popf
 endif
 endm
-@dprintf macro formstr, args:vararg 
+
+@printduration macro prefix
 if ?DEBUG
     pushf
     pushad
-    mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr(formstr), args
-    call printerror
+    call gettimer
+    sub eax, starttime
+    sub sp, 80
+    mov bp, sp
+    invoke sprintf, bp, CStr( prefix, ": %u ms",13,10,'$'), eax
+    mov dx, bp
+    mov ah,9
+    int 21h
+    add sp, 80
     popad
+    popf
+endif
+endm
+
+;--- print a line on stdout
+
+@dprintfln macro formstr, args:vararg 
+if ?DEBUG
+    pushf
+    pusha
+    sub sp, 80
+    mov bp, sp
+    invoke sprintf, bp, CStr(formstr,13,10,'$'), args
+    mov dx, bp
+    mov ah,9
+    int 21h
+    add sp, 80
+    popa
     popf
 endif
 endm
@@ -1079,12 +1098,6 @@ getkeyagain:
     je handle_enter
     cmp ax, CTRLENTER_KEY       ; jump to FAT entry for current cluster
     je handle_ctlenter
-if ?DEBUG
-    cmp ah, F12_KEY
-    jnz @F
-    mov [viewmode], VM_DEBUG
-@@:
-endif
 
     call checkmenukey           ; check for menu (=function) keys
 
@@ -1646,6 +1659,7 @@ helpscreen endp
 savetodisk proc
     mov dx, offset writetodiskmsg
     call printbottom
+    @dprintfln "savetodisk: dwCurSector=%lu, ioreq.dwSector=%lu", [dwCurSector], [ioreq.dwSector]
     call writecursect
     jc @F
     mov dx, offset donewritedisk
@@ -2170,6 +2184,8 @@ log2phys:
     ret
 
 ctlenter_fat:
+    cmp [filesys], FS_EXFAT     ; not yet for exFAT
+    jz done
     call getcurrententry        ; get the cluster number for [dwCurSector][spot]
     jmp finddirentry
 
@@ -2228,6 +2244,7 @@ recursechain proc
 ;--- current one is "below" ( hence it starts decrementing from the current
 ;--- cluster# ). This assumption was incorrect.
 
+    @getstarttime
     mov edi,-1                          ; begin with decending from current entry#
     mov cx, CStr("descending")
 nextentry:
@@ -2266,6 +2283,7 @@ chainnotfound:
     mov dx, offset nochainmsg           ; "recursive link not found"
     call printerror
 done:
+    @printduration "recursechain"
     ret
 recursechain endp
 
@@ -2448,92 +2466,134 @@ autoview:
     ret
 submenu_view endp
 
-;---- in: cluster of directory in EAX
+;---- in: sector# in [ioreq.dwSector]
+
+if ?DEBUG
+    .data?
+level dw ?    ; level of subdirectory reentrance
+    .code
+endif
 
 scandir proc
-	mov si, offset sectbuffer
-	mov cl, 512 / 32
+    @dprintfln "scandir(%u): sector=%lu", level, [ioreq.dwSector]
+    mov si, offset sectbuffer
+    mov cl, 512 / 32
 nextentry:
-	cmp byte ptr [si], 0
-	jz skipdir
-	cmp byte ptr [si], 0E5h
-	jz skipentry
-	cmp byte ptr [si+0Bh], 0Fh
-	jz skipentry
-	mov ax, [si+DIR_CLUST_HIGH]
-	shl eax, 16
-	mov ax, [si+DIR_CLUST_LOW]
-	cmp eax, 0
-	jz skipentry
-	cmp eax, ebx
-	jz found
-	test byte ptr [si+0Bh], 10h
-	jz skipentry
-	cmp dword ptr [si], "   ."
-	jz skipentry
-	cmp dword ptr [si], "  .."
-	jz skipentry
-	push cx
-	push si
-	push [ioreq.dwSector]
-	call scanforcluster
-	pop [ioreq.dwSector]
-	pop si
-	pop cx
-	jc found2
-	call diskaccess_read
+    cmp byte ptr [si], 0
+    jz skipdir
+    cmp byte ptr [si], 0E5h
+    jz skipentry
+    cmp byte ptr [si+0Bh], 0Fh
+    jz skipentry
+    mov ax, [si+DIR_CLUST_HIGH]
+    shl eax, 16
+    mov ax, [si+DIR_CLUST_LOW]
+    cmp eax, 0
+    jz skipentry
+    cmp eax, ebx
+    jz found
+    test byte ptr [si+0Bh], 10h
+    jz skipentry
+    cmp dword ptr [si], "   ."
+    jz skipentry
+    cmp dword ptr [si], "  .."
+    jz skipentry
+    push cx
+    push si
+    push [ioreq.dwSector]
+    @dprintfln "scandir(%u, %s): calling scanforcluster", level, si
+if ?DEBUG
+    inc [level]
+endif
+    call scanforcluster
+if ?DEBUG
+    dec [level]
+endif
+    pop [ioreq.dwSector]
+    pop si
+    pop cx
+    jc found2
+    call diskaccess_read
 skipentry:
-	add si, 32
-	dec cl
-	jnz nextentry
-	clc
-	ret
+    add si, 32
+    dec cl
+    jnz nextentry
+    xor ax, ax
+    ret
 skipdir:
-	mov eax,-1
-	clc
-	ret
+    mov eax,-1
+    clc
+    ret
 found:
-	mov eax, [ioreq.dwSector]
-	mov dx, si
-	sub dx, offset sectbuffer
-	stc
+    mov eax, [ioreq.dwSector]
+    mov dx, si
+    sub dx, offset sectbuffer
+    @dprintfln "scandir(%u): found cluster %lX at %X", level, ebx, dx
+    stc
 found2:
-	ret
+    ret
 scandir endp
 
 ;--- scan directories to find cluster# in ebx
 ;--- in: cluster of directory in EAX
 
+scanforclf1x:
+    pushd 0
+    mov eax, [dwRootSect]
+    jmp scanxxx
+
 scanforcluster proc
-	push eax
-	call cluster2sector
-	mov [ioreq.dwSector], eax
-	mov cl, [bSpC]
-nextsector:
-	push cx
-	call diskaccess_read
-	call scandir
-	pop cx
-	jc found
-	cmp eax, -1
-	jz dirdone
-	inc [ioreq.dwSector]
-	dec cl
-	jnz nextsector
-	pop eax
-	call getfatentry
+    @dprintfln "scanforcluster(%u): eax=%lX", level, eax
+
+    call checktime
     jc @F
-	cmp eax, 2
-	jb @F
-	cmp eax, 0ffffff7h
-	jb scanforcluster
+    call checkabort
+    je abort
+    push eax
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, offset directoryscanmsg, eax
+    call printbottom
+    pop eax
+    call darkclr3
 @@:
-	clc
-	ret
+
+    push eax
+    call cluster2sector
+scanxxx::
+    mov [ioreq.dwSector], eax
+    mov cl, [bSpC]
+nextsector:
+    push cx
+    call diskaccess_read
+    call scandir
+    pop cx
+    jc found
+    cmp eax, -1
+    jz dirdone
+    inc [ioreq.dwSector]
+    dec cl
+    jnz nextsector
+    pop eax
+    call getfatentry
+    @dprintfln "scanforcluster(%u): called getfatentry, eax=%lX", level, eax
+    jc @F
+    cmp eax, 2
+    jb @F
+    cmp eax, 0ffffff7h
+    jb scanforcluster
+@@:
+    clc
+    ret
 dirdone:
 found:
-	lea sp, [esp+4]
-	ret
+    lea sp, [esp+4]
+    ret
+
+;--- nothing to clean-up, just exit to main
+abort:
+    call readcursect
+    jmp main
+
 scanforcluster endp
 
 ;--- submenu "find": "string hex next MBR boot sector, FAT, directory,..."
@@ -2556,39 +2616,50 @@ submenu_find proc
     jmp pushmenustack
 
 finddirentry::
-if 0
-	mov eax, [dwLastCluster]
-	mov dx,offset sprintfbuffer
-	invoke sprintf, dx, offset szCluster3, eax
-	call gethexvalue
-	jc _ret
+if 0 ; in case the "search directory entry" function should be a menu item
+    mov eax, [dwLastCluster]
+    mov dx,offset sprintfbuffer
+    invoke sprintf, dx, offset szCluster3, eax
+    call gethexvalue
+    jc _ret
 endif
-	cmp ebx, 2
-	jb _ret
-	mov eax, [dwRootCluster]   ; FAT32 only
-	cmp eax, ebx
-	jnz @F
-	mov eax, [dwRootSect]      ; it's the root cluster
-	mov [ioreq.dwSector], eax
-	call readsect
-	xor ax, ax
-	jmp ffroot
+if ?DEBUG
+    mov level, 0
+endif
+    @dprintfln "finddirentry: ebx=%lX", ebx
+    cmp ebx, 2
+    jb _ret
+    test [filesys], FS_FAT32
+    jnz @F
+    call scanforclf1x
+    jnc denotfound
+    jmp defound
 @@:
-	call scanforcluster
-	jnc @F
-	xchg eax, [dwCurSector]
-	call pushsecstack
-	mov ax, dx
+    mov eax, [dwRootCluster]   ; FAT32 only
+    cmp eax, ebx
+    jnz @F
+    mov eax, [dwRootSect]      ; it's the root cluster
+    mov [ioreq.dwSector], eax
+    call readsect
+    xor ax, ax
+    jmp ffroot
+@@:
+    call scanforcluster
+    jnc denotfound
+defound:
+    xchg eax, [dwCurSector]
+    call pushsecstack
+    mov ax, dx
 ffroot:
-	mov dl, 0
-	call movecursor
-	ret
-@@:
-	call readcursect
-	mov dx, offset sprintfbuffer
-	invoke sprintf, dx, offset nodirentryfound, ebx
-	call nuprinterror
-	ret
+    mov dl, 0
+    call movecursor
+    ret
+denotfound:
+    call readcursect
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, offset nodirentryfound, ebx
+    call nuprinterror
+    ret
 
 ;--- find directory entries
 
@@ -4183,10 +4254,6 @@ updateview proc
     cmp al, VM_FSINFO
     je fsinfoviewmode
 
-if ?DEBUG
-    cmp al, VM_DEBUG
-    je debugviewmode
-endif
 ;    call clearview
     ret
 
@@ -8026,16 +8093,9 @@ checkskip:
     mov [handling], IGNORE_ERRORS     ; inside access_error
     jmp itsS
 
-sectorerror2:    ;if ABORT_OPERATION is set
-if ?DEBUG
-    push eax
-    mov eax, [ioreq.dwSector]
-    call rendernumdec
-    pop eax
-else
+sectorerror2:                         ; if ABORT_OPERATION is set
     invoke sprintf, offset sprintfbuffer, dx, [ioreq.dwSector]
     mov dx, offset sprintfbuffer
-endif
     call nuprinterror
 secterrhandle:
     stc
@@ -9247,96 +9307,6 @@ rand:
     and eax, 0FFFFh
     add eax, ecx
     ret
-
-;-------------------------------------------------------
-if ?DEBUG
-
-debugviewmode:
-    push edx
-
-    mov [scrn_xy], (VIEWROW+0) * 100h + 1
-    mov dx, CStr('EAX: ')
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+1) * 100h + 1
-    mov dx, CStr('EBX: ')
-    mov eax, ebx
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+2) * 100h + 1
-    mov dx, CStr('ECX: ')
-    mov eax, ecx
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+3) * 100h + 1
-    mov dx, CStr('EDX: ')
-    pop eax
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+4) * 100h + 1
-    mov dx, CStr('SI:  ')
-    movzx eax, si
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+5) * 100h + 1
-    mov dx, CStr('DI:  ')
-    movzx eax, di
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+6) * 100h + 1
-    mov dx, CStr('SP:  ')
-    movzx eax, sp
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+0) * 100h + 34
-    mov dx, CStr('Stored EAX: ')
-    mov eax, [storedeax]
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+1) * 100h + 34
-    mov dx, CStr('Stored EBX: ')
-    mov eax, [storedebx]
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+2) * 100h + 34
-    mov dx, CStr('Stored ECX: ')
-    mov eax, [storedecx]
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+3) * 100h + 34
-    mov dx, CStr('Stored EDX: ')
-    mov eax, [storededx]
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+4) * 100h + 34
-    mov dx, CStr('Stored SI:  ')
-    movzx eax, [storedsi]
-    call printregister
-
-    mov [scrn_xy], (VIEWROW+5) * 100h + 34
-    mov dx, CStr('Stored DI:  ')
-    movzx eax, [storeddi]
-    call printregister
-
-    ret
-
-printregister:
-    invoke sprintf, offset sprintfbuffer, CStr("%s %10lu (%08lX)"), dx, eax, eax
-    mov dx, offset sprintfbuffer
-    call printstring
-    ret
-
-
-storedebugdata:
-    mov [storedeax], eax
-    mov [storedebx], ebx
-    mov [storedecx], ecx
-    mov [storededx], edx
-    mov [storedsi], si
-    mov [storeddi], di
-    ret
-
-endif
 
 ;--- in lengthy operations, check if some timer interrupts have passed
 ;--- to avoid too many displays. Currently at least 5 ticks should be passed,

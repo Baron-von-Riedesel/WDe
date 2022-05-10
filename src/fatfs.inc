@@ -94,7 +94,7 @@ getfatentry proc
 
 ;   and eax, 0FFFFFFFh                ; ignore highest nibble
     mov ebx, eax
-    call locatefatentry
+    call locatefatentry               ; will set BX=offset in sector
     jc abort
     mov si, [pFatCache]
     cmp [filesys], FS_FAT12
@@ -145,11 +145,12 @@ getfatentry endp
 ;
 ;-------------------------------------------------------
 putfatentry proc
+    @dprintfln "putfatentry: entry=%lX, data=%lX", ebx, eax
     push edx
     push si
     mov edx, ebx
 ;    and eax, 0FFFFFFFh
-    call locatefatentry                 ; will copy FAT sector into sectbuffer
+    call locatefatentry                 ; will copy FAT sector into FAT cache buffer
     jc abortpfe
     mov si, [pFatCache]
     cmp [filesys], FS_FAT12
@@ -159,43 +160,50 @@ putfatentry proc
     test dl, 00000001b
     jnz pmethod2
 pmethod1:
-
     and ah, 0Fh
     and byte ptr [si+bx+1], 0F0h        ; replacing bottom 12 bits
     or ah, byte ptr [si+bx+1]           ; so preserve old top nibble
-
-    jmp dpfe2
+    jmp isfat1x
 pmethod2:
-
     shl ax, 4                           ; replacing the top 12 bits
     and byte ptr [si+bx], 0Fh
     or al, [si+bx]                      ; so preserve old low nibble
+    jmp isfat1x
 
-    jmp dpfe2
+;--- FAT16/FAT32
+
 dof132:
     test [filesys], FS_FAT32
-    je dpfe2
-fat32pfe:
+    je isfat1x
+;fat32pfe:
     and dword ptr [si+bx], 0F0000000h   ; preserve highest nibble in fat32
     or dword ptr [si+bx], eax           ; as it is not part of the entry
-dpfe2:
-    mov word ptr [si+bx], ax
-dpfe:
+isfat1x:
+    mov [si+bx], ax
+
+    push [ioreq.pBuffer]
+nextsector:
     push [pFatCache]
     pop [ioreq.pBuffer]
     call writesect
 
-    cmp bx, 511
-    jne abortpfe
+    cmp bx, 511          ; FAT12?
+    jne abortpfe2
+
     inc [dwFatSector]
-	push [dwFatSector]
-	pop [ioreq.dwSector]
+    push [dwFatSector]
+    pop [ioreq.dwSector]
     mov [ioreq.bRW], RW_READ
     call diskaccess
+
     inc bx
     mov al, [si+bx]
     mov [si], al
-    jmp dpfe
+    jmp nextsector
+
+abortpfe2:
+    pop [ioreq.pBuffer]
+    clc
 abortpfe:
     pop si
     pop edx
@@ -324,17 +332,19 @@ readfatcache::
     jnz @F
     push ax
     mov ax,[wBps]
-    add ax, 4                   ; add a dword for fat12fix
+    add ax, 2*4                 ; add a 4 byte reserve at start/end for fat12fix
     call allocmem
     add ax, 4                   ; the fat12 fix must be BEFORE sector start
     mov [pFatCache], ax
     pop ax
 @@:
-    mov [ioreq.dwSector], eax           ; copy first byte of next sector
+    mov [ioreq.dwSector], eax
+    push [ioreq.pBuffer]
     push [pFatCache]
     pop [ioreq.pBuffer]
     mov [ioreq.bRW], RW_READ
     call diskaccess
+    pop [ioreq.pBuffer]
     ret
 
 fat12pad endp

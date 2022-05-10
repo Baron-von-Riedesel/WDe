@@ -27,6 +27,7 @@ WDe V0.50 [10.05.2022]
     associated with a file ( that is, not a free cluster# ), it is shown
     in light green.
   - fixed: find MBR didn't work.
+  - speed-up for "recurse" ( searching "linking" entry ) scan in FAT.
   - added navigation Ctrl-Enter in FAT: search directory entry with matching
     start cluster.
 

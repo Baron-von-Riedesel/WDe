@@ -90,14 +90,13 @@ sector2cluster endp
 ;-------------------------------------------------------
 getfatentry proc
     push ebx
-    push [dwCurSector]
     push si
 
 ;   and eax, 0FFFFFFFh                ; ignore highest nibble
     mov ebx, eax
     call locatefatentry
     jc abort
-    mov si, offset sectbuffer
+    mov si, [pFatCache]
     cmp [filesys], FS_FAT12
     jne fat1632
 
@@ -134,14 +133,6 @@ done:
 abort:
     pop si
     pop ebx
-    pushf
-    cmp [dwCurSector], ebx            ; don't reread current sector if it
-    je @F                             ; hasn't changed
-    mov [ioreq.dwSector], ebx
-    call readsect
-@@:
-    popf
-    pop ebx
     ret
 getfatentry endp
 ;-------------------------------------------------------
@@ -154,14 +145,13 @@ getfatentry endp
 ;
 ;-------------------------------------------------------
 putfatentry proc
-    push [dwCurSector]
     push edx
     push si
     mov edx, ebx
 ;    and eax, 0FFFFFFFh
     call locatefatentry                 ; will copy FAT sector into sectbuffer
     jc abortpfe
-    mov si, offset sectbuffer
+    mov si, [pFatCache]
     cmp [filesys], FS_FAT12
     jne dof132
 
@@ -179,7 +169,7 @@ pmethod2:
 
     shl ax, 4                           ; replacing the top 12 bits
     and byte ptr [si+bx], 0Fh
-    or al, byte ptr [si+bx]             ; so preserve old low nibble
+    or al, [si+bx]                      ; so preserve old low nibble
 
     jmp dpfe2
 dof132:
@@ -191,21 +181,25 @@ fat32pfe:
 dpfe2:
     mov word ptr [si+bx], ax
 dpfe:
-    call writecursect
+    push [pFatCache]
+    pop [ioreq.pBuffer]
+    call writesect
 
     cmp bx, 511
     jne abortpfe
-    inc [dwCurSector]
-    call readcursect
+    inc [dwFatSector]
+	push [dwFatSector]
+	pop [ioreq.dwSector]
+    mov [ioreq.bRW], RW_READ
+    call diskaccess
     inc bx
-    mov al, byte ptr [si+bx]
-    mov byte ptr [si], al
+    mov al, [si+bx]
+    mov [si], al
     jmp dpfe
 abortpfe:
     pop si
     pop edx
-    pop [ioreq.dwSector]
-    jmp readsect
+    ret
 
 putfatentry endp
 
@@ -215,10 +209,10 @@ putfatentry endp
 ; called by getfatentry and putfatentry.
 ;
 ;               IN:   ebx       cluster number to locate
-;               OUT:  [dwCurSector]  sector # the entry is in
-;                     ebx       byte offset to it inside the sector
+;               OUT:  [dwFatSector]  sector # the entry is in
+;                     bx       byte offset to it inside the sector
 ;                     C if error
-; the sector is also read into sectbuffer
+; the sector is read into pFatCache
 ;
 ;-----------------------------------------------------------------
 locatefatentry proc
@@ -261,15 +255,16 @@ endif
     add eax, [dwReserved]
 
 ;    cmp [bFats], 2
-;    jb locationinfirstfat
-    cmp [fromfat], 1
-    je locationinfirstfat
+;    jb @F
+    cmp [fromfat], FF_FAT1
+    je @F
     add eax, [dwSpF]
-locationinfirstfat:
-    cmp [dwCurSector], eax      ; read that FAT sector if necessary
+@@:
+    cmp [dwFatSector], eax      ; read that FAT sector if necessary
     je done
-    mov [ioreq.dwSector], eax
-    call readsect
+    call readfatcache
+    jc done
+    mov [dwFatSector], eax
 done:
     pop ecx
     pop eax
@@ -281,14 +276,14 @@ locatefatentry endp
 ;          the fat entry being read/written crosses a sector boundary
 ;
 ;               IN:   bx        bytes to fat entry
-;                     si        sectbuffer pointer
+;                     si        pointer to FAT sector cache
 ;               OUT:  bytes written around sectbuffer
 ;
 ;-----------------------------------------------------------------
 fat12pad proc                           ; IN: ebx = bytes to fat entry
     pushad                              ;     si = sectbuffer pointer
                                         ; OUT: bytes put around sector
-    mov eax, [dwCurSector]              ; did we call this function
+    mov eax, [dwFatSector]              ; did we call this function
     cmp [fat12fixsec], eax              ; from the same sector?  then
     je done                             ; we already have the correct data
     mov [fat12fixsec], eax              ; ...this would be a tiny bug if
@@ -300,30 +295,48 @@ fat12pad proc                           ; IN: ebx = bytes to fat entry
     jz nopred                           ; then we can't read the previous
 
     dec eax
-    mov [ioreq.dwSector], eax
-    call readsect
+    call readfatcache
     jc @F
     mov cl, byte ptr [si+bx-1]          ; copy last byte of previous sector
-    mov [fat12fix1], cl
+;    mov [fat12fix1], cl
+    mov [si-1], cl
 @@:
     inc eax
 nopred:                                 ; we don't want to read the next
     cmp eax, [dwDataend]                ; sector if it's past the drive end
     jae nosucc
     inc eax
-    mov [ioreq.dwSector], eax           ; copy first byte of next sector
-    call readsect
+    call readfatcache
     jc nosucc
     mov cl, byte ptr [si]
-    mov byte ptr [si+bx], cl
+    mov byte ptr [si+bx], cl            ; verify if this is [si+512]
 nosucc:
 done2:
-    pop [ioreq.dwSector]
-    call readsect                       ; restore current sector
+    pop eax
+    call readfatcache
     mov [handling], ABORT_OPERATION     ; inside fat12pad
 done:
     popad
     ret
+
+readfatcache::
+    cmp [pFatCache],0
+    jnz @F
+    push ax
+    mov ax,[wBps]
+    add ax, 4                   ; add a dword for fat12fix
+    call allocmem
+    add ax, 4                   ; the fat12 fix must be BEFORE sector start
+    mov [pFatCache], ax
+    pop ax
+@@:
+    mov [ioreq.dwSector], eax           ; copy first byte of next sector
+    push [pFatCache]
+    pop [ioreq.pBuffer]
+    mov [ioreq.bRW], RW_READ
+    call diskaccess
+    ret
+
 fat12pad endp
 ;-----------------------------------------------------------------
 ;
@@ -343,7 +356,7 @@ getentrynumberX::              ; <--- if just the entry# of the sector start int
     mov eax, [dwCurSector]
     sub eax, [dwReserved]
 
-    mov [fromfat], 1
+    mov [fromfat], FF_FAT1
     cmp eax, [dwSpF]
     jb @F
     sub eax, [dwSpF]           ; in 2. FAT

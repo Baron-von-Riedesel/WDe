@@ -6,7 +6,7 @@ WDe User Manual
   1.0       Initial Screen and Commandline
   2.0       Basics
   2.1       Screen Regions
-  2.2       Editing
+  2.2       Navigation and Editing
   3.0       Drive Support
   3.1       Physical Disks
   3.1.1     BIOS Notes
@@ -86,6 +86,7 @@ WDe User Manual
     Ctrl+Right    - Jump to linked FAT entry (successor)
     Ctrl+Left     - Recurse to find linking FAT entry (predecessor)
     Enter         - Jump to current entry's data
+    Ctrl+Enter    - Search directory entry with matching start cluster
 
     Keys in Data area of FAT partitions:
 
@@ -144,46 +145,77 @@ WDe User Manual
       - or rather should be - associated with a file.
 
 
-    2.2 - Editing
+    2.2 - Navigation and Editing
 
-      All hex and ascii editing must be saved with 'F1' before changing
-      sectors or quitting the program as changes will be lost.
+      2.2.1 Editing
 
-      Page Down/Page Up changes the current sector being edited.
-      Holding CTRL while pressing pgdn/pgup will jump by 100
-      sectors at a time.
+        All hex and ascii editing must be saved with 'F1' before changing
+        sectors or quitting the program as changes will be lost.
 
-      Ctrl+Home & Ctrl+End jump to the beginning and end of the drive,
-      respectively.
+        The cursor keys and the Home/End-keys are used to move the cursor.
 
-      When in the FAT area, Ctrl+Right will jump to the next entry
-      in the fat chain and Ctrl+Left will attempt to recurse to the previous
-      entry in the fat.  Hitting enter will jump directly to the first
-      sector in that cluster in the data area.  Note that Ctrl+Right within
-      the Fat will not jump to entries belonging to non-existant clusters
-      (those that go beyond the end of the drive).
+        Hitting TAB will switch between hex & ascii editing.
 
-      When in the data area, Ctrl+Enter will jump to the corresponding
-      fat entry.  Hitting Ctrl+Right will jump directly to the cluster
-      connected to it within the fat. Hitting Enter while in a directory
-      will jump to the beginning of the first cluster of that entry.
+        If you hit the SHIFT+TAB key combination, you'll switch between
+        hex and binary editing.  In this mode, you can use 0 and 1 to set
+        bits or use the space bar to invert them.
 
-      Hitting Enter, Ctrl+Enter or Ctrl+Right key will save the current
-      sector# on a stack; using Ctrl+Up will retrieve this information and
-      thus allow to go back to the saved position.
+      2.2.2 Generic Navigation
 
-      Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
-      to change to the physical drive that partition belongs to, if it exists.
-      However, this is usually not a very reliable information, for example,
-      ramdisks won't have a physical drive associated with them at all - or
-      a physical disk may have been moved to another computer, residing as
-      quite another disk# there.
+        Page Down/Page Up changes the current sector being edited.
+        Holding CTRL while pressing pgdn/pgup will jump by 100
+        sectors at a time.
 
-      Hitting TAB will switch between hex & ascii editing.
+        Ctrl+Home & Ctrl+End jump to the beginning and end of the drive,
+        respectively.
 
-      If you hit the SHIFT+TAB key combination, you'll switch between
-      hex and binary editing.  In this mode, you can use 0 and 1 to set
-      bits or use the space bar to invert them.
+      2.2.3 Keys for Navigating the FAT File System 
+
+        When in the FAT area:
+
+        Ctrl+Right: will jump to the next entry in the fat chain, if there
+                    exist one.
+        Ctrl+Left:  will attempt to recurse to the previous entry in the FAT.
+                    This implies scanning the FAT, first descending ( that
+                    is, to lower cluster numbers ) and then, if no linking
+                    entry has been found this way, ascending. Usually the
+                    predecessor is either found "at once" or not at all - the
+                    latter case should mean that the entry is the start of a
+                    chain.
+        Enter:      will jump directly to the first sector in that cluster
+                    in the data area.  Note that Ctrl+Right within the Fat
+                    will not jump to entries belonging to non-existant clusters
+                    (those that go beyond the end of the drive).
+        Ctrl+Enter: will scan the directory tree for an entry with a starting
+                    cluster that matches the one the cursor is currently on.
+
+       When in the data area:
+
+       Ctrl+Enter:  will jump to the corresponding FAT entry.
+       Ctrl+Right:  will jump directly to the cluster connected to it within
+                    the FAT.
+       Alt+Left:    will jump to the previous cluster.
+       Alt+Right:   will jump to the next cluster.
+
+       Additionally, when in a directory:
+
+       Enter:       will jump to the beginning of the first cluster of that
+                    entry - if the entry is associated with a cluster at all,
+                    which isn't true for entries used to store long filenames,
+                    for example.
+
+       Hitting Enter, Ctrl+Enter or Ctrl+Right keys will save the current
+       sector# on a stack; using Ctrl+Up will retrieve this information and
+       thus allow to go back to the saved position.
+
+      2.2.4 Other Navigation
+
+       Hitting Ctrl+Enter in sector 0 of a logical drive will cause WDe
+       to change to the physical drive that partition belongs to, if it exists.
+       However, this is usually not a very reliable information, for example,
+       ramdisks won't have a physical drive associated with them at all - or
+       a physical disk may have been moved to another computer, residing as
+       quite another disk# there.
 
 
 
@@ -353,14 +385,14 @@ WDe User Manual
 
       4.2.5 - Menu "Find"
 
-        Search functions may be used to find strings, hex, fats,
+        Search functions may be used to find strings, hex, FATs,
         boot sectors, mbrs, and directories.  This is convenient for data
         recovery if backups are stored, or the originals are lost in a
-        disaster.
-
-        The length of the [hex] string is currently dictated by the width
-        of the screen along with anything already displayed on the same
-        line.
+        disaster. Note that search for string and hex start at current
+        cursor position, while search for the other items start at the
+        current sector's start. Find "Next" searches for occurances
+        of ascii strings or hex strings, the character at the current
+        cursor position is ignored.
 
       4.2.6 - Menu "Functions"
 

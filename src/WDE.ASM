@@ -269,6 +269,11 @@ endif
         FILE_CHAIN       EQU 1
         FAT_CHAIN        EQU 2
 
+; "fromfat" variable
+        FF_FAT1          equ 0
+        FF_FAT2          equ 1
+
+
 ;--- define a string in .const
 CStr macro text:vararg
 local sym
@@ -518,6 +523,7 @@ part0B0C        db 'Fat32',0                            ; 41
                 db 'Next',0                             ; 43
                 db 'Help',0                             ; 44
                 db '$MFT',0                             ; 45
+                db 'BootSec',0                          ; 46
 
 ;--- a few menu items are dynamically (de)activated. 
 ;--- in those cases the menu string# must be known;
@@ -527,10 +533,10 @@ MENUF_RESTORE equ 15
 MENUF_CHAIN   equ 23
 
 if ?EXT
-MENUF_UNFORMAT equ 46
-MENUF_UNDELETE equ 47
-                db 'UnFormat',0                         ; 46
-                db 'UnDelete',0                         ; 47
+MENUF_UNFORMAT equ 47
+MENUF_UNDELETE equ 48
+                db 'UnFormat',0                         ; 47
+                db 'UnDelete',0                         ; 48
 endif
 
 
@@ -561,6 +567,7 @@ donewritedisk   db 'Finished Writing to Disk',0
 toosmall        db 'File Too Small',0
 filenotfound    db 'File Not Found',0
 filetoobigmsg   db 'File Size Cannot Exceed 4GB-1',0
+nodirentryfound db 'No Directory Entry Found With Start Cluster %lX',0
 
 errorread       db 'Error Reading File',0
 filewriteerr    db 'Error Writing File',0
@@ -598,6 +605,7 @@ szNoOfSectors   db 'Number of Sectors (1-%lu): ',0
 
 szSector2       db 'Sector (0-%lu): ',0
 szCluster2      db 'Cluster (2-%lX): ',0
+szCluster3      db 'Start Cluster (2-%lX) of File/Dir to find: ',0
 
 partmsg         db 'Part: ',0
 sizemsg         db 'Size: ',0
@@ -648,6 +656,7 @@ dwReserved      dd ? ; reserved sectors (start of fat)
 rootentries     dw ? ; number of root entries (unused)
 wRootsectors    dw ? ; number of root sectors
 dwCurSector     dd ? ; current sector in sectbuffer
+dwFatSector     dd ? ; current sector in fat cache buffer
 if ?SN64
 dwCurSectorH    dd ? ; high sector dword for int13h
 endif
@@ -757,6 +766,7 @@ endif
 
 oldint24        dd ?
                 dw ?            ; add a word to oldint24 in case it runs in dpmi32
+pFatCache       dw ?
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
 
@@ -779,17 +789,10 @@ dapacket        DAP <?>         ; used by int 13h ah=42h/43h (extended read/writ
 valuebuffer     db 11 dup (?)
 
 
-;--- the alignment must observe the fat12fix.
-;--- the handling of this format requires one byte just before
-;--- and one byte just after the sector buffer.
-    align 4
-                db 3 dup (?)    ; ensure sectbuffer is dword aligned
-fat12fix1       db ?            ; stores first borrowed byte for fat12
-
 BUFFSHIFT equ 12                ; sectbuffer must be a factor of 2
 
+    align 4
 sectbuffer      db (1 shl BUFFSHIFT) dup (?) ; read buffer for sector reading
-
 
 _BSS ends
 
@@ -1404,6 +1407,7 @@ tryread:
     call readsect
     jc driveerror                     ; failed?
     mov [sectofs],0
+    mov [dwFatSector],0               ; clear fat sector cache
     add sp, 4+2+4                     ; skip saved data on stack
     ret
 driveinvalid:
@@ -1584,8 +1588,9 @@ quickhelptext label byte
     db "Keys in FAT region of (ex)FAT partitions:",0
     db 0
     db "Ctrl+Right    - Jump to linked FAT entry (successor)",0
-    db "Ctrl+Left     - Try to find linking FAT entry (predecessor)",0
+    db "Ctrl+Left     - Search linking FAT entry (predecessor)",0
     db "Enter         - Jump to current entry's data (=cluster)",0
+    db "Ctrl+Enter    - Search directory entry with matching start cluster",0
     db 0
     db "Keys in Data region of (ex)FAT partitions:",0
     db 0    
@@ -2096,13 +2101,7 @@ printprogress:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("%s (sector %lu, remaining %lu)"), cx, [ioreq.dwSector], eax
     call printbottom
-    cmp [bDark], 3
-    jz @F
-    inc [bDark]
-    cmp [bDark], 3
-    jnz @F
-    call darkclr
-@@:
+    call darkclr3
     pop dx
     ret
 
@@ -2141,6 +2140,8 @@ handle_ctlenter proc
     test eax, eax
     jz log2phys
 
+    test [bRegion], RG_FAT
+    jnz ctlenter_fat
     test [bRegion], RG_DATA
     jz done
 
@@ -2167,6 +2168,10 @@ log2phys:
     call setvariables           ; set all obtainable parameter variables
 @@:
     ret
+
+ctlenter_fat:
+    call getcurrententry        ; get the cluster number for [dwCurSector][spot]
+    jmp finddirentry
 
 handle_ctlenter endp
 
@@ -2235,6 +2240,7 @@ nextentry:
     invoke sprintf, dx, offset recursemsg, cx, eax, [dwLastCluster]
     call printbottom
     pop eax
+    call darkclr3
 @@:
     add eax, edi                        ; go back/forward one fat entry
     cmp eax, 2                          ; past first entry in fat?
@@ -2281,7 +2287,7 @@ jumpcluster proc
     jz done
 ;jumpdatacluster:
     mov eax, [dwCurSector]
-    mov [fromfat], 1
+    mov [fromfat], FF_FAT1
     call sector2cluster                 ; get respective cluster number
     call getfatentry                    ; read fat entry
     jc done
@@ -2442,6 +2448,94 @@ autoview:
     ret
 submenu_view endp
 
+;---- in: cluster of directory in EAX
+
+scandir proc
+	mov si, offset sectbuffer
+	mov cl, 512 / 32
+nextentry:
+	cmp byte ptr [si], 0
+	jz skipdir
+	cmp byte ptr [si], 0E5h
+	jz skipentry
+	cmp byte ptr [si+0Bh], 0Fh
+	jz skipentry
+	mov ax, [si+DIR_CLUST_HIGH]
+	shl eax, 16
+	mov ax, [si+DIR_CLUST_LOW]
+	cmp eax, 0
+	jz skipentry
+	cmp eax, ebx
+	jz found
+	test byte ptr [si+0Bh], 10h
+	jz skipentry
+	cmp dword ptr [si], "   ."
+	jz skipentry
+	cmp dword ptr [si], "  .."
+	jz skipentry
+	push cx
+	push si
+	push [ioreq.dwSector]
+	call scanforcluster
+	pop [ioreq.dwSector]
+	pop si
+	pop cx
+	jc found2
+	call diskaccess_read
+skipentry:
+	add si, 32
+	dec cl
+	jnz nextentry
+	clc
+	ret
+skipdir:
+	mov eax,-1
+	clc
+	ret
+found:
+	mov eax, [ioreq.dwSector]
+	mov dx, si
+	sub dx, offset sectbuffer
+	stc
+found2:
+	ret
+scandir endp
+
+;--- scan directories to find cluster# in ebx
+;--- in: cluster of directory in EAX
+
+scanforcluster proc
+	push eax
+	call cluster2sector
+	mov [ioreq.dwSector], eax
+	mov cl, [bSpC]
+nextsector:
+	push cx
+	call diskaccess_read
+	call scandir
+	pop cx
+	jc found
+	cmp eax, -1
+	jz dirdone
+	inc [ioreq.dwSector]
+	dec cl
+	jnz nextsector
+	pop eax
+	call getfatentry
+    jc @F
+	cmp eax, 2
+	jb @F
+	cmp eax, 0ffffff7h
+	jb scanforcluster
+@@:
+	clc
+	ret
+dirdone:
+found:
+	lea sp, [esp+4]
+	ret
+scanforcluster endp
+
 ;--- submenu "find": "string hex next MBR boot sector, FAT, directory,..."
 
 submenu_find proc
@@ -2450,41 +2544,77 @@ submenu_find proc
     @mitem 27, findstring
     @mitem 28, findhex
     @mitem 43, findnext
+;    @mitem  1, finddirentry
     @mitem 17, findmbr
-    @mitem  8, findbs
+    @mitem 46, findbs
     @mitem 31, findfat
     @mitem 26, finddir
     @mend searchmenu
 
-    mov [handling], QUERY_SKIP    ; inside submenu_find (useless to do here)
     mov dx, searchmenu + lsearchmenu shl 8
     mov cl, 2
     jmp pushmenustack
 
+finddirentry::
+if 0
+	mov eax, [dwLastCluster]
+	mov dx,offset sprintfbuffer
+	invoke sprintf, dx, offset szCluster3, eax
+	call gethexvalue
+	jc _ret
+endif
+	cmp ebx, 2
+	jb _ret
+	mov eax, [dwRootCluster]   ; FAT32 only
+	cmp eax, ebx
+	jnz @F
+	mov eax, [dwRootSect]      ; it's the root cluster
+	mov [ioreq.dwSector], eax
+	call readsect
+	xor ax, ax
+	jmp ffroot
+@@:
+	call scanforcluster
+	jnc @F
+	xchg eax, [dwCurSector]
+	call pushsecstack
+	mov ax, dx
+ffroot:
+	mov dl, 0
+	call movecursor
+	ret
+@@:
+	call readcursect
+	mov dx, offset sprintfbuffer
+	invoke sprintf, dx, offset nodirentryfound, ebx
+	call nuprinterror
+	ret
+
 ;--- find directory entries
 
 finddir:
-    call bufferinsi
-@@:
-    call IsDirectory    ; scan if a dir entry is found in buffer
-    jnc doneX
-    call findcommon     ; get next (sub)sector, will set SI
-    jmp @B
-doneX:
+    mov bp, finddircb
+    jmp findcommon
+finddircb:
+    call IsDirectory    ; see if current sector contains direntries
     ret
 
 ;--- find boot sector
+;--- rather simple check for "jmp short" at pos 0 and
+;--- bs signature at pos 1FCh
 
 findbs:
-    call bufferinsi
-findbsnext:
+    mov bp, findbscb
+    jmp findcommon
+findbscb:
     cmp dword ptr [si+1fch], 0AA550000h           ; check for boot sig ++
-    jne findbs2
+    jne @F
     cmp byte ptr [si], 0EBh                       ; check for jmp
-    je doneX
-findbs2:
-    call findcommon           ; get next (sub)sector, will set SI
-    jmp findbsnext
+    je _ret
+@@:
+    stc
+_ret:
+    ret
 
 ;--- find FAT
 ;
@@ -2494,13 +2624,12 @@ findbs2:
 ; media descriptor and then attempt to identify the fat type.
 ;
 findfat:
-    call bufferinsi
-findfatnext:                      ; <---- next sector?
-if 1
+    mov bp, findfatcb
+    jmp findcommon
+findfatcb: 
     xor bx, bx                    ; 14.4.2022: TEST, just to ensure that BX has a defined value
-endif
     cmp byte ptr [si], 0F0h       ; fat12
-    je n12sfl                     ; 14.4.2022: TEST, n12sfl expects BX to be set up!
+    je n12sfl                     ; n12sfl expects BX to be set up!
     cmp byte ptr [si], 0F8h       ; fat16/fat32
     jne findfat2
 fatok:
@@ -2577,42 +2706,47 @@ nf16lt:
 
 dfstests:
     cmp word ptr [si+1], 0FFFFh
-    je doneX
+    je foundfat
 findfat2:
-    call findcommon                     ; get next (sub)sector, will set SI
-    jmp findfatnext
+    stc
+foundfat:
+    ret
 
-;--- find MBR
+;--- find MBR, checks
+;--- 1. short jmp at pos 0
+;--- 2. signature at pos 1FCh
+;--- 3. no fsinfo signature at pos 1E4h
+;--- 4. partition bytes
 
 findmbr:
-    call bufferinsi
-findmbrnext:
-    cmp byte ptr [si], 0EBh
-    je findmbr2
+    mov bp, findmbrcb
+    jmp findcommon
+findmbrcb:
+    cmp byte ptr [si+0], 0EBh
+;    je skipmbr                         ; 9.5.2022: check for "not equal"
+    jne skipmbr
     cmp dword ptr [si+1fch], 0AA550000h ; mbr signature
-    jne findmbr2
+    jne skipmbr
     cmp dword ptr [si+1e4h], 061417272h ; fsinfo sector signature
-    je findmbr2                         ; annoying of microsoft to
+    je skipmbr                          ; annoying of microsoft to
                                         ; give it an MBR signature
-    mov bx, 1BEh
-
+    mov bx, 1BEh                        ; bx = start partition table
     xor al, al
 checkactiveloop:
     mov ah, byte ptr [si+bx]            ; "active" partition byte
     test ah, 01111111b                  ; any bits other than 7 set?
-    jnz findmbr2                        ; yes, not a valid MBR.
+    jnz skipmbr                         ; yes, not a valid MBR.
     shl ah, 1                           ; shift bit 7 out of the register
     adc al, 0                           ; if it was 1, increase al
     add bx, 10h
     cmp bx, 1EEh
     jne checkactiveloop
-
     cmp al, 1                           ; more than one active partition?
-    je doneX                            ; no, MBR found.
-
-findmbr2:
-    call findcommon                     ; get next (sub)sector, will set SI
-    jmp findmbrnext
+    je foundmbr                         ; no, MBR found.
+skipmbr:
+    stc
+foundmbr:
+    ret
 
 ;--- find next occurence of (hex) string
 
@@ -2952,13 +3086,20 @@ findreadadjust:
 
 stringsearch endp
 
-;--- common routine for find directory/boot sector/fat/mbr cmds
+;--- common routine for find
+;---  + directory
+;---  + boot sector
+;---  + fat
+;---  + mbr
 ;--- out: SI=current 512-chunk of sector
 
 findcommon proc
 
-;    mov dx, offset searchingmsg
-;    call printbottom
+    mov [handling], QUERY_SKIP; inside findcommon
+nextfind:
+    call bufferinsi
+    call bp
+    jnc doneX
 
     call checktime
     jc @F
@@ -2969,7 +3110,6 @@ findcommon proc
     mov cx, offset searchingmsg
     call printprogress
 @@:
-
     mov ax, [wBps]            ; reached end of physical sector?
     sub ax, VIEWBYTES
     cmp [sectofs], ax
@@ -2982,19 +3122,21 @@ findcommon proc
     call diskaccess_read
     jc abort
     mov [sectofs], 0
-    jmp dontinc
+    jmp nextfind
 dontrw:
     add [sectofs], VIEWBYTES
 dontinc:
-    call bufferinsi
-    ret
+    jmp nextfind
 
+doneX:                  ; found directory/fat/bs/mbr
+    push [ioreq.dwSector]
+    pop [dwCurSector]   ; update current sector
+    ret
 notfound:
     mov dx, offset searcherror ; "no (more) matches found"
     call nuprinterror
 abort:
     call readcursect
-    add sp, 2                  ; skip caller's return address, will jump to main
     ret
 findcommon endp
 
@@ -3099,7 +3241,7 @@ getfatxname endp
 ;--- IN: [chainflag] = FAT_CHAIN or FILE_CHAIN
 
 savechain proc
-    mov [fromfat], 1
+    mov [fromfat], FF_FAT1
     mov [bSkipFat], 0
     xor ebp, ebp
     cmp [chainflag], FAT_CHAIN
@@ -3291,7 +3433,7 @@ restorechain proc
     mov eax, ebx
     jmp restclusts
 @@:
-    mov [fromfat], 1
+    mov [fromfat], FF_FAT1
     call bufferinsi
     mov bx, [spot]
     and bl, 11100000b
@@ -5014,7 +5156,8 @@ donebuffix:
     mov si, offset sectbuffer
     add si, [sectofs]
 
-    call fat12pad
+;; temporary disabled, fat12pad won't work with sectbuffer anymore
+;;    call fat12pad
 
     add si, ax
 
@@ -6979,21 +7122,17 @@ dispclust:
     mov [scrn_col], dl
     mov dx, offset szCluster
     call printstring
-
-if 1  ; display cluster# green/magenta depending on its state
-	mov eax, ebx
-	call getfatentry
-	mov cl, COL_DEFAULT
-	and eax, eax
-	jz @F
-	mov cl, COL_GREENFG  ; green if cluster used
+if 1
+    mov eax, ebx
+    mov [fromfat], FF_FAT1
+    call getfatentry
+    and eax, eax       ; cluster "in use"?
+    mov al, COL_DEFAULT
+    jz @F
+    mov al, COL_GREENFG; then display number in green text
 @@:
-    call cbuffer_offset  ; get screen offset
-@@:
-	mov es:[di+1], cl
-	add di, 2
-	dec ch
-	jnz @B
+    mov cl, ch
+    call fillattr
 endif
     pop dx            ; get rendered cluster#
     jmp continuecount ; and display it
@@ -7364,6 +7503,22 @@ fillcell:
     call cbuffer_offset
 @@:
     stosw
+    dec cl
+    jnz @B
+    pop cx
+    pop di
+    ret
+
+;--- set attr in AL CL times
+;--- (no screen pos update!)
+
+fillattr:
+    push di
+    push cx
+    call cbuffer_offset
+@@:
+    inc di
+    stosb
     dec cl
     jnz @B
     pop cx
@@ -7906,6 +8061,16 @@ nuprinterror::
     stc
     ret
 
+darkclr3::
+    cmp [bDark], 3
+    jz @F
+    inc [bDark]
+    cmp [bDark], 3
+    jnz @F
+    push DARKMASK
+    call swtclr
+@@:
+    ret
 darkclr::
     push DARKMASK
     call swtclr
@@ -8522,7 +8687,7 @@ clearviewarea::
     mov ax, VIEWROW                 ; start of "view" area
     mul cx
     add di, ax
-    mov dl, 8
+    mov dl, 7
 @@:
     push di
     push cx
@@ -9028,16 +9193,19 @@ spot2bufofs:
     add bx, [spot]
     ret
 
-;--- called from:
-;--- 1. recursechain ( ctrl-left while in FAT )
-;--- 2. jumpcluster  ( ctrl-right while in FAT )
-;--- 3. savechain    ( to save a FAT chain )
-;--- 4. restorechain ( to restore a FAT chain )
+;--- IN:  [dwCurSector], [spot]
+;--- OUT: eax = data stored at current entry
+;--- called by:
+;---  1. recursechain ( ctrl-left while in FAT )
+;---  2. jumpcluster  ( ctrl-right while in FAT )
+;---  3. savechain    ( to save a FAT chain )
+;---  4. restorechain ( to restore a FAT chain )
+;--- modifies EBX (contains entry#)
 
-getcurrententry:                ; IN:  [dwCurSector], [spot]
-    call getentrynumber         ; OUT: eax = data stored at current entry
-    mov ebx, eax                ;      ebx = current entry #
-    jmp getfatentry             ;      other reg's corrupted
+getcurrententry:
+    call getentrynumber     ; translate [dwCurSector][spot] to entry# in EAX
+    mov ebx, eax            ; ebx = current entry #
+    jmp getfatentry         ; other reg's corrupted
 
 ;-------------------------------------------------------
 ; rand is a random number generator (eax)

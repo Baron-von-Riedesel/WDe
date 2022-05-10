@@ -44,7 +44,7 @@ unformat proc
 
     mov eax, [dwCurSector]
     mov [dwSecBackup], eax
-    mov [fromfat], 1                  ; always use fat 1
+    mov [fromfat], FF_FAT1            ; always use fat 1
     mov dx, CStr('Scanning Fat...')
     call printbottom
     mov eax, 2                        ; start at cluster 2

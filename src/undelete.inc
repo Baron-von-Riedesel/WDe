@@ -15,7 +15,7 @@
 ;---    the FAT in bad shape.
 
 undelete proc
-    mov [fromfat], 1
+    mov [fromfat], FF_FAT1
     call spot2bufofs                      ; bx = spot + bufofs
     and bl, 11100000b                     ; bx = start directory entry
     add bx, offset sectbuffer

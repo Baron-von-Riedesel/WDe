@@ -1,6 +1,6 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
-WDe V0.50pre2 [--.--.2022]
+WDe V0.50 [10.05.2022]
   - fixed: restore chain didn't work in v0.50pre1.
   - restore exFAT file chains implemented.
   - fixed: restore partition didn't restore last sector.
@@ -26,6 +26,9 @@ WDe V0.50pre2 [--.--.2022]
   - in data region of FAT file systems, if the current cluster# is
     associated with a file ( that is, not a free cluster# ), it is shown
     in light green.
+  - fixed: find MBR didn't work.
+  - added navigation Ctrl-Enter in FAT: search directory entry with matching
+    start cluster.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

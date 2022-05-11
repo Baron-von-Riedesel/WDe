@@ -61,6 +61,7 @@ WDe User Manual
   5.17      "No search string defined yet"
   5.18      "File size cannot exceed 4GB-1"
   5.19      "Sector size exceeds 4KB"
+  5.20      "No Directory Entry found with Start Cluster XXX"
 
 
 
@@ -123,12 +124,13 @@ WDe User Manual
       The WDe screen has the following structure:
 
       - The top line, showing
-        + the offset where the cursor currently is positioned,
+        + the offset where the cursor currently is positioned within
+          the sector,
         + the current sector number,
         + the current region ( boot, FAT, root directory, data),
         + for FAT file systems, the current cluster# or - if the current
           sector is within a FAT - the entry#,
-        + for physical disks, if available, the CHS information
+        + for physical disks, if available, the CHS information.
       - The sector region, consisting of 32 lines, showing
         + on the left the offset,
         + in the middle the contents in hexadecimal or binary,
@@ -162,41 +164,39 @@ WDe User Manual
 
       2.2.2 Generic Navigation
 
-        Page Down/Page Up changes the current sector being edited.
-        Holding CTRL while pressing pgdn/pgup will jump by 100
-        sectors at a time.
+        PageUp/Down changes the current sector being edited; however, if
+        the sector size is > 512, Page Up/Down will just change the current
+        offset by 512 if the sector's end hasn't been reached yet on the 
+        screen. Ctrl+PageUp/Down will jump by 100 sectors at a time.
 
-        Ctrl+Home & Ctrl+End jump to the beginning and end of the drive,
-        respectively.
+        Ctrl+Home/End jump to the beginning and end of the drive.
 
       2.2.3 Keys for Navigating the FAT File System 
 
         When in the FAT area:
 
-        Ctrl+Right: will jump to the next entry in the fat chain, if there
+        Ctrl+Right: will jump to the next entry in the FAT chain, if there
                     exist one.
         Ctrl+Left:  will attempt to recurse to the previous entry in the FAT.
                     This implies scanning the FAT, first descending ( that
                     is, to lower cluster numbers ) and then, if no linking
                     entry has been found this way, ascending. Usually the
-                    predecessor is either found "at once" or not at all - the
+                    predecessor is either found instantly or not at all - the
                     latter case should mean that the entry is the start of a
                     chain.
-        Enter:      will jump directly to the first sector in that cluster
-                    in the data area.  Note that Ctrl+Right within the Fat
-                    will not jump to entries belonging to non-existant clusters
-                    (those that go beyond the end of the drive).
+        Enter:      will jump directly to the cluster's first sector in the
+                    data area. 
         Ctrl+Enter: will scan the directory tree for an entry with a starting
-                    cluster that matches the one the cursor is currently on.
+                    cluster matching the one the cursor is currently on.
                     NOT implemented for exFAT yet!
 
        When in the data area:
 
        Ctrl+Enter:  will jump to the corresponding FAT entry.
-       Ctrl+Right:  will jump directly to the cluster connected to it within
-                    the FAT.
-       Alt+Left:    will jump to the previous cluster.
-       Alt+Right:   will jump to the next cluster.
+       Ctrl+Right:  will jump directly to the cluster connected to it in
+                    the FAT chain.
+       Alt+Left:    will jump to the first sector of the previous cluster.
+       Alt+Right:   will jump to the first sector of the next cluster.
 
        Additionally, when in a directory:
 
@@ -207,7 +207,7 @@ WDe User Manual
 
        Hitting Enter, Ctrl+Enter or Ctrl+Right keys will save the current
        sector# on a stack; using Ctrl+Up will retrieve this information and
-       thus allow to go back to the saved position.
+       thus allow to go back to the previous position.
 
       2.2.4 Other Navigation
 
@@ -586,10 +586,12 @@ WDe User Manual
 
     5.13 - "Recursive Link Not Found"
 
-        This error occurs when attempting to find a cluster that links to
-        another by recursively searching through the FAT table.  If WDe
-        reaches the beginning of the FAT without finding a linked entry,
-        this error occurs.
+        This error may occur when Ctrl-Left is pressed while in the FAT
+        part of a disk. WDe first scans the FAT from the current entry
+        to the start, then from the current entry to the end to find the
+        linking entry - the predecessor in the chain. If no such
+        predecessor is found, this error occurs - the start of the chain
+        has been reached.
 
     5.14 - "Fat Table Not Blank"
 
@@ -621,11 +623,19 @@ WDe User Manual
     5.18 - "File Size cannot exceed 4GB-1"
 
         This is a limitation of DOS's FAT file system. The message may appear
-        if a large partition is to be saved in a file.
+        if a large partition is to be saved to a file.
 
     5.19 - "Sector Size exceeds 4KB"
 
         WDe's buffer for sectors is currently limited to a size of 4 kB.
         A device ( or a boot sector, for logical disks ) that reports a larger
         size will be rejected.
+
+    5.20 - "No Directory Entry found with Start Cluster XXX"
+
+        Appears if Ctrl-Enter has been hit in the FAT area for an entry that
+        is not the start of a chain - only the start cluster# is stored in the
+        directory entries and can therefore be found by a directory scan. So
+        to find a directory entry associated with a FAT chain first find the
+        start of the chain ( by pressing Ctrl+Left, repeatedly ).
 

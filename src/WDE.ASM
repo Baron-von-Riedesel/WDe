@@ -4833,7 +4833,10 @@ noundeleteadjust:
     pop es
     push si
     add si, bx
-    mov cx, 8
+    mov cx, 11
+    cmp byte ptr [si+DIR_ATTRIBUTES], 08  ; volume?
+    je copyvol
+    mov cl, 8
     rep movsb
     mov cl, 8
 @@:
@@ -4851,6 +4854,7 @@ noundeleteadjust:
     inc cx
     mov al,'.'
     stosb
+copyvol:
     rep movsb
 @@:
     pop si

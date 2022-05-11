@@ -773,7 +773,7 @@ cdheader        CDREQ <?>       ; cd device request header
 drivepacket     DISKIO <?>      ; used by int 25h/26h and int 21h/ax=7305h
 dapacket        DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
 valuebuffer     db 11 dup (?)
-
+                db ?            ; ensure there is at least 1 byte between valuebuffer and sectbuffer
 
 BUFFSHIFT equ 12                ; sectbuffer must be a factor of 2
 
@@ -1257,8 +1257,8 @@ ck  label word
     CKey PAGEUP_KEY,       prevsect
     CKey CTRLPAGEDOWN_KEY, nextsect1000
     CKey CTRLPAGEUP_KEY,   prevsect1000
-    CKey CTRLLEFT_KEY,     recursechain
-    CKey CTRLRIGHT_KEY,    jumpcluster
+    CKey CTRLLEFT_KEY,     searchpredecessor
+    CKey CTRLRIGHT_KEY,    jumpsuccessor
     CKey CTRLUP_KEY,       jumpstkpop
     CKey CTRLHOME_KEY,     jumptobootsector
     CKey CTRLEND_KEY,      jumptolastsect
@@ -1421,6 +1421,7 @@ tryread:
     jc driveerror                     ; failed?
     mov [sectofs],0
     mov [dwFatSector],0               ; clear fat sector cache
+    or  [fat12fixsec],-1              ; ensure fat12fix != dwFatSector
     add sp, 4+2+4                     ; skip saved data on stack
     ret
 driveinvalid:
@@ -2142,7 +2143,8 @@ jumpstkpop proc
 jumpstkpop endp
 
 ;--- handle ctrl-enter key
-;--- jump to cluster entry in FAT
+;--- in FAT: scan directory, search matching start cluster
+;--- in Data: jump to FAT entry for current cluster
 
 handle_ctlenter proc
 
@@ -2230,7 +2232,7 @@ pushsecstack endp
 
 ;--- ctrl-left handling
 
-recursechain proc
+searchpredecessor proc
     cmp [bRegion], RG_FAT               ; in FAT region?
     je recursefat
     test [bRegion], RG_DATA             ; or in data?
@@ -2293,12 +2295,12 @@ chainnotfound:
     mov dx, offset nochainmsg           ; "recursive link not found"
     call printerror
 done:
-    @printduration "recursechain"
+    @printduration "searchpredecessor"
     ret
-recursechain endp
+searchpredecessor endp
 
 ;--- ctrl-right key handling.
-;--- if in FAT, jump to linked (=next) cluster in chain
+;--- if in FAT, jump to linked (=next) entry in chain
 ;--- if in data region, jump to linked cluster in FAT
 
 ;--- for exFAT, it might be that the FAT entry is NULL -
@@ -2307,13 +2309,13 @@ recursechain endp
 ;--- problem is that WDe doesn't know the file size and hence
 ;--- can't tell when the end is reached.
 
-jumpcluster proc
+jumpsuccessor proc
 
     cmp [bRegion], RG_FAT
-    je jumpfatcluster
+    je jumpfatsuccessor
     test [bRegion], RG_DATA
     jz done
-;jumpdatacluster:
+;jumpdatasuccessor:
     mov eax, [dwCurSector]
     mov [fromfat], FF_FAT1
     call sector2cluster                 ; get respective cluster number
@@ -2324,7 +2326,7 @@ jumpcluster proc
     jz nuprinterror
     jmp setcluster                      ; set the cluster# read from FAT
 ;-------------------------------------------------------
-jumpfatcluster:
+jumpfatsuccessor:
 
     call getcurrententry
 
@@ -2344,7 +2346,7 @@ dochainjump::             ; <--- for recurse ( Ctrl-left in FAT )
     call readsect                 ; read the sector set by go2entry
 done:
     ret
-jumpcluster endp
+jumpsuccessor endp
 
 ;--- display error msg "invalid cluster # xxx"
 ;--- in: ebx=cluster# to display
@@ -2355,7 +2357,7 @@ invalclusterror proc
     jmp nuprinterror
 invalclusterror endp
 
-;--- handle ctrl-key ENTER
+;--- handle Enter key
 ;--- in FAT area: jump to data area of cluster at current offset
 ;--- in DIR area: jump to starting cluster of dir entry
 
@@ -2372,23 +2374,16 @@ handle_enter proc
 
     call getentrynumber                 ; get the cluster number for [dwCurSector][spot]
 
-;--- set cluster# in eax and store current sector in sector stack,
-;--- reset spot to 0.
+;--- translate cluster# in eax, reset spot to 0.
 
 setcluster::                            ; <--- used by various code
-    mov ebx, eax
     call cluster2sector                 ; multiply it out to get the
     cmp eax, [dwDataend]                ; corresponding sector number
     ja invalclusterror                  ; verify that it's a valid sector
+setcluster2:
     mov [ioreq.dwSector], eax
-
-    cmp eax,[dwCurSector]               ; don't store if sectors are identical.
-    jz @F                               ; (will happen for "." entries, for example.
-    mov eax,[dwCurSector]               ; store current sector onto stack.
-    call pushsecstack                   ; push sector# in eax onto sector stack
-@@:
     call readsect
-    mov ax,0
+    xor ax, ax
     mov dl,0
     call movecursor
 done:
@@ -2415,10 +2410,19 @@ do_direntry:
 ;--- jump to root directory if cluster# invalid?
 ;--- not generally, only if name of entry is ".."
 ;    jb jumptoroot
-    jae setcluster
+    jae dirsetcluster
     cmp dword ptr [si+bx],"  .."
     jz jumptoroot
     ret
+dirsetcluster:
+    call cluster2sector                 ; multiply it out to get the
+    cmp eax, [dwDataend]                ; corresponding sector number
+    ja invalclusterror                  ; verify that it's a valid sector
+    push eax
+    mov eax, [dwCurSector]
+    call pushsecstack                   ; push sector# in eax onto sector stack
+    pop eax
+    jmp setcluster2
 
 exfat_enter:
     mov al, [si+bx].EXFDIRP.etype
@@ -2430,7 +2434,7 @@ exfat_enter:
     jz done
 @@:
     mov eax, [si+bx].EXFDIRS.dwFirstCl
-    jmp setcluster
+    jmp dirsetcluster
 isprim:
     and al, 1Fh
     cmp al, EXFPTC_ALLOCBM
@@ -5234,11 +5238,16 @@ buf12fix:                               ; fat12 entries, since an entire
     jbe buf12fix
 donebuffix:
 
-    mov si, offset sectbuffer
-    add si, [sectofs]
+;    call bufferinsi
+    mov si, offset sectbuffer           ; use sectbuffer directly here!
 
-;; temporary disabled, fat12pad won't work with sectbuffer anymore
-;;    call fat12pad
+;--- fat12pad modifies bytes around [si]; this is no problem
+;--- it's ensured that there's at least 1 byte free before sectbuffer
+;--- and behind it there's also space, unless sector size is 4 kB -
+;--- rather unlikely for FAT12
+
+    push [dwCurSector]
+    call fat12pad
 
     add si, ax
 
@@ -5954,16 +5963,7 @@ nextcluster proc
     movsx ecx, cl
     adc ecx, 0
     add eax, ecx
-if 0
-    jmp setcluster                  ; don't use setcluster, that would push sector# onto stack
-else
-    mov ebx, eax                    ; save cluster# for possible error msg
-    call cluster2sector             ; get corresponding sector number
-    cmp eax, [dwDataend]            ; 
-    ja invalclusterror              ; verify that it's a valid sector
-    mov [ioreq.dwSector], eax
-    call readsect
-endif
+    jmp setcluster
 done:
     ret
 
@@ -9270,7 +9270,7 @@ spot2bufofs:
 ;--- IN:  [dwCurSector], [spot]
 ;--- OUT: ebx=cur entry, eax=data stored at cur entry
 ;--- called by:
-;---  1. jumpcluster  ( ctrl-right while in FAT )
+;---  1. jumpsuccessor  ( ctrl-right while in FAT )
 ;---  2. savechain    ( to save a FAT chain )
 ;---  3. restorechain ( to restore a FAT chain )
 

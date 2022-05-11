@@ -145,8 +145,8 @@ WDe User Manual
       shortly called "boot/reserved", "FAT", "root" and "data". While in
       the "data" part, WDe will show the cluster# the current sector 
       belongs to. Furthermore, the number will be written in light green
-      if the cluster is marked as "non-free" in the FAT, that is, it is
-      - or rather should be - associated with a file.
+      if the cluster is part of a chain in the FAT, that is, it is - or
+      rather: should be - associated with a file.
 
 
     2.2 - Navigation and Editing
@@ -210,9 +210,9 @@ WDe User Manual
                     which isn't true for entries used to store long filenames,
                     for example.
 
-       Hitting Enter, Ctrl+Enter or Ctrl+Right keys will save the current
-       sector# on a stack; using Ctrl+Up will retrieve this information and
-       thus allow to go back to the previous position.
+       Hitting Enter or Ctrl+Enter keys will save the current sector# on a
+       stack; using Ctrl+Up will retrieve this information and thus allow
+       to go back to the previous position.
 
       2.2.4 Other Navigation
 

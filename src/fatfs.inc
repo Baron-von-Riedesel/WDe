@@ -100,6 +100,7 @@ getfatentry proc
     cmp [filesys], FS_FAT12
     jne fat1632
 
+    push [dwFatSector]
     call fat12pad
 
     test al, 00000001b
@@ -156,7 +157,9 @@ putfatentry proc
     cmp [filesys], FS_FAT12
     jne dof132
 
+    push [dwFatSector]
     call fat12pad
+
     test dl, 00000001b
     jnz pmethod2
 pmethod1:
@@ -280,52 +283,58 @@ done:
 locatefatentry endp
 ;-----------------------------------------------------------------
 ;
-; fat12pad adds extra fat data around the sector buffer in case
+; fat12pad adds extra fat data around the sector pointed to by SI in case
 ;          the fat entry being read/written crosses a sector boundary
 ;
-;               IN:   bx        bytes to fat entry
-;                     si        pointer to FAT sector cache
-;               OUT:  bytes written around sectbuffer
+;               IN:   sector number as stack param!
+;                     si: pointer to sector content; it's pointing
+;                     to the fat cache if called by get/putfatentry.
+;               OUT:  bytes written around si ([si-1] & [si+wBps])
 ;
 ;-----------------------------------------------------------------
-fat12pad proc                           ; IN: ebx = bytes to fat entry
-    pushad                              ;     si = sectbuffer pointer
-                                        ; OUT: bytes put around sector
-    mov eax, [dwFatSector]              ; did we call this function
-    cmp [fat12fixsec], eax              ; from the same sector?  then
+fat12pad proc
+    pusha
+    mov bp, sp
+    push eax
+    mov eax, [bp+16+2]                  ; assumes 16-bit!
+
+    cmp [fat12fixsec], eax              ; the same sector?  then
     je done                             ; we already have the correct data
     mov [fat12fixsec], eax              ; ...this would be a tiny bug if
                                         ; we switch drives on sector 0
-    push eax
+
+    push [dwFatSector]                  ; save current fatcache sector
     mov [handling], IGNORE_ERRORS       ; inside fat12pad
     mov bx, [wBps]
     test eax, eax                       ; if the current sector is 0
     jz nopred                           ; then we can't read the previous
 
     dec eax
-    call readfatcache
+    call readfatcache                   ; read previous sector into fatcache
     jc @F
-    mov cl, byte ptr [si+bx-1]          ; copy last byte of previous sector
-;    mov [fat12fix1], cl
+    mov di, [pFatCache]                 ; load DI AFTER readfatcache!
+    mov cl, [di+bx-1]                   ; copy last byte of previous sector
     mov [si-1], cl
 @@:
     inc eax
 nopred:                                 ; we don't want to read the next
     cmp eax, [dwDataend]                ; sector if it's past the drive end
-    jae nosucc
+    jae @F
     inc eax
-    call readfatcache
-    jc nosucc
-    mov cl, byte ptr [si]
-    mov byte ptr [si+bx], cl            ; verify if this is [si+512]
-nosucc:
+    call readfatcache                   ; read next sector into fatcache
+    jc @F
+    mov di, [pFatCache]                 ; load DI AFTER readfatcache!
+    mov cl, [di+0]                      ; and copy first byte of next sector
+    mov byte ptr [si+bx], cl            ; behind the current sector 
+@@:
 done2:
     pop eax
-    call readfatcache
+    call readfatcache                   ; restore content of fatcache
     mov [handling], ABORT_OPERATION     ; inside fat12pad
 done:
-    popad
-    ret
+    pop eax
+    popa
+    ret 4
 
 readfatcache::
     cmp [pFatCache],0

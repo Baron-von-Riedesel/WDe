@@ -351,9 +351,10 @@ fat12pad endp
 ;-----------------------------------------------------------------
 ;
 ; getentrynumber gets the fat entry number the cursor is on
-; called 1. when ENTER has been pressed while in FAT
-;        2. while in FAT, to display entry# in top line
-;        3. from getcurrententry ( only called when inside FAT )
+; called 1. in FAT, when ENTER has been pressed
+;        2. in FAT, when Ctrl+Left (recurse) has been pressed
+;        3. in FAT, to display entry# in top line
+;        4. in FAT, from getcurrententry
 ;
 ;               IN:   [dwCurSector]  current sector within a fat
 ;                     [spot]    byte offset inside current sector

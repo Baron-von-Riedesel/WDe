@@ -1,6 +1,6 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
-WDe V0.50 [10.05.2022]
+WDe V0.50 [12.05.2022]
   - fixed: restore chain didn't work in v0.50pre1.
   - restore exFAT file chains implemented.
   - fixed: restore partition didn't restore last sector.
@@ -30,6 +30,8 @@ WDe V0.50 [10.05.2022]
   - speed-up for "recurse" ( searching "linking" entry ) scan in FAT.
   - added navigation Ctrl-Enter in FAT: search directory entry with matching
     start cluster.
+  - added navigation Ctrl-Right in data area: search previous cluster in
+    chain.
 
 WDe V0.50pre1 [24.04.2022]
   - the non-menu keys ( cursor movement, sector editing, ... )

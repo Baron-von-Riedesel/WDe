@@ -62,6 +62,7 @@ WDe User Manual
   5.18      "File size cannot exceed 4GB-1"
   5.19      "Sector size exceeds 4KB"
   5.20      "No Directory Entry found with Start Cluster XXX"
+  5.21      "End of Cluster Chain reached"
 
 
 
@@ -84,14 +85,15 @@ WDe User Manual
 
     Keys in FAT area of FAT partitions:
 
-    Ctrl+Right    - Jump to linked FAT entry (successor)
-    Ctrl+Left     - Recurse to find linking FAT entry (predecessor)
+    Ctrl+Right    - Jump to next entry in chain
+    Ctrl+Left     - Search previous entry in chain
     Enter         - Jump to current entry's data
     Ctrl+Enter    - Search directory entry with matching start cluster
 
     Keys in Data area of FAT partitions:
 
-    Ctrl+Right    - Jump to linked cluster in FAT (successor)
+    Ctrl+Right    - Jump to next cluster in chain
+    Ctrl+Left     - Search previous cluster in chain
     Ctrl+Enter    - Jump to FAT entry for this cluster
     Alt+Right     - Forward 1 cluster
     Alt+Left      - Back 1 cluster
@@ -192,9 +194,12 @@ WDe User Manual
 
        When in the data area:
 
-       Ctrl+Enter:  will jump to the corresponding FAT entry.
        Ctrl+Right:  will jump directly to the cluster connected to it in
                     the FAT chain.
+       Ctrl+Left:   will search the entry linking to this cluster' entry in
+                    the FAT and jump to its associated cluster. See the notes
+                    for Ctrl+Left in the FAT area.
+       Ctrl+Enter:  will jump to the corresponding FAT entry.
        Alt+Left:    will jump to the first sector of the previous cluster.
        Alt+Right:   will jump to the first sector of the next cluster.
 
@@ -586,12 +591,13 @@ WDe User Manual
 
     5.13 - "Recursive Link Not Found"
 
-        This error may occur when Ctrl-Left is pressed while in the FAT
-        part of a disk. WDe first scans the FAT from the current entry
-        to the start, then from the current entry to the end to find the
-        linking entry - the predecessor in the chain. If no such
-        predecessor is found, this error occurs - the start of the chain
-        has been reached.
+        This message may appear when Ctrl-Left is pressed while in the FAT
+        or data part of a disk. WDe first scans the FAT from the current
+        entry to the start, then from the current entry to the end to find
+        the linking entry - the predecessor in the chain. If no such
+        predecessor is found, this message is displayed - the start of the
+        chain has been reached. It's not an error, unless there exists no
+        directory entry with a matching "start cluster" entry.
 
     5.14 - "Fat Table Not Blank"
 
@@ -638,4 +644,11 @@ WDe User Manual
         directory entries and can therefore be found by a directory scan. So
         to find a directory entry associated with a FAT chain first find the
         start of the chain ( by pressing Ctrl+Left, repeatedly ).
+
+    5.21 - "End of Cluster Chain reached"
+
+        This message may occur when Ctrl-Right is pressed while in the data
+        part of a disk. It means that the corresponding FAT chain has reached
+        its end. It's only an error if the end of the chain is "preliminary".
+
 

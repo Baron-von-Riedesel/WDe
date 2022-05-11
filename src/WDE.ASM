@@ -942,27 +942,27 @@ endif
 @@:
     lodsb
     stosb
-    cmp al,13
+    cmp al, 13
     jz @F
-    cmp al,0
+    cmp al, 0
     jnz @B
 @@:
     pop ds
-    mov byte ptr [di-1],0
+    mov byte ptr [di-1], 0
 
 ;--- scan command line
 
     mov si, offset sprintfbuffer
 @@:
     lodsb
-    cmp al,0
+    cmp al, 0
     jz no_drive
     cmp al,' '
     jbe @B
-    mov ah,[si]
-    cmp al,'/'
+    mov ah, [si]
+    cmp al, '/'
     jz handleoptions
-    cmp al,'-'
+    cmp al, '-'
     jz handleoptions
     cmp al, '0'
     jb inval_cmd
@@ -1600,14 +1600,15 @@ quickhelptext label byte
     db 0
     db "Keys in FAT region of (ex)FAT partitions:",0
     db 0
-    db "Ctrl+Right    - Jump to linked FAT entry (successor)",0
-    db "Ctrl+Left     - Search linking FAT entry (predecessor)",0
+    db "Ctrl+Right    - Jump to next entry in chain",0
+    db "Ctrl+Left     - Search previous entry in chain",0
     db "Enter         - Jump to current entry's data (=cluster)",0
     db "Ctrl+Enter    - Search directory entry with matching start cluster",0
     db 0
     db "Keys in Data region of (ex)FAT partitions:",0
     db 0    
-    db "Ctrl+Right    - Jump to linked cluster in FAT (successor)",0
+    db "Ctrl+Right    - Jump to next cluster in chain",0
+    db "Ctrl+Left     - Search previous cluster in chain",0
     db "Ctrl+Enter    - Jump to FAT entry for this cluster",0
 if ?ALTKEYS
     db "Alt+Right     - Forward 1 cluster",0
@@ -1616,10 +1617,7 @@ endif
     db "Enter         - If in directory, jump to start cluster of entry",0
     db 0    
     db "On exFAT disks, a file may have no associated FAT chain; in such",0
-    db "cases the file is stored contiguous and Ctrl+Right can't work.",0
-if ?ALTKEYS
-    db "Alt+Right is no real substitute, it won't detect the chain's end.",0
-endif
+    db "cases the file is stored contiguous and Ctrl+Left/Right won't work.",0
     db -1
 
     .code
@@ -1634,12 +1632,12 @@ nextline:
     mov si, dx
 nextchar:
     lodsb
-    cmp al,0
+    cmp al, 0
     jnz nextchar
-    cmp byte ptr [si],-1
+    cmp byte ptr [si], -1
     jz done
     inc [scrn_row]
-    mov [scrn_col],5
+    mov [scrn_col], 5
     mov dx, si
     jmp nextline
 done:
@@ -2186,7 +2184,8 @@ log2phys:
 ctlenter_fat:
     cmp [filesys], FS_EXFAT     ; not yet for exFAT
     jz done
-    call getcurrententry        ; get the cluster number for [dwCurSector][spot]
+    call getentrynumber         ; translate [dwCurSector][spot] to entry# in EAX
+    mov ebx, eax
     jmp finddirentry
 
 handle_ctlenter endp
@@ -2229,23 +2228,35 @@ pushsecstack proc
     ret
 pushsecstack endp
 
-;--- main menu ctrl-left
+;--- ctrl-left handling
 
 recursechain proc
-    cmp [bRegion], RG_FAT               ; must be in FAT region
-    jne done
+    cmp [bRegion], RG_FAT               ; in FAT region?
+    je recursefat
+    test [bRegion], RG_DATA             ; or in data?
+    jz done
+    mov eax, [dwCurSector]
+    call sector2cluster                 ; get cluster number in EAX
+    mov esi, setcluster
+    jmp recursefatdata
 
-    call getcurrententry                ; get ebx = current entry number
-    cmp ebx, 2                          ; starting (2nd) cluster?
-    jbe done                            ; no where to recurse from
-    mov eax, ebx
+recursefat:
+    call getentrynumber                 ; get eax = current entry number
+    cmp eax, 2
+    jb done                             ; valid entries start at 2
+    mov esi, dochainjump                ; what to do if predecessor is found
+
+recursefatdata:
+    mov ebx, eax                        ; save start entry for ascending scan
 
 ;--- the old code assumed that the cluster that we search and that links to the
 ;--- current one is "below" ( hence it starts decrementing from the current
-;--- cluster# ). This assumption was incorrect.
+;--- cluster# ). This assumption was too optimistic, it's absolutely valid that
+;--- a chain is "decending", that is, the predecessor has a higher entry#.
+;--- However, it's a good strategy to first scan the lower entries.
 
     @getstarttime
-    mov edi,-1                          ; begin with decending from current entry#
+    or edi, -1                          ; begin with decending from current entry#
     mov cx, CStr("descending")
 nextentry:
     call checktime
@@ -2269,12 +2280,11 @@ nextentry:
     call getfatentry                    ; read the fat entry in EAX
     cmp ebx, eax                        ; match the one we want?
     pop eax
-    je dochainjump                      ; found
-
-    jmp nextentry                       ; no...keep recursing
+    jne nextentry                       ; no...keep recursing
+    jmp esi                             ; found
 
 loop_done:
-    mov edi, 1                          ; no predecessor found "below"
+    add edi, +2                         ; no predecessor found "below"
     mov eax, ebx                        ; so the region "above" is to be scanned
     mov cx, CStr("ascending")
     jmp nextentry
@@ -2287,7 +2297,7 @@ done:
     ret
 recursechain endp
 
-;--- main menu ctrl-right key
+;--- ctrl-right key handling.
 ;--- if in FAT, jump to linked (=next) cluster in chain
 ;--- if in data region, jump to linked cluster in FAT
 
@@ -2521,7 +2531,7 @@ skipentry:
     xor ax, ax
     ret
 skipdir:
-    mov eax,-1
+    or eax, -1
     clc
     ret
 found:
@@ -3431,7 +3441,7 @@ getnextcluster:
     inc eax                 ; no, increment cluster#
     dec [dwNumCluster]
     jns dgnc                ; and check if EOF has been reached
-    mov eax, -1
+    or eax, -1
     jmp dgnc
 ncfromfat:
     call getfatentry        ; get next cluster# from fat chain
@@ -6074,7 +6084,7 @@ if ?VDD
 ;--- windows complains if drive is an USB memory stick.
 ;--- hence don't lock if running on NT!
 ;--- todo: check if wdevdd can take over the locking.
-    cmp [hVdd],-1
+    cmp [hVdd], -1
     jnz dontlock
 endif
 
@@ -9258,13 +9268,11 @@ spot2bufofs:
     ret
 
 ;--- IN:  [dwCurSector], [spot]
-;--- OUT: eax = data stored at current entry
+;--- OUT: ebx=cur entry, eax=data stored at cur entry
 ;--- called by:
-;---  1. recursechain ( ctrl-left while in FAT )
-;---  2. jumpcluster  ( ctrl-right while in FAT )
-;---  3. savechain    ( to save a FAT chain )
-;---  4. restorechain ( to restore a FAT chain )
-;--- modifies EBX (contains entry#)
+;---  1. jumpcluster  ( ctrl-right while in FAT )
+;---  2. savechain    ( to save a FAT chain )
+;---  3. restorechain ( to restore a FAT chain )
 
 getcurrententry:
     call getentrynumber     ; translate [dwCurSector][spot] to entry# in EAX

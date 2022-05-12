@@ -439,7 +439,7 @@ SECITEM ends
 
     .const
 
-introtext       db 'WDe V0.50',0
+introtext       db 'WDe V0.99',0
 copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
 
 owmsg           db 'File Exists - A(ppend), O(verwrite) or C(ancel)? ',0
@@ -629,8 +629,8 @@ vidpg           db ?
 scrn_xy         label word ; xy position on screen
 scrn_col        db ?
 scrn_row        db ?
-crsr_xy         dw ? ; cursor xy position
 spot            dw ? ; keeps count of what byte we're editing 0-511
+oldcsrattr      dw ?
 sectofs         dw ? ; because [spot] goes from 0-511, if we have sectors
                      ; that are >512 bytes, sectofs keeps track of what
                      ; 512-byte piece we're working with
@@ -642,6 +642,7 @@ fromfat         db ? ; fat to use for getfatentry/putfatentry
 filesys         db ? ; type of fat
 bSpC            db ? ; sectors per cluster
 bFats           db ? ; number of fats
+                align 4
 dwSpF           dd ? ; sectors per fat
 dwFat1end       dd ? ; end of first fat
 dwReserved      dd ? ; reserved sectors (start of fat)
@@ -672,7 +673,7 @@ partitions      dd ?,?,?,? ; partition start sectors
 backupbs        dw ? ; backup boot sector location (FAT32)
 fsinfo          dw ? ; fsinfo sector (FAT32)
 wBps            dw ? ; current bytes per sector ( both physical/logical )
-lastbottomtext  dw ? ; printbottom backs up string pointer for readsect/writesect
+;lastbottomtext  dw ? ; printbottom backs up string pointer for readsect/writesect
                      ; to reprint it when there's a sector error
 hdnumber        db ? ; hard drive number partition belongs to
 bSpCshift       db ? ; sectors per cluster for doing bitshifts
@@ -861,19 +862,26 @@ if ?DEBUG
 endif
 endm
 
+if ?DEBUG
+_BSS segment
+dbgbuff db 80 dup (?)
+_BSS ends
+endif
+
 ;--- print a line on stdout
 
 @dprintfln macro formstr, args:vararg 
 if ?DEBUG
     pushf
+ ifb <args>
+    invoke sprintf, offset dbgbuff, CStr(formstr,13,10,'$')
+ else
+    invoke sprintf, offset dbgbuff, CStr(formstr,13,10,'$'), args
+ endif
     pusha
-    sub sp, 80
-    mov bp, sp
-    invoke sprintf, bp, CStr(formstr,13,10,'$'), args
-    mov dx, bp
+    mov dx, offset dbgbuff
     mov ah,9
     int 21h
-    add sp, 80
     popa
     popf
 endif
@@ -1064,9 +1072,6 @@ if ?MOUNT
 @@:
 endif
 
-    xor dx, dx
-    call nspotcalc
-    mov [crsr_xy], dx           ; set cursor to spot 0
     call printoffset            ; print current offset
 
     mov dx, initialmenu + linitialmenu shl 8
@@ -1087,10 +1092,11 @@ main proc
     push offset main
 
 getkeyagain:
-    mov ax, [crsr_xy]           ; set [scrn_xy] to cursor coordinates so that
-    mov [scrn_xy], ax           ; functions like changemode color the right
-                                ; spot on the screen
+    push 1
+    call showcursor
     call getkey
+    push 0
+    call showcursor
 
     cmp al, ESCAPE_KEY          ; exit menu or program
     je handle_esc
@@ -1176,7 +1182,7 @@ donefixbin:
 
 displaybyte:                    ; display AL both in hex/binary and ascii
     mov dx, bx
-    call nspotcalc
+    call spot2xy
     mov [scrn_xy], dx
     cmp [displaymode], DM_HEX   ; hex or binary?
     je @F
@@ -1188,7 +1194,7 @@ displaybyte:                    ; display AL both in hex/binary and ascii
 done_render:
     call printstring            ; display rendered number
     mov dx, bx
-    call aspotcalc
+    call spot2xyasc
     mov [scrn_xy], dx
     mov cl, 1
     call fillchar               ; display ascii value
@@ -1597,7 +1603,7 @@ quickhelptext label byte
     db "Shift+Tab     - Switch between hex and binary",0
     db "Ctrl+End      - Jump to last sector on drive",0
     db "Ctrl+Home     - Jump to first sector on drive",0
-    db "Ctrl+Up       - Pop sector from stack and jump to it",0
+    db "Ctrl+Up       - Pop sector# from stack and jump to it",0
     db 0
     db "Keys in FAT region of (ex)FAT partitions:",0
     db 0
@@ -2124,7 +2130,6 @@ changemode proc
   cmp al, 0                     ; shift+tab?
   je @F
   xor [editmode], EM_ASCII      ; switch between ascii/regular editing
-  call colorchar
   ret
 @@:
   xor [displaymode], DM_BINARY  ; switch between hex/binary editing
@@ -2375,8 +2380,13 @@ handle_enter proc
     call getentrynumber                 ; get the cluster number for [dwCurSector][spot]
 
 ;--- translate cluster# in eax, reset spot to 0.
+;--- entry used by:
+;--- 1. ctrl-left data region
+;--- 2. ctrl-right data region
+;--- 3. Goto Cluster menu item
+;--- 4. alt-left & alt-right data region
 
-setcluster::                            ; <--- used by various code
+setcluster::
     call cluster2sector                 ; multiply it out to get the
     cmp eax, [dwDataend]                ; corresponding sector number
     ja invalclusterror                  ; verify that it's a valid sector
@@ -2388,6 +2398,20 @@ setcluster2:
     call movecursor
 done:
     ret
+
+;--- similar to setcluster, but save current pos onto stack
+
+stacksetcluster:
+    call cluster2sector                 ; multiply it out to get the
+    cmp eax, [dwDataend]                ; corresponding sector number
+    ja invalclusterror                  ; verify that it's a valid sector
+    cmp eax, [dwCurSector]              ; don't push sector# if dst==src
+    jz setcluster2
+    push eax
+    mov eax, [dwCurSector]
+    call pushsecstack                   ; push sector# in eax onto sector stack
+    pop eax
+    jmp setcluster2
 
 do_direntry:
 
@@ -2410,19 +2434,10 @@ do_direntry:
 ;--- jump to root directory if cluster# invalid?
 ;--- not generally, only if name of entry is ".."
 ;    jb jumptoroot
-    jae dirsetcluster
+    jae stacksetcluster
     cmp dword ptr [si+bx],"  .."
     jz jumptoroot
     ret
-dirsetcluster:
-    call cluster2sector                 ; multiply it out to get the
-    cmp eax, [dwDataend]                ; corresponding sector number
-    ja invalclusterror                  ; verify that it's a valid sector
-    push eax
-    mov eax, [dwCurSector]
-    call pushsecstack                   ; push sector# in eax onto sector stack
-    pop eax
-    jmp setcluster2
 
 exfat_enter:
     mov al, [si+bx].EXFDIRP.etype
@@ -2434,7 +2449,7 @@ exfat_enter:
     jz done
 @@:
     mov eax, [si+bx].EXFDIRS.dwFirstCl
-    jmp dirsetcluster
+    jmp stacksetcluster
 isprim:
     and al, 1Fh
     cmp al, EXFPTC_ALLOCBM
@@ -2912,6 +2927,9 @@ setdataview:
     mov dl, VM_DATA                   ; as the main fsinfo is the main
     jmp setDLview                     ; bootsector, which is wrong.
 setdirview:
+if 1
+    call dirview_ascii                ; if in dirview, colorize the ascii part
+endif
     mov dl, VM_DIRECTORY
     jmp setDLview
 setbsview:
@@ -2942,6 +2960,137 @@ setDLview:
     jmp updateview
 
 updatescreen endp
+
+if 1
+
+;--- render a nice ascii dirview
+;--- show: 
+;---  - file names in white
+;---  - directories in bright yellow
+;---  - rest in light gray
+
+dirview_ascii proc
+    cmp [filesys], FS_EXFAT           ; exFAT?
+    jz dirview_ascii_exfat            ; needs special handling
+    pusha
+    mov si, offset sectbuffer
+    mov [scrn_xy], COLASC or (ROWXXX shl 8)
+    call cbuffer_offset
+    mov cx, 512 / 32
+nextentry:
+    cmp byte ptr [si], 0
+    jz done
+    push di
+    mov al, 17h                 ; light grey
+    cmp byte ptr [si], 0E5h
+    jz @F
+    cmp byte ptr [si+0Bh], 0Fh  ; LFN?
+    jz @F
+    mov al, 1Eh                 ; bright yellow
+    test byte ptr [si+0Bh], 10h
+    jnz @F
+    mov al, 1Fh                 ; white
+@@:
+    mov dl, 11
+nextchar1:
+    inc di
+    stosb
+    dec dl
+    jnz nextchar1
+    mov dl, 16-11
+    mov al, 17h
+nextchar2:
+    inc di
+    stosb
+    dec dl
+    jnz nextchar2
+    pop di
+    add di, [vidcolsize]
+    push di
+    mov dl, 16
+nextchar3:
+    inc di
+    stosb
+    dec dl
+    jnz nextchar3
+    pop di
+    add di, [vidcolsize]
+    add si, 32
+    loop nextentry
+done:
+    popa
+    ret
+dirview_ascii endp
+
+;--- the exFAT ascii part colorization is a bit simple yet.
+;--- the names are colored white, the rest light grey.
+
+dirview_ascii_exfat proc
+    pusha
+    mov si, offset sectbuffer
+    mov [scrn_xy], COLASC or (ROWXXX shl 8)
+    call cbuffer_offset
+    mov cx, 512 / 32
+nextentry:
+    mov ah, 17h
+    cmp byte ptr [si], 0C1h
+    jnz @F
+    mov ah, 1Fh
+@@:
+    push di
+    mov al, 17h
+    inc di
+    stosb
+    mov al, ah
+    mov dl, 15
+@@:
+    inc di
+    stosb
+    dec dl
+    jnz @B
+    pop di
+    add di, [vidcolsize]
+    push di
+    mov dl, 16
+@@:
+    inc di
+    stosb
+    dec dl
+    jnz @B
+    pop di
+    add di, [vidcolsize]
+    add si, 32
+    loop nextentry
+    popa
+    ret
+dirview_ascii_exfat endp
+
+;--- if the view changes from dirview to another,
+;--- the attributes in the ascii part have to be reset.
+
+nodirview_ascii proc
+    pusha
+    mov [scrn_xy], COLASC or (ROWXXX shl 8)
+    call cbuffer_offset
+    mov ch, 512 / 16
+    mov al, COL_DEFAULT
+nextrow:
+    push di
+    mov cl, 16
+@@:
+    inc di
+    stosb
+    dec cl
+    jnz @B
+    pop di
+    add di, [vidcolsize]
+    dec ch
+    jnz nextrow
+    popa
+    ret
+nodirview_ascii endp
+
+endif
 
 ;--- IN: [stringbuffer]: search string
 ;---      CX: size of string
@@ -4239,8 +4388,9 @@ domove proc
     cmp bh, ah                  ; otherwise there's no need to waste CPU.
     je dontchangescreens
     call printsector
-dontchangescreens:
     call printoffset
+dontchangescreens:
+;    call printoffset           ; is called by movecursor
 done:
     ret
 domove endp
@@ -6944,7 +7094,7 @@ getkey:
 
 ;--- transform spot in dx to scrn_xy-value for ascii output
 
-aspotcalc:
+spot2xyasc:
     and dh, 00000001b             ; max spot is 1FFh
     shl dx, 4                     ; set row pos in DH (0-15)
     shr dl, 4                     ; restore dl
@@ -7372,19 +7522,21 @@ endif
     mov [scrn_xy], COLASC or (ROWXXX shl 8)
     xor cx, cx            ; cx=spot
     push si
+    call cbuffer_offset
 nextchar1:
     lodsb
-    mov dl, al
     cmp cx, [rembytes]
     jb @F
-    mov dl, SPACE
+    mov al, SPACE
 @@:
-    call printchar
+    stosb
+    inc di
     inc cx
     test cl, 0Fh
     jnz @F
     inc [scrn_row]
     mov [scrn_col], COLASC
+    call cbuffer_offset
 @@:
     cmp cx, VIEWBYTES
     jnz nextchar1
@@ -7395,13 +7547,16 @@ nextchar1:
 
     xor cx, cx
     mov [scrn_xy], COLHEX or ( ROWXXX shl 8 )
+    call cbuffer_offset
 nextchar2:
     lodsb
     cmp cx, [rembytes]
     jb @F
-    mov dl, '-'
-    call printchar
-    call printchar
+    mov al, '-'
+    stosb
+    inc di
+    stosb
+    inc di
     jmp donechar1
 @@:
     ror al, 4
@@ -7410,14 +7565,16 @@ nextchar2:
     call nibout
 donechar1:
     inc cx
-    inc [scrn_col]
+    add di, 2
     test cl, 03h
-    setz al
-    add [scrn_col], al
+    jnz @F
+    add di, 2
+@@:
     test cl, 0Fh
     jnz @F
     inc [scrn_row]
     mov [scrn_col], COLHEX
+    call cbuffer_offset
 @@:
     cmp cx, VIEWBYTES
     jne nextchar2
@@ -7429,9 +7586,10 @@ nibout:
     daa
     adc al, 40h
     daa
-    mov dl, al
+    stosb
+    inc di
     mov al, ah
-    jmp printchar
+    ret
 
 displaybinval:
 
@@ -7445,7 +7603,7 @@ displaybinval:
 nextchar3:
     lodsb
     mov dx, cx
-    call nspotcalc
+    call spot2xy
     mov [scrn_xy], dx
 
     cmp cx, [rembytes]
@@ -7513,49 +7671,55 @@ printoffset proc
 
     call printentry                     ; if in FAT, print current entry (=cluster)
 
-    mov ax, [crsr_xy]
-    mov [scrn_xy], ax
-    jmp colorchar
+    ret
 
 printoffset endp
 
-;-------------------------------------------------------
-decolorchar:
-    pusha
-    mov ax, COL_DEFAULT or (COL_DEFAULT shl 8)    ; ah & al = COL_DEFAULT
-    jmp startcolorchar
-
+;--- showcursor: (re)set color of 2 cursors
 ;--- set the 2 cursors hex/ascii part
 ;--- current screen pos is at hex/binary cursor
+;    mov ax, COL_DEFAULT or (COL_DEFAULT shl 8)    ; ah & al = COL_DEFAULT
 
-colorchar proc
+showcursor proc
+
     pusha
+    mov bp, sp
+    @dprintfln "showcursor(%u)", word ptr [bp+16+2]
     mov ax, COL_EDIT or (COL_HIGHLIGHT shl 8)
-
-; in: aL = color for character being edited
-;     aH = color for character cursor is on
-
-startcolorchar::
-    call cbuffer_offset
-
     cmp [editmode], EM_DEFAULT
-    je ecolor1
+    jz @F
     xchg al, ah
-ecolor1:
-    mov byte ptr es:[di+1], al
-
+@@:
+    cmp byte ptr [bp+16+2], 1
+    jz @F
+    mov ax, [oldcsrattr]
+@@:
     push [scrn_xy]
+
     mov dx, [spot]
-    call aspotcalc          ;calculate screen pos for ascii
+    call spot2xy
+    add dl, [bHL]
     mov [scrn_xy], dx
-
     call cbuffer_offset
-    mov byte ptr es:[di+1], ah
-    pop [scrn_xy]
-    popa
-    ret
+    mov cl, es:[di+1]
+    mov es:[di+1], al
+    mov dx, [spot]
+    call spot2xyasc          ;calculate screen pos for ascii
+    mov [scrn_xy], dx
+    call cbuffer_offset
+    mov ch, es:[di+1]
+    mov es:[di+1], ah
 
-colorchar endp
+    pop [scrn_xy]
+
+    cmp byte ptr [bp+16+2], 1
+    jnz @F
+    mov [oldcsrattr], cx
+@@:
+    popa
+    ret 2
+
+showcursor endp
 
 ;--- fill char in AL CL times
 ;--- (no screen pos update!)
@@ -7662,7 +7826,7 @@ vinit proc
     mov ax, 1200h                         ; EGA or better present?
     mov bl, 10h
     xor cx, cx
-    int 10h
+    int 10h                               ; returns BH=00 if color mode
     or cx, cx
     jz fth
     mov bl, 30h
@@ -8052,22 +8216,23 @@ diskaccess endp
 ;--- in: [handling]
 
 access_error proc
-    mov dx, offset sectorrerror       ; "Error reading Sector"
-    cmp [ioreq.bRW], RW_WRITE
-    jne @F
-    mov dx, offset sectorwerror       ; "Error writing Sector"
-@@:
     cmp [handling], IGNORE_ERRORS     ; inside access_error
     je done
+    mov ax, offset sectorrerror       ; "Error reading Sector %lu"
+    cmp [ioreq.bRW], RW_WRITE
+    jne @F
+    mov ax, offset sectorwerror       ; "Error writing Sector %lu"
+@@:
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, ax, [ioreq.dwSector]
     cmp [handling], ABORT_OPERATION   ; inside access_error
     je sectorerror2
 
-    mov bx, [lastbottomtext]          ; save current menu text in BX
+;--- v0.99: save current menu text in BX?
+;--- this won't work anymore, since menu text is rendered in sprintfbuffer
+;    mov bx, [lastbottomtext]
 
-    invoke sprintf, offset sprintfbuffer, dx, [ioreq.dwSector]
-    mov dx, offset sprintfbuffer
     call printbottom
-
     mov dx, offset sectorrerror3      ; "abort, skip, ignore all"
     cmp [handling], QUERY_SKIP        ; inside access_error
     je @F
@@ -8092,11 +8257,13 @@ gak:
     pop es
     mov di, [ioreq.pBuffer]
     xor al, al
-    mov cx, [wBps]                    ; wBps always set?
+    mov cx, [wBps]                    ; wBps is always set
     rep stosb
 itsS:                                 ; skip
-    mov dx, bx
-    call printbottom                  ; restore previous menu line
+;    mov dx, bx                       ; v0.99: can't work anymore
+;    call printbottom                 ; restore previous menu line
+    call printmenu                    ; just refresh current menu 
+    clc
     jmp done
 
 checkskip:
@@ -8108,8 +8275,6 @@ checkskip:
     jmp itsS
 
 sectorerror2:                         ; if ABORT_OPERATION is set
-    invoke sprintf, offset sprintfbuffer, dx, [ioreq.dwSector]
-    mov dx, offset sprintfbuffer
     call nuprinterror
 secterrhandle:
     stc
@@ -8498,10 +8663,12 @@ dobshl:
 
 printtime endp
 
-;-------------------------------------------------------
+;--- convert an offset (=spot) to a screen coordinate
+;--- IN:  dx = spot
+;--- OUT: dx = scrn row/col
 
-nspotcalc proc                  ; IN:  dx = [spot]
-    push ax                     ; OUT: dx = [scrn_xy]
+spot2xy proc
+    push ax
     mov ax, dx
 
     cmp [displaymode], DM_BINARY
@@ -8535,7 +8702,7 @@ binaryspotcalc:
     add dl, COLBIN
     pop ax
     ret
-nspotcalc endp
+spot2xy endp
 ;-------------------------------------------------------
 getyn:                          ; prints [Y/N] on the screen
     mov dx, offset ynmsg        ; carry flag set if 'Y'
@@ -8722,15 +8889,8 @@ backcommon:
 ;-------------------------------------------------------
 movecursor:             ; IN:   ax = new [spot]
                         ;       dl = new [bHL]
-    push [crsr_xy]
-    pop [scrn_xy]
-    call decolorchar      ; remove cursors at old pos
     mov [spot], ax
     mov [bHL], dl
-    mov dx, ax
-    call nspotcalc
-    add dl, [bHL]
-    mov [crsr_xy], dx
     jmp printoffset       ; and print new offset & cursors
   
 ;-------------------------------------------------------
@@ -8754,6 +8914,10 @@ checksetview proc
     je no_viewmode_change           ; is already set.
     mov [funcmf4], -2               ; hack: remove "undelete"
     mov [ldfileoptf7], -2           ; hack: remove "chain"
+    cmp [viewmode], VM_DIRECTORY    ; is old view directory?
+    jnz @F
+    call nodirview_ascii
+@@:
     mov [viewmode], dl              ; set new view
 clearviewarea::
     les di, [vidaddr]
@@ -8797,7 +8961,7 @@ getnos:                               ; 'get number of sectors' from the
 ;-------------------------------------------------------
 printbottom:
     mov [scrn_xy], BOTTOMROW*100h + 01h
-    mov [lastbottomtext], dx
+;    mov [lastbottomtext], dx
     call printstring
 
 ;--- fall thru

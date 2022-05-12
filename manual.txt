@@ -141,12 +141,17 @@ WDe User Manual
         the interpreted data of parts of the current sector.
       - The menu bar, at the bottom line.
 
-      For FAT file systems, the drive space is divided into four parts,
+       For FAT file systems, the drive space is divided into four parts,
       shortly called "boot/reserved", "FAT", "root" and "data". While in
       the "data" part, WDe will show the cluster# the current sector 
       belongs to. Furthermore, the number will be written in light green
       if the cluster is part of a chain in the FAT, that is, it is - or
       rather: should be - associated with a file.
+       If a directory is shown in FAT12, FAT16 or FAT32 file systems, the
+      ascii part of the sector region is a bit structured: directory
+      names are displayed in bright yellow text color, other active files
+      are displayed in standard text color ( white ) and the rest ( LFN
+      entries, deleted entries ) are shown in light grey.
 
 
     2.2 - Navigation and Editing

@@ -10,6 +10,8 @@
 ;--- 1. only fat1 is updated
 ;--- 2. free entries in the FAT are modified, unfree entries
 ;---    are skipped. This strategy is not convincing.
+;---    fixed in v0.50: if "used" entries are detected, the
+;---    options are to cancel undelete or truncate the file.
 ;--- 3. [fixed in v0.50] if the free clusters in the FAT aren't
 ;---    sufficient, the changes aren't undone, leaving
 ;---    the FAT in bad shape.
@@ -28,9 +30,9 @@ undelete proc
     cmp eax, 2
     jb invclust                           ; not a valid cluster if it's below 2
     mov [dwCluster], eax
-    call getfatentry
+    call getfatentry                      ; what's stored at the start entry?
     jc invclust
-    test eax, eax                         ; is the returned cluster# 0?
+    test eax, eax                         ; must be 0, else "file too corrupt"
     jz undel1good
 
 ;--- error "File too corrupt" may also occur if one has manually edited the first byte
@@ -73,7 +75,7 @@ unok1:
     jc undelete_err1
 
     mov [bx+0], al
-    mov eax, [dwFilesize]
+    mov eax, [dwFilesize]               ; file may have been truncated
     mov [bx+DIR_FILESIZE], eax
 
     call writecursect                   ; rewrite directory sector

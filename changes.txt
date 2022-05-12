@@ -1,5 +1,10 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
+WDe V0.99 [__.__.2022]
+  - fixed: menu line restore after i/o error didn't work in v0.50.
+  - in directory view, files and directory got marked with different
+    colors, the rest is darkened a bit ( light grey ).
+
 WDe V0.50 [12.05.2022]
   - fixed: restore chain didn't work in v0.50pre1.
   - restore exFAT file chains implemented.

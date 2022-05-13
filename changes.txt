@@ -2,6 +2,11 @@ WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
 WDe V0.99 [__.__.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.
+  - fixed: to enter a cluster# in "goto cluster" did jump to a wrong
+    cluster if cluster number contained a '9'.
+  - fixed: Alt-Left at cluster 2 caused an error with a strange cluster#.
+  - fixed: unformat didn't work in v0.50
+  - fixed: unformat never worked for FAT32.
   - in directory view, files and directory got marked with different
     colors, the rest is darkened a bit ( light grey ).
 

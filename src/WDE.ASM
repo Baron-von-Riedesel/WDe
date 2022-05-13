@@ -706,6 +706,7 @@ dwDrivestartH   dd ?
 endif
 dwFat12start    dd ?            ; stores the sector number when fat12
                                 ; view mode was selected
+fat12fixsec     dd ?            ; sector # for fat12 fix
 rwhandle        dw ?            ; file handle if device is DT_FILE
 wFilehandle     dw ?            ; file handle for file ops
 cylinders       dw ?            ; disk geometry for int 13h, ah=02/03
@@ -740,13 +741,12 @@ bDark           db ?            ; 1=screen foreground color not bright
     align dword
 maxsize         dd ?            ; maximum filesize to recover
 minsize         dd ?            ; minimum filesize to recover
-dwNextsize      dd ?            ; next smallest filesize to recover
-fat12fixsec     dd ?            ; sector # for fat12 fix
+nextsize        dd ?            ; next smallest filesize to recover
 lostdirs        dw ?            ; total lost directories found
 rootdirs        dw ?            ; total root directories found
 wDirs           dw ?            ; total dirs found
-lasttick        dw ?            ; timer ticks since last call
 
+lasttick        dw ?            ; timer ticks since last call
 if ?DEBUG
 starttime       dd ?            ; to measure time for lengthy operations
 endif
@@ -1667,6 +1667,7 @@ savetodisk proc
     @dprintfln "savetodisk: dwCurSector=%lu, ioreq.dwSector=%lu", [dwCurSector], [ioreq.dwSector]
     call writecursect
     jc @F
+    call resetfatcache                    ; make sure the fat cache is updated next time it's used
     mov dx, offset donewritedisk
     call nuprinterror
 @@:
@@ -1960,6 +1961,7 @@ do12fill:
 fillerror:
 done:
     pushf
+    call resetfatcache                    ; make sure the fat cache is updated next time it's used
     mov [dapacket.sectors],1
     mov [drivepacket.sectors],1
     call readcursect
@@ -2387,6 +2389,7 @@ handle_enter proc
 ;--- 4. alt-left & alt-right data region
 
 setcluster::
+    mov ebx, eax                        ; store in ebx for invalclusterror 
     call cluster2sector                 ; multiply it out to get the
     cmp eax, [dwDataend]                ; corresponding sector number
     ja invalclusterror                  ; verify that it's a valid sector
@@ -2402,6 +2405,7 @@ done:
 ;--- similar to setcluster, but save current pos onto stack
 
 stacksetcluster:
+    mov ebx, eax                        ; store in ebx for invalclusterror 
     call cluster2sector                 ; multiply it out to get the
     cmp eax, [dwDataend]                ; corresponding sector number
     ja invalclusterror                  ; verify that it's a valid sector
@@ -4249,6 +4253,7 @@ jumptocluster:
     invoke sprintf, dx, offset szCluster2, eax
     call gethexvalue
     jc done
+    @dprintfln "jumptocluster %lX", ebx
     mov eax, ebx
     jmp setcluster
 
@@ -7684,7 +7689,7 @@ showcursor proc
 
     pusha
     mov bp, sp
-    @dprintfln "showcursor(%u)", word ptr [bp+16+2]
+;    @dprintfln "showcursor(%u)", word ptr [bp+16+2]
     mov ax, COL_EDIT or (COL_HIGHLIGHT shl 8)
     cmp [editmode], EM_DEFAULT
     jz @F
@@ -9317,7 +9322,7 @@ nextdigit:
     lodsb
     sub al, '0'
     cmp al, 9
-    jb @F
+    jbe @F
     or al, 20h
     sub al, 31h-10
 @@:

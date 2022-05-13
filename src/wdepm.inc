@@ -39,18 +39,18 @@ IRETS ends
 @iret   equ <iretd>
 
 @movr macro dst, src
-	mov e&dst, e&src
+    mov e&dst, e&src
 endm
 @storevec macro addr
-	mov dword ptr addr[0], edx
-	mov word ptr addr[4], cx
+    mov dword ptr addr[0], edx
+    mov word ptr addr[4], cx
 endm
 @loadvec macro addr
-	mov edx, dword ptr addr[0]
-	mov cx, word ptr addr[4]
+    mov edx, dword ptr addr[0]
+    mov cx, word ptr addr[4]
 endm
 @movofs macro dst, src
-	mov e&dst, src
+    mov e&dst, src
 endm
 
 else
@@ -65,18 +65,18 @@ IRETS ends
 @iret   equ <iret>
 
 @movr macro dst, src
-	mov dst, src
+    mov dst, src
 endm
 @storevec macro addr
-	mov word ptr addr[0], dx
-	mov word ptr addr[2], cx
+    mov word ptr addr[0], dx
+    mov word ptr addr[2], cx
 endm
 @loadvec macro addr
-	mov dx, word ptr addr[0]
-	mov cx, word ptr addr[2]
+    mov dx, word ptr addr[0]
+    mov cx, word ptr addr[2]
 endm
 @movofs macro dst, src
-	mov dst, src
+    mov dst, src
 endm
 
 endif

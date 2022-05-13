@@ -70,6 +70,7 @@ unok1:
     mov dx, CStr('UnDeleting...')
     call printbottom
 
+    mov al, 0
     call UndeleteCore
     pop ax
     jc undelete_err1
@@ -98,8 +99,13 @@ undelete endp
 ;--- First is without updates to the FAT, so if an
 ;--- error occurs, nothing is corrupted.
 
+;--- UndeleteCore is also called by unformat!!!
+;--- al=0 : called by undelete
+;--- al=1 : called by unformat
+
 UndeleteCore proc
     pushad
+    mov bp, sp
     mov cl, 2
 nexttry:
     mov edi, [dwFilesize]
@@ -114,7 +120,7 @@ getnextentry:
     inc ebx
     mov eax, ebx
     call getfatentry
-    jc undelCoreError
+    jc undelCoreError2
 
     test eax, eax                       ; is the entry free?
 ;    jnz getnextentry                    ; if no, just get the next?????
@@ -134,7 +140,13 @@ writeeof:
 exit:
     popad
     ret
+undelCoreError2:
+    jmp exit
 undelCoreError:
+
+    cmp byte ptr [bp+28], 1   ; called by unformat?
+    jz getnextentry           ; then do the old thing: just continue scan
+
     mov dx, offset sprintfbuffer
     mov edx, [dwFilesize]
     sub edx, edi

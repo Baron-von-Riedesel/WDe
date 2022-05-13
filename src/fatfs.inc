@@ -146,7 +146,7 @@ getfatentry endp
 ;
 ;-------------------------------------------------------
 putfatentry proc
-    @dprintfln "putfatentry: entry=%lX, data=%lX", ebx, eax
+;    @dprintfln "putfatentry: entry=%lX, data=%lX", ebx, eax
     push edx
     push si
     mov edx, ebx
@@ -185,9 +185,12 @@ isfat1x:
     mov [si+bx], ax
 
     push [ioreq.pBuffer]
-nextsector:
     push [pFatCache]
     pop [ioreq.pBuffer]
+nextsector:
+    push [dwFatSector]
+    pop [ioreq.dwSector]
+;    @dprintfln "putfatentry: writing FAT, sector=%lu", [ioreq.dwSector]
     call writesect
 
     cmp bx, 511          ; FAT12?
@@ -281,6 +284,14 @@ done:
     pop eax
     ret
 locatefatentry endp
+
+;--- ensure the fat cache sector will be reread
+
+resetfatcache proc
+    mov [dwFatSector], 0
+    ret
+resetfatcache endp
+
 ;-----------------------------------------------------------------
 ;
 ; fat12pad adds extra fat data around the sector pointed to by SI in case
@@ -345,6 +356,7 @@ readfatcache::
     call allocmem
     add ax, 4                   ; the fat12 fix must be BEFORE sector start
     mov [pFatCache], ax
+    @dprintfln "readfatcache: pFatCache allocated: %X", ax
     pop ax
 @@:
     mov [ioreq.dwSector], eax

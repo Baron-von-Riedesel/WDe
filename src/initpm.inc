@@ -221,7 +221,7 @@ searchpath:
     xor dx, dx
     mov es, env
 nextvar:
-    mov SI, offset szPath	; "PATH="
+    mov SI, offset szPath   ; "PATH="
     mov cx, 0005
     repz cmpsb
     jnz @f

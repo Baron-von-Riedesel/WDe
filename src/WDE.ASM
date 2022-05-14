@@ -66,6 +66,7 @@ endif
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
         DIRENTSIZE       EQU 32   ; size of directory entry (FATxx + exFAT)
+        PTABOFS          equ 1BEh ; offset partititon table in MBR
 
         DARKMASK         equ 0F700h
         NORMMASK         equ 0FF08h
@@ -302,6 +303,15 @@ _TEXT2 segment
 _TEXT2 ends
 endm
 
+PTABENT struc
+bBoot db ?
+      db 3 dup (?)  ; +1  start CHS
+bType db ?
+      db 3 dup (?)  ; +5  end CHS
+start dd ?          ; +8  start LBA
+size_ dd ?          ; +12 size LBA
+PTABENT ends
+
 ;--- struct BPB, located in boot sector
 
 BPB struct
@@ -409,7 +419,7 @@ mode     db ?           ;+24
          db ?,?,?
 CDREQ ends
 
-;--- this struct is used for communication with readsect()/writesect()
+;--- this struct is used for communication with diskaccess()
 ;--- currently only a static member!
 
 IOREQ struct
@@ -718,7 +728,7 @@ chainflag       db ?            ; dictates what type of chain to save
                                 ; fat links/file
 heads           db ?
 sectors         db ?
-handling        db ?            ; inside readsect/writesect: how to handle errors
+handling        db ?            ; inside diskaccess(): how to handle errors
 menustackidx    db ?            ; index for menustack
 secstk_top      db ?            ; index for secstk
 bHexString      db ?            ; stringbuffer filled with hex value
@@ -1385,7 +1395,7 @@ trydevice proc
 
 ;    push [dwCurSector]           ; if drive switching is unsuccessful,
     push dword ptr [ioreq.bDrive] ; some fields will have to be restored.
-    push [wBps]                   ; might be used inside readsect (zero-fill)!
+    push [wBps]                   ; might be used inside diskaccess()
     push [dwDrivestart]
 
     mov [ioreq.dwSector], 0       ; attempt to read sector 0
@@ -2832,24 +2842,28 @@ findmbr:
     jmp findcommon
 findmbrcb:
     cmp byte ptr [si+0], 0EBh
-;    je skipmbr                         ; 9.5.2022: check for "not equal"
+;    je skipmbr                         ; v0.50: check for "not equal"
     jne skipmbr
-    cmp dword ptr [si+1fch], 0AA550000h ; mbr signature
+;--- v0.99: at offset 1FCh of an MBR are the last 2 bytes of last PT entry
+;    cmp dword ptr [si+1fch], 0AA550000h ; mbr signature
+    cmp word ptr [si+1feh], 0AA55h      ; mbr signature
     jne skipmbr
     cmp dword ptr [si+1e4h], 061417272h ; fsinfo sector signature
     je skipmbr                          ; annoying of microsoft to
                                         ; give it an MBR signature
-    mov bx, 1BEh                        ; bx = start partition table
+    mov bx, PTABOFS                     ; bx = offset start partition table
     xor al, al
-checkactiveloop:
-    mov ah, byte ptr [si+bx]            ; "active" partition byte
+@@:
+    mov ah, [si+bx].PTABENT.bBoot       ; "active" partition byte
     test ah, 01111111b                  ; any bits other than 7 set?
     jnz skipmbr                         ; yes, not a valid MBR.
     shl ah, 1                           ; shift bit 7 out of the register
     adc al, 0                           ; if it was 1, increase al
-    add bx, 10h
-    cmp bx, 1EEh
-    jne checkactiveloop
+    add bx, sizeof PTABENT
+;--- v0.99: there are 4 entries in PT, that is 1BEh + 40h = 1FEh
+;    cmp bx, 1EEh
+    cmp bx, PTABOFS + 4 * sizeof PTABENT
+    jne @B
     cmp al, 1                           ; more than one active partition?
     je foundmbr                         ; no, MBR found.
 skipmbr:
@@ -3334,11 +3348,14 @@ stringsearch endp
 ;---  + boot sector
 ;---  + fat
 ;---  + mbr
+;--- starts with current sector
 ;--- out: SI=current 512-chunk of sector
 
 findcommon proc
 
     mov [handling], QUERY_SKIP; inside findcommon
+    push [dwCurSector]        ; v0.99: init ioreq.dwSector in case the
+    pop [ioreq.dwSector]      ; callback finds something at once.
 nextfind:
     call bufferinsi
     call bp
@@ -3739,10 +3756,10 @@ nextsector:                               ; <--- next sector
     je iswholesector
 
 ;--- the last bytes of the file don't cover a full sector
-;--- so read the current sector into sectbuffer and copy
-;--- the missing bytes from sectbuffer to our write buffer.
+;--- so read the sector# in [ioreq.dwSector] into sectbuffer
+;--- and copy the missing bytes from sectbuffer to our write buffer.
 
-    call readsect
+    call diskaccess_read
     jc done
     push ds                               ; preserve bytes at end of sector
     pop es
@@ -3853,7 +3870,6 @@ sr_ok:
 srcommon endp
 
 ;--- submenu "file options"
-;--- logical drives: F1=Input F2=Boot F3=Fat1 F4=Fat2 F5=Root F6=Partition [F7=chain]
 
 submenu_fileoptions proc
 
@@ -3861,6 +3877,8 @@ submenu_fileoptions proc
     @mitem 14, srsecrange
     @mitem 24, dumpiso
     @mend cdfileoptmenu
+
+;--- physical: F1=Input F2=MBR F3=P1 F4=P2 F5=P3 F6=P4
 
     @mstart pdfileoptmenu
     @mitem 16, srsecrange
@@ -3871,6 +3889,7 @@ submenu_fileoptions proc
     @mitem 21, srhdcheck
     @mend pdfileoptmenu
 
+;--- logical: F1=Input F2=Boot F3=Fat1 F4=Fat2 F5=Root F6=Partition [F7=chain]
 
     @mstart ldfileoptmenu
     @mitem 16, srsecrange
@@ -3932,24 +3951,22 @@ srchain:                           ; save/restore chain to/from file
 @@:
     ret
 
-;--- save/restore partition
+;--- save/restore partition 1/2/3/4
+;--- in: AH=function key (F3-F6)
 
-srhdcheck:                         ; save/restore partition 1-4
+srhdcheck:
 
-    mov bx, 1CAh
-    mov cx, 4
-    mov al, F3_KEY                 ; F3,F4,F5,F6?
-    mov si, offset partitions
-@@:
-    cmp ah, al
-    je srpartition
-    inc al
-    add bx, 10h
-    add si, 4
-    loop @B
-    ret
-srpartition:                       ; SI -> partitions array, BX = offset in MBR for partition
-    mov eax, dword ptr [si]
+    mov cl, ah
+    sub cl, F3_KEY
+    shl cl, 2                      ; 00-03 -> 00-0C
+    movzx si, cl
+    mov eax, [si][partitions]
+    shl cl, 2                      ; 00-0C -> 00-30
+    movzx bx, cl
+    add bx, PTABOFS + PTABENT.size_
+
+;--- EAX = partition start sector, BX = offset in MBR for partition
+
     test eax, eax                  ; "empty" partition?
     jz donesr
     call srcommon
@@ -3957,7 +3974,7 @@ srpartition:                       ; SI -> partitions array, BX = offset in MBR 
 ;--- read sector 0
 
     mov [ioreq.dwSector], 0
-    call readsect
+    call diskaccess_read
     jc donesr
     mov ebx, dword ptr [sectbuffer+bx]   ; get size of partition
     mov [dwValue], ebx
@@ -5505,7 +5522,7 @@ nextpart:
     call printchar
     mov ax, 10h
     mul cx
-    mov bx, 1BEh
+    mov bx, PTABOFS
     add bx, ax
     mov dx, cx
     add dl, '1'
@@ -6451,7 +6468,7 @@ copypartitioninfo:
     push ds                             ; sets variables p1-p4
     pop es                              ; for jumping to partitions
     mov di, offset partitions           ; on physical drives
-    mov si, offset sectbuffer + 1c6h
+    mov si, offset sectbuffer + PTABOFS + 8
     mov cx, 4
 @@:
     movsd

@@ -199,11 +199,10 @@ WDe User Manual
 
        When in the data area:
 
-       Ctrl+Right:  will jump directly to the cluster connected to it in
-                    the FAT chain.
-       Ctrl+Left:   will search the entry linking to this cluster' entry in
-                    the FAT and jump to its associated cluster. See the notes
-                    for Ctrl+Left in the FAT area.
+       Ctrl+Right:  will jump to the cluster that's next in the chain. If
+                    there's none, message "End of Chain reached" will appear.
+       Ctrl+Left:   will search - by scanning the FAT - the cluster's
+                    predecessor. See the notes for Ctrl+Left in the FAT area.
        Ctrl+Enter:  will jump to the corresponding FAT entry.
        Alt+Left:    will jump to the first sector of the previous cluster.
        Alt+Right:   will jump to the first sector of the next cluster.
@@ -275,7 +274,8 @@ WDe User Manual
 
       WDe reads files (hit tab when queried for drive) which can then
       be treated as physical or logical drives using the "Restrict"
-      function.
+      function. However, usually it's easier to start WDe with the
+      name of an image file as argument, combined with the -m option.
 
 
 

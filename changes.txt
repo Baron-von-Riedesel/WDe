@@ -10,6 +10,13 @@ WDe V0.99 [__.__.2022]
   - fixed: unformat may have stopped prematurely, leaving the disk in
     a corrupted state.
   - fixed: in v0.50, WDe had problems to handle image files correctly.
+  - fixed: when restoring a file chain and the source file was a bit smaller
+    than what's stored in the directory entry, WDe did show that last
+    sector after the copy process.
+  - fixed: function "find MBR" wasn't correct - did check 3 entries only,
+    and assumed word at offset 1FCh to be 0000.
+  - fixed: find MBR/BS/FAT/Dir displayed a wrong sector if the item was
+    "found" in the current sector.
   - in directory view, files and directory names are displayed in different
     colors, the rest is darkened a bit ( light grey ).
   - filenames now accepted as cmdline parameters.

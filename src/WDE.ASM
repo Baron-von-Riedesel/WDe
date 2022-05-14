@@ -673,8 +673,6 @@ partitions      dd ?,?,?,? ; partition start sectors
 backupbs        dw ? ; backup boot sector location (FAT32)
 fsinfo          dw ? ; fsinfo sector (FAT32)
 wBps            dw ? ; current bytes per sector ( both physical/logical )
-;lastbottomtext  dw ? ; printbottom backs up string pointer for readsect/writesect
-                     ; to reprint it when there's a sector error
 hdnumber        db ? ; hard drive number partition belongs to
 bSpCshift       db ? ; sectors per cluster for doing bitshifts
 spcc            db ? ; sectors per cluster counter
@@ -887,6 +885,8 @@ if ?DEBUG
 endif
 endm
 
+    include setargv.inc
+
 ;--- main menu definition
 
     @mstart initialmenu
@@ -911,63 +911,48 @@ Start proc
     sub ax, dx
     shl ax, 4
     mov ss, dx
-    add sp, ax
-if 1 ;free memory beyond 64kB dgroup
+    add sp, ax    ; SS=DS=dgroup
+
     mov cx, es
     mov bx, ds
     sub bx, cx
-    add bx, 1000h
+    add bx, 1000h ; free memory beyond 64kB dgroup
     mov ah, 4ah
     int 21h
     jc quit
-endif
+
     push ds
-    pop es
-
-;--- now ds=es=ss=dgroup
-
-;--- clear uninitialized vars
+    pop es        ; now ds=es=ss=dgroup
 
     mov di, offset startbss
     mov cx, sp
     sub cx, di
     shr cx, 1
     xor ax, ax
-    rep stosw
+    rep stosw     ; clear _BSS (=.data?) and STACK segments
 
 if ?VDD
-    call initvdd         ; init vdd on nt platforms ( works in V86 only, not in PM )
+    call initvdd         ; init vdd on nt platforms
 endif
 
-;--- copy cmdline to dgroup
+    mov [stackbot], sp
+    mov [_mem], sp       ; set start of heap
+    mov es,[_psp]
+    call _setargv        ; scan command line, setup _argc and _argv
 
-    push ds
-    push ds
-    pop es
-    mov ds, [_psp]
-    mov di, offset sprintfbuffer
-    mov si, 80h+1
-@@:
-    lodsb
-    stosb
-    cmp al, 13
-    jz @F
-    cmp al, 0
-    jnz @B
-@@:
-    pop ds
-    mov byte ptr [di-1], 0
+    mov bx, [_argv]
+    mov cx, [_argc]
+    add bx, 2            ; skip "filename" argument ( doesn't exist )
+    dec cx
 
-;--- scan command line
+_argv equ <>
+_argc equ <>
 
-    mov si, offset sprintfbuffer
-@@:
-    lodsb
-    cmp al, 0
-    jz no_drive
-    cmp al,' '
-    jbe @B
-    mov ah, [si]
+    jcxz no_drive
+nextarg:
+    mov si, [bx]
+    add bx, 2
+    lodsw
     cmp al, '/'
     jz handleoptions
     cmp al, '-'
@@ -984,11 +969,22 @@ endif
     ja inval_cmd
     sub al, 'a'
     cmp ah, ':'
+    jnz @F
+    cmp byte ptr [si],0
     jz has_drive
-    jmp inval_cmd
+@@:
+    mov di, offset filenamebuffer
+    sub si, 2
+@@:
+    lodsb
+    stosb
+    and al, al
+    jnz @B
+    mov bh, DT_FILE
+    jmp has_drive
 handleoptions:
     call options
-    jnc @B
+    loop nextarg
 inval_cmd:
     jmp printhelp
 maybedrive:
@@ -1037,8 +1033,6 @@ else
 endif
     popa
 
-    mov [stackbot], sp
-    mov [_mem], sp              ; set start of heap ( currently used by unformat only )
     cmp al, -1
     jnz disk_entered
 
@@ -1059,17 +1053,26 @@ disk_entered:
 
 if ?MOUNT
     cmp [ioreq.drvtype], DT_PHYSICAL
-    jnz @F
+    jnz nomount
     movzx eax, [bMount]
     cmp al, 0
-    jz @F
+    jz nomount
+    cmp al,-1                   ; mount physical as logical?
+    jnz @F
+    xor eax, eax
+    jmp mlog
+@@:
 ;--- setvariables moved partition startsectors in [partitions]
     dec ax
     mov eax, [partitions+eax*4]
+    and eax, eax
+    jz nomount
+mlog:
+    @dprintfln "mount as logical: start sector %lu", eax
     mov [ioreq.dwSector], eax
     call readsect
     call mountdrive
-@@:
+nomount:
 endif
 
     call printoffset            ; print current offset
@@ -1133,7 +1136,7 @@ modhex:
     sub al, 'A' - '0'           ; 'A' - 'F' -> 0 - 5
     cmp al, 5
     jbe @F
-    sub al, 32                  ; check again for lower-case
+    sub al, 20h                 ; check again for lower-case
     cmp al, 5                   ; 'a' - 'f'?
     ja skipkey
 @@:
@@ -1212,30 +1215,33 @@ handle_esc:
 main endp
 
 options proc
-    lodsb
-    and al,al
+    mov al, ah
+    and al, al
     jz error
-    or al,20h
+    or al, 20h
 if ?SAFEMODE
-    cmp al,'s'
+    cmp al, 's'
     jnz @F
     mov [bSafe], 1              ; deactivate all write access
     ret
 @@:
 endif
 if ?MOUNT
-    cmp al,'m'
+    cmp al, 'm'
     jnz @F
     lodsb 
-    and al,al
-    jz error
-    sub al,'0'
+    and al, al
+    jz undef
+    sub al, '1'
     jc error
-    cmp al,4
+    cmp al, 4
     cmc
     jc error
     inc ax
     mov [bMount], al
+    ret
+undef:
+    mov [bMount], -1
     ret
 @@:
 endif
@@ -1371,7 +1377,7 @@ freemem endp
 ;--- try a new device
 ;--- "usually" called after setdrive()
 ;--- AL = drive number
-;--- BH = PHYS/FAT/CDROM
+;--- BH = PHYS/FAT/CDROM/FILE
 
 trydevice proc
     mov dx, offset readingdrive
@@ -1394,11 +1400,7 @@ endif
     call setBps
     pop ax
     cmp bh, DT_FILE
-    jnz @F
-    mov [ioreq.rwfunc], RWF_FILE
-    mov [dapacket.sectors], 1     ; used by file access!
-    jmp tryread
-@@:
+    jz  isfilename
     mov [ioreq.bDrive], al
     cmp bh, DT_LOGICAL
     jz trylogical
@@ -1426,8 +1428,7 @@ tryread:
     call readsect
     jc driveerror                     ; failed?
     mov [sectofs],0
-    mov [dwFatSector],0               ; clear fat sector cache
-    or  [fat12fixsec],-1              ; ensure fat12fix != dwFatSector
+    call resetfatcache                ; clear fat sector cache
     add sp, 4+2+4                     ; skip saved data on stack
     ret
 driveinvalid:
@@ -1470,6 +1471,29 @@ iscdrom:
     call setBps                 ; set sector size to 2048/2352
     jmp tryread
 
+isfilename:
+    call findfileX
+    jnc @F
+    mov dx, offset filenotfound
+    call nuprinterror           ; print error without screen update
+    jmp driveerror
+@@:
+    mov eax, [dwFilesize]       ; file must be 1+ sectors in size
+    cmp eax, 512
+    jnc @F
+    mov dx, offset toosmall     ; "File too small"
+    call nuprinterror
+    jmp driveerror
+@@:
+    mov [dwRwfilesize], eax
+    mov bl, 2                   ; access mode (0=ro,1=wo,2=rw)
+    call openfile
+    mov [rwhandle], ax
+    @dprintfln "trydevice: image file, size=%lu, handle=%u", [dwRwfilesize], ax
+    mov [ioreq.rwfunc], RWF_FILE
+    mov [dapacket.sectors], 1   ; used by file access!
+    jmp tryread
+
 trydevice endp
 
 ;--- enter a disk/drive/image filename
@@ -1499,7 +1523,7 @@ getkeyagain:
     sub al, 17                  ; 17 is the 65-48, so 'A' = 0, 'B' = 1, etc
     cmp al, 26                  ; if the value is > 26, a non-letter
     jbe done                    ; was pressed (non-valid drive letter)
-    sub al, 32                  ; 32 is 'a'-'A', so 'a' = 0, 'b' = 2, etc
+    sub al, 20h                 ; 20h is 'a'-'A', so 'a' = 0, 'b' = 2, etc
     cmp al, 26                  ; same concept as above
     jbe done
     jmp getkeyagain
@@ -1537,12 +1561,6 @@ abort:
 handle_tabkey:
     xor [driveflag], 1
     jmp setdrive
-
-tabsw:
-    mov [bTabSw], 1
-    stc                         ; exit getstring when TAB is pressed
-    ret
-
 fnreq:
     mov [bTabSw], 0
     mov ax, tabsw
@@ -1550,26 +1568,13 @@ fnreq:
     cmp [bTabSw], 1             ; exit with TAB?
     je handle_tabkey
     jcxz abort                  ; no chars entered, or ESC pressed
-    call findfileX
-    jnc @F
-    mov dx, offset filenotfound
-    call nuprinterror           ; print error without screen update
-    jmp fnreq
-@@:
-    mov eax, [dwFilesize]       ; file must be 1+ sectors in size
-    cmp eax, 512
-    jnc @F
-    mov dx, offset toosmall     ; "File too small"
-    call nuprinterror
-    jmp fnreq
-@@:
-    mov [dwRwfilesize], eax
-    mov bl, 2                   ; access mode (0=ro,1=wo,2=rw)
-    call openfile
-    mov [rwhandle], ax
     mov bh, DT_FILE
 done:
     clc
+    ret
+tabsw:
+    mov [bTabSw], 1
+    stc                         ; exit getstring when TAB is pressed
     ret
 setdrive endp
 
@@ -2078,7 +2083,7 @@ fillcommon proc
     mov [dwValue], 0
 @@:
     pop eax
-    call writesect
+    call diskaccess_write
     jc error
     cmp [dwValue], 0
     jz done
@@ -2510,7 +2515,7 @@ endif
 scandir proc
     @dprintfln "scandir(%u): sector=%lu", level, [ioreq.dwSector]
     mov si, offset sectbuffer
-    mov cl, 512 / 32
+    mov cl, 512 / DIRENTSIZE
 nextentry:
     cmp byte ptr [si], 0
     jz skipdir
@@ -2548,7 +2553,7 @@ endif
     jc found2
     call diskaccess_read
 skipentry:
-    add si, 32
+    add si, DIRENTSIZE
     dec cl
     jnz nextentry
     xor ax, ax
@@ -2980,7 +2985,7 @@ dirview_ascii proc
     mov si, offset sectbuffer
     mov [scrn_xy], COLASC or (ROWXXX shl 8)
     call cbuffer_offset
-    mov cx, 512 / 32
+    mov cx, 512 / DIRENTSIZE
 nextentry:
     cmp byte ptr [si], 0
     jz done
@@ -3019,7 +3024,7 @@ nextchar3:
     jnz nextchar3
     pop di
     add di, [vidcolsize]
-    add si, 32
+    add si, DIRENTSIZE
     loop nextentry
 done:
     popa
@@ -3034,7 +3039,7 @@ dirview_ascii_exfat proc
     mov si, offset sectbuffer
     mov [scrn_xy], COLASC or (ROWXXX shl 8)
     call cbuffer_offset
-    mov cx, 512 / 32
+    mov cx, 512 / DIRENTSIZE
 nextentry:
     mov ah, 17h
     cmp byte ptr [si], 0C1h
@@ -3063,7 +3068,7 @@ nextentry:
     jnz @B
     pop di
     add di, [vidcolsize]
-    add si, 32
+    add si, DIRENTSIZE
     loop nextentry
     popa
     ret
@@ -3076,7 +3081,7 @@ nodirview_ascii proc
     pusha
     mov [scrn_xy], COLASC or (ROWXXX shl 8)
     call cbuffer_offset
-    mov ch, 512 / 16
+    mov ch, VIEWBYTES / 16
     mov al, COL_DEFAULT
 nextrow:
     push di
@@ -3521,7 +3526,7 @@ deliverfn:
     ret
 @@:
     call getfatxname
-    clc
+    xor ax, ax
     ret
 
 invalclust:
@@ -3750,7 +3755,7 @@ nextsector:                               ; <--- next sector
 iswholesector:
     mov dx, [_mem]
     mov [ioreq.pBuffer], dx
-    call writesect
+    call diskaccess_write
     jc done
     cmp ax, cx                ; EOF reached?
     jne donerestchain
@@ -6442,7 +6447,7 @@ setvariables proc
     je filesetvars
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne logicalsetvars
-
+copypartitioninfo:
     push ds                             ; sets variables p1-p4
     pop es                              ; for jumping to partitions
     mov di, offset partitions           ; on physical drives
@@ -6683,6 +6688,7 @@ secsizeerror:
     ret
 
 filesetvars:
+    @dprintfln "setvariables, DT_FILE"
     mov eax, [dwRwfilesize]
     shr eax, 9                    ; bytes/sector is 512 as long as image file is "physical"
     jz @F
@@ -6690,7 +6696,14 @@ filesetvars:
 @@:
     sub eax, [dwDrivestart]
     mov [dwDataend], eax
+if 1
+;--- image files are "physical" as default ( they won't show MBR automatically! )
+;--- Use "GoTo" and "Restrict" to select a logical disk
+    mov [ioreq.drvtype], DT_PHYSICAL
+    jmp copypartitioninfo
+else
     ret
+endif
 
 setvariables endp
 
@@ -7025,7 +7038,7 @@ error:
 
 noreaderror:
 
-    call writesect
+    call diskaccess_write
     jc donefileread
 
     inc [ioreq.dwSector]
@@ -7894,19 +7907,20 @@ clearscreen endp
 
 helptext label byte
     db 13,10
-    db "usage: wde [ option ] [ disk ]",13,10
+    db "usage: wde [ option ] [ disk | filename ]",13,10
     db "   where <disk> may be:",13,10
     db "     logical drive: a letter followed by a colon ( C:|D:|... )",13,10
     db "     hard disk:     a digit ( 0|1|... )",13,10
     db "     floppy disk:   a digit followed by a 'f' ( 0f|1f|... )",13,10
-    db "   if no (valid) disk is given, the user will be prompted for one.",13,10
+    db "   while <filename> may be the name of an image file.",13,10
+    db "   if no disk or filename is given, the user will be prompted for one.",13,10
     db "   <option> may be:",13,10
     db "     -?: display this help text and exit",13,10
 if ?SAFEMODE
-    db "     -s: safe mode; no write access to disk",13,10
+    db "     -s: safe mode; no write access to disk/image",13,10
 endif
 if ?MOUNT
-    db "     -m<n>: mount partition <n> as logical drive",13,10
+    db "     -m[n]: mount disk or partition <n=[1|2|3|4]> as logical drive",13,10
 endif
     db '$'
 
@@ -7984,12 +7998,11 @@ getchsx endp
 
 
 ;--- generic write access.
-;--- unlike readsect, [ioreq.pBuffer] may be set by caller of writesect()
-;--- and [dwCurSector] is not modified.
+;--- [dwCurSector] is not modified.
 writecursect:
     push [dwCurSector]
     pop [ioreq.dwSector]
-writesect:
+diskaccess_write:
 if ?SAFEMODE
     cmp [bSafe], 1   ;clears CF
     jz @F

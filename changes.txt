@@ -5,10 +5,16 @@ WDe V0.99 [__.__.2022]
   - fixed: to enter a cluster# in "goto cluster" did jump to a wrong
     cluster if cluster number contained a '9'.
   - fixed: Alt-Left at cluster 2 caused an error with a strange cluster#.
-  - fixed: unformat didn't work in v0.50
-  - fixed: unformat never worked for FAT32.
-  - in directory view, files and directory got marked with different
+  - fixed: unformat FAT12/FAT16 didn't work in v0.50
+  - fixed: unformat works for FAT32.
+  - fixed: unformat may have stopped prematurely, leaving the disk in
+    a corrupted state.
+  - fixed: in v0.50, WDe had problems to handle image files correctly.
+  - in directory view, files and directory names are displayed in different
     colors, the rest is darkened a bit ( light grey ).
+  - filenames now accepted as cmdline parameters.
+  - -m cmdline option may now be entered without number.
+    
 
 WDe V0.50 [12.05.2022]
   - fixed: restore chain didn't work in v0.50pre1.

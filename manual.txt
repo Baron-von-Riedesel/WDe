@@ -104,7 +104,7 @@ WDe User Manual
   1.0 - Initial Screen and Commandline
 
      When starting, WDe optionally accepts command line arguments - to make
-    WDe display the currently accepted arguments, run "WDe -?".
+    WDe display the acceptable arguments, run "WDe -?".
     
      If no (valid) argument is given on the command line, the user will be
     prompted ("Drive: ") to specify the disk or drive to be examined. A digit

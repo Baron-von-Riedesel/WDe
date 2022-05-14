@@ -191,7 +191,7 @@ nextsector:
     push [dwFatSector]
     pop [ioreq.dwSector]
 ;    @dprintfln "putfatentry: writing FAT, sector=%lu", [ioreq.dwSector]
-    call writesect
+    call diskaccess_write
 
     cmp bx, 511          ; FAT12?
     jne abortpfe2
@@ -289,6 +289,7 @@ locatefatentry endp
 
 resetfatcache proc
     mov [dwFatSector], 0
+    or [fat12fixsec], -1   ; ensure fat12fixsec is != dwFatSector
     ret
 resetfatcache endp
 

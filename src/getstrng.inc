@@ -69,7 +69,7 @@ local   csrsta:CSRPOS  ; start cursor position
     dec al                ; leave room for 1 char
 @@:
     sub dl, al
-    mov csrsta, dx        ; start screen pos for str_out
+    mov [csrsta], dx      ; start screen pos for str_out
 
 wingx:                    ; <---- get next key
 
@@ -89,7 +89,7 @@ wingx:                    ; <---- get next key
     sub si, dx
     inc si
 @@:
-    push csrsta
+    push [csrsta]
     pop [scrn_xy]
     call str_out          ; display string
 
@@ -189,8 +189,10 @@ handle_tab:
     jc smexit
     and ax, ax
     jnz _ret
+    push [csrsta]
+    pop [scrn_xy]
 if 1
-    mov cl, 79
+    mov cl, MAXCOL
     sub cl, [scrn_col]
     mov al, SPACE
     call fillchar

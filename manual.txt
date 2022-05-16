@@ -63,6 +63,7 @@ WDe User Manual
   5.19      "Sector size exceeds 4KB"
   5.20      "No Directory Entry found with Start Cluster XXX"
   5.21      "End of Cluster Chain reached"
+  5.22      "Out of Memory"
 
 
 
@@ -113,9 +114,10 @@ WDe User Manual
     user will additionally be asked to select between hard disks and floppies.
 
      The TAB key may be pressed to change the "Drive:" prompt to a "File:"
-    prompt; a full file/path name can then be entered, WDe will interpret this
-    file as a physical disk. The "restrict" function - see below for details -
-    may then be used to make WDe interpret (parts of) the file as logical drive.
+    prompt; a full file/path name can then be entered, As default, WDe will
+    interpret this file as a physical disk. Option -m ( or the "restrict"
+    function - see below for details ) may be used to make WDe interpret
+    (parts of) the file as logical drive.
 
 
 
@@ -173,8 +175,8 @@ WDe User Manual
 
         PageUp/Down changes the current sector being edited; however, if
         the sector size is > 512, Page Up/Down will just change the current
-        offset by 512 if the sector's end hasn't been reached yet on the 
-        screen. Ctrl+PageUp/Down will jump by 100 sectors at a time.
+        offset by 512 if the sector's begin/end hasn't been reached yet on
+        the screen. Ctrl+PageUp/Down will jump by 100 sectors at a time.
 
         Ctrl+Home/End jump to the beginning and end of the drive.
 
@@ -465,6 +467,11 @@ WDe User Manual
           is unsuccessful, reformatting the drive will restore it to the
           state it was in before it was unformatted.
 
+          Unformat may fail because it finds too many directories. There's
+          room for about 9,000 of them in WDe's local heap. If it runs out
+          of memory, unformat will abort and an error is displayed. Nothing
+          has been changed onto the disk so far, then.
+
           Unformatting a drive will not restore it to the state it was in
           before a format; the process should only be used in hopes of
           recovering required data before formatting the drive again for use.
@@ -496,6 +503,7 @@ WDe User Manual
 
         This menu option saves any manual changes made to the sector
         currently being edited.
+
 
 
   5.0 - Error Messages
@@ -655,5 +663,11 @@ WDe User Manual
         This message may occur when Ctrl-Right is pressed while in the data
         part of a disk. It means that the corresponding FAT chain has reached
         its end. It's only an error if the end of the chain is "preliminary".
+
+    5.22 - "Out of Memory"
+
+        This is a possible Unformat error. It appears when Unformat, while
+        scanning the disk for directories, has found too many of them. The disk
+        is unchanged.
 
 

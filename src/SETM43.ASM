@@ -335,7 +335,14 @@ local	dwFnt14:dword
 	mov bx,102h
 	int 10h
 	cmp ax,004Fh
+	jz @F
+
+	mov ax,4F02h
+	mov bx,6Ah
+	int 10h
+	cmp ax,004Fh
 	jnz notsupported
+@@:
 
 ;--- set BIOS variables to match the new resolution
 

@@ -453,7 +453,7 @@ introtext       db 'WDe V0.99',0
 copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
 
 owmsg           db 'File Exists - A(ppend), O(verwrite) or C(ancel)? ',0
-fhdmsg          db 'F(loppy) or H(ard) disk? ',0
+fdmsg           db 'Floppy disk [y/N]? ',0
 cdrcmsg         db 'R(aw) or C(ooked) mode? ',0
 plmsg           db 'L(ogical) or P(hysical) disk? ',0
 abmsg           db 'A(bove) or B(elow)? ',0
@@ -958,8 +958,8 @@ endif
 _argv equ <>
 _argc equ <>
 
-    jcxz no_drive
 nextarg:
+    jcxz no_drive
     mov si, [bx]
     add bx, 2
     lodsw
@@ -967,22 +967,24 @@ nextarg:
     jz handleoptions
     cmp al, '-'
     jz handleoptions
+    dec cx
+    jnz printhelp
     cmp al, '0'
-    jb inval_cmd
+    jb isfn
     cmp al, '9'
     jbe maybedrive
     mov bh, DT_LOGICAL
     or al, 20h
     cmp al, 'a'
-    jb inval_cmd
+    jb isfn
     cmp al, 'z'
-    ja inval_cmd
+    ja isfn
     sub al, 'a'
     cmp ah, ':'
-    jnz @F
-    cmp byte ptr [si],0
+    jnz isfn
+    cmp byte ptr [si], 0
     jz has_drive
-@@:
+isfn:
     mov di, offset filenamebuffer
     sub si, 2
 @@:
@@ -994,9 +996,8 @@ nextarg:
     jmp has_drive
 handleoptions:
     call options
-    loop nextarg
-inval_cmd:
-    jmp printhelp
+    dec cx
+    jmp nextarg
 maybedrive:
     mov bh, DT_PHYSICAL
     sub al, '0'
@@ -1004,12 +1005,10 @@ maybedrive:
     cmp ah, 0
     jz has_drive
     or ah, 20h
-    cmp ah, 'h'
-    jz has_drive
     and al, 7fh
     cmp ah, 'f'
     jz has_drive
-    jmp inval_cmd
+    jmp isfn
 no_drive:
     mov al, -1
 has_drive:
@@ -1020,7 +1019,7 @@ has_drive:
 if ?PM
     call initpm
     call wdepm
-    mov bl,24h                  ; use DPMI to modify int vector, since
+    mov bl, 24h                 ; use DPMI to modify int vector, since
     mov ax, 204h                ; DS MUST hold DGROUP selector when int 21h is called
     int 31h
     @storevec [oldint24]
@@ -1067,7 +1066,7 @@ if ?MOUNT
     movzx eax, [bMount]
     cmp al, 0
     jz nomount
-    cmp al,-1                   ; mount physical as logical?
+    cmp al, -1                  ; mount physical as logical?
     jnz @F
     xor eax, eax
     jmp mlog
@@ -1256,8 +1255,7 @@ undef:
 @@:
 endif
 error:
-    stc
-    ret
+    jmp printhelp
 options endp
 
 ;--- handle control keys
@@ -1546,16 +1544,18 @@ hdphysical:
     test byte ptr es:[410h], 1  ; floppies available?
     jz nofds                    ; if no, skip asking
 
-    mov dx, offset fhdmsg       ; choose between floppy and HD
+    mov dx, offset fdmsg        ; choose between floppy and HD
     call printbottom
 @@:
     call cursorgetkey
     cmp al, ESCAPE_KEY
     je setdrive
+    cmp al, ENTER_KEY
+    je nofds
     or al,20h
-    cmp al, 'f'
+    cmp al, 'y'
     je readasfd
-    cmp al, 'h'
+    cmp al, 'n'
     jne @B
 nofds:
     add cl, 80h                 ; physical hard drive.
@@ -6245,8 +6245,8 @@ setlogvars proc
     mov dl, [ioreq.bDrive]
     inc dl
     mov cx, 003Fh
-    mov ax, 7302h                ; fix: check if this call needs translation in WinXP
-    int 21h
+    mov ax, 7302h                ; in WDeX, DOS calls are translated
+    int 21h                      ; to "simulate real-mode interrupt"
     mov dl, RWF_OLDLOGICAL
     jc olddpb
     cmp ax,7300h
@@ -6267,6 +6267,7 @@ endif
 
 ;--- lock logical valume. Required by Win9x only?
 ;--- should there be a corresponding unlock (86A/486A) when done with the drive???
+;--- current status is: don't unlock (causes troubles in real DOS), under Win95 both locks fail.
 
 ;    call unlock
 

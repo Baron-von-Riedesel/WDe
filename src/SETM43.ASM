@@ -365,6 +365,12 @@ local	dwFnt14:dword
 	cli
 	mov  dx,es:[463h]	;get crt address
 	call disablewp
+
+	test bFlags, 2
+	jz @F
+	mov ax,4F01h		;set display end to 79
+	out dx,ax
+@@:
 	mov al,9
 	out dx,al
 	inc dx
@@ -489,6 +495,8 @@ start:
 		.if ((ah == '/') || (ah == '-'))
 			.if (al == 'c')
 				or dl,1
+			.elseif (al == '8')
+				or dl,2
 			.elseif (al == '?')
 				push cs
 				pop ds
@@ -508,6 +516,7 @@ exit:
 
 help db "usage: SETM43 [option]",13,10
      db "option: -c  clear screen",13,10
+     db "        -8  set display end to 80 chars",13,10,'$'
      db "        -?  this text",13,10,'$'
 
 	END start

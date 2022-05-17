@@ -289,7 +289,7 @@ locatefatentry endp
 
 resetfatcache proc
     mov [dwFatSector], 0
-    or [fat12fixsec], -1   ; ensure fat12fixsec is != dwFatSector
+    or [dwFat12fixsec], -1      ; ensure dwFat12fixsec is != dwFatSector
     ret
 resetfatcache endp
 
@@ -310,9 +310,9 @@ fat12pad proc
     push eax
     mov eax, [bp+16+2]                  ; assumes 16-bit!
 
-    cmp [fat12fixsec], eax              ; the same sector?  then
+    cmp [dwFat12fixsec], eax            ; the same sector?  then
     je done                             ; we already have the correct data
-    mov [fat12fixsec], eax              ; ...this would be a tiny bug if
+    mov [dwFat12fixsec], eax            ; ...this would be a tiny bug if
                                         ; we switch drives on sector 0
 
     push [dwFatSector]                  ; save current fatcache sector

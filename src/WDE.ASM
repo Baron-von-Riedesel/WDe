@@ -122,6 +122,7 @@ else
         COL_INACTIVE     EQU 17h         ; light grey on blue
         COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
         COL_GREENFG      EQU 1Ah         ; light green on blue
+        COL_STATTEXT     EQU 17h         ; light grey on blue
 endif
 
 ; "editmode" variable
@@ -198,6 +199,7 @@ endif
 
 
 ; scan codes
+        ESCAPE_SCAN      EQU 01h
         BACKSPACE_SCAN   EQU 0eh
         TAB_SCAN         EQU 0fh
         ENTER_SCAN       EQU 1ch
@@ -296,8 +298,11 @@ l&name_ equ ( $ - startmenudefs ) - name_
 _DATA2 ends
 endm
 
-@mitem macro stridx, cmdofs, name_
-name_  db stridx
+@mitem macro stridx, cmdofs, idx
+ifnb <idx>
+idx equ $ - startmenudefs
+endif
+    db stridx
 _TEXT2 segment
     dw cmdofs
 _TEXT2 ends
@@ -447,6 +452,12 @@ wSpot    dw ?
          dw ?
 SECITEM ends
 
+HIGHLIGHT struct
+ofs   dw ?
+siz_  db ?
+scsiz db ?
+HIGHLIGHT ends
+
     .const
 
 introtext       db 'WDe V0.99',0
@@ -528,14 +539,15 @@ part0B0C        db 'Fat32',0                            ; 41
 
 ;--- a few menu items are dynamically (de)activated. 
 ;--- in those cases the menu string# must be known;
-;--- hence the MENUF_xxx definitions.
+;--- hence the MENUS_xxx definitions.
 
-MENUF_RESTORE equ 15
-MENUF_CHAIN   equ 23
+MENUS_INACTIVE equ -1
+MENUS_RESTORE equ 15
+MENUS_CHAIN   equ 23
 
 if ?EXT
-MENUF_UNFORMAT equ 47
-MENUF_UNDELETE equ 48
+MENUS_UNFORMAT equ 47
+MENUS_UNDELETE equ 48
                 db 'UnFormat',0                         ; 47
                 db 'UnDelete',0                         ; 48
 endif
@@ -607,7 +619,7 @@ szNoOfSectors   db 'Number of Sectors (1-%lu): ',0
 
 szSector2       db 'Sector (0-%lu): ',0
 szCluster2      db 'Cluster (2-%lX): ',0
-szCluster3      db 'Start Cluster (2-%lX) of File/Dir to find: ',0
+;szCluster3      db 'Start Cluster (2-%lX) of File/Dir to find: ',0
 
 partmsg         db 'Part: ',0
 sizemsg         db 'Size: ',0
@@ -652,17 +664,19 @@ fromfat         db ? ; fat to use for getfatentry/putfatentry
 filesys         db ? ; type of fat
 bSpC            db ? ; sectors per cluster
 bFats           db ? ; number of fats
-                align 4
 dwSpF           dd ? ; sectors per fat
 dwFat1end       dd ? ; end of first fat
 dwReserved      dd ? ; reserved sectors (start of fat)
 rootentries     dw ? ; number of root entries (unused)
 wRootsectors    dw ? ; number of root sectors
 dwCurSector     dd ? ; current sector in sectbuffer
-dwFatSector     dd ? ; current sector in fat cache buffer
 if ?SN64
 dwCurSectorH    dd ? ; high sector dword for int13h
 endif
+dwFatSector     dd ? ; current sector in fat cache buffer
+dwFat12start    dd ?            ; stores the sector number when fat12
+                                ; view mode was selected
+dwFat12fixsec   dd ?            ; sector # for fat12 fix
 dwDataend       dd ? ; end of data (last sector)
 if ?SN64
 dwDataendH      dd ? ; high dword for int13h HUGE hds
@@ -679,25 +693,11 @@ dwBpC           dd ? ; bytes per cluster
 dwSecBackup     dd ? ; sector backup
 dwNumCluster    dd ? ; clusters to be saved in exFAT savechain/restorechain variant
 partitions      dd ?,?,?,? ; partition start sectors
-
-backupbs        dw ? ; backup boot sector location (FAT32)
-fsinfo          dw ? ; fsinfo sector (FAT32)
-wBps            dw ? ; current bytes per sector ( both physical/logical )
-hdnumber        db ? ; hard drive number partition belongs to
-bSpCshift       db ? ; sectors per cluster for doing bitshifts
-spcc            db ? ; sectors per cluster counter
-bRegion         db ? ; what part of the disk we're in
-viewmode        db ? ; see VM_xxx
-viewmode2       db ? ; 0 = autodetect view, 1=force view
-displaymode     db ? ; hex or binary
-editmode        db ? ; what mode being edited in (ascii/default)
-
-HIGHLIGHT struct
-ofs   dw ?
-siz_  db ?
-scsiz db ?
-HIGHLIGHT ends
-
+dwRwfilesize    dd ? ; filesize of image file for DT_FILE
+dwDrivestart    dd ? ; used for sector restriction ( physical access only )
+if ?SN64
+dwDrivestartH   dd ?
+endif
 highlight       HIGHLIGHT <>; area to highlight with viewmode
 
 seed12          label dword
@@ -707,17 +707,22 @@ seed34          label dword
 seed3           dw ?
 seed4           dw ?
 
-dwRwfilesize    dd ?            ; filesize of image file for DT_FILE
-dwDrivestart    dd ?            ; used for sector restriction ( physical access only )
-if ?SN64
-dwDrivestartH   dd ?
-endif
-dwFat12start    dd ?            ; stores the sector number when fat12
-                                ; view mode was selected
-fat12fixsec     dd ?            ; sector # for fat12 fix
-rwhandle        dw ?            ; file handle if device is DT_FILE
-wFilehandle     dw ?            ; file handle for file ops
-cylinders       dw ?            ; disk geometry for int 13h, ah=02/03
+backupbs        dw ? ; backup boot sector location (FAT32)
+fsinfo          dw ? ; fsinfo sector (FAT32)
+wBps            dw ? ; current bytes per sector ( both physical/logical )
+rwhandle        dw ? ; file handle if device is DT_FILE
+wFilehandle     dw ? ; file handle for file ops
+cylinders       dw ? ; disk geometry for int 13h, ah=02/03
+
+hdnumber        db ? ; hard drive number partition belongs to
+bSpCshift       db ? ; sectors per cluster for doing bitshifts
+spcc            db ? ; sectors per cluster counter
+bRegion         db ? ; what part of the disk we're in
+viewmode        db ? ; see VM_xxx
+viewmode2       db ? ; 0 = autodetect view, 1=force view
+displaymode     db ? ; hex or binary
+editmode        db ? ; what mode being edited in (ascii/default)
+
 fillflag        db ?,?
 area            db ?            ; specifies where on a drive we are
 srflag          db ?            ; "file ops" menu flag
@@ -744,6 +749,7 @@ bSkipFat        db ?
 bSecSh          db ?            ; shift factor for wBps
 bIdx            db ?            ; curr index if lfns are displayed in dirview
 bDark           db ?            ; 1=screen foreground color not bright
+bMenu           db ?            ; 1=menu update required
 
 ;--- unformat fields
     align dword
@@ -765,7 +771,7 @@ pFatCache       dw ?
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
 
-    align 4
+    align dword
 menustack       MENULVL 4 dup (<?>)  ; menu stack
 secstk          SECITEM 8 dup (<?>)  ; sector stack ( room for 8 items )
 if ?LFN
@@ -1099,27 +1105,26 @@ main proc
     mov sp, [stackbot]
     mov [handling], ABORT_OPERATION  ; inside main
     call updatescreen           ; print line 0, sector area and view area
-    call printmenu
 
     push offset main
 
 getkeyagain:
+    call printmenu
     push 1
     call showcursor
     call getkey
     push 0
     call showcursor
 
-    cmp al, ESCAPE_KEY          ; exit menu or program
-    je handle_esc
     cmp al, ENTER_KEY           ; jump to cluster ( in FAT or directory )
     je handle_enter
-    cmp ax, CTRLENTER_KEY       ; jump to FAT entry for current cluster
+    cmp ax, CTRLENTER_KEY       ; jump to FAT/directory entry for current cluster/entry
     je handle_ctlenter
 
     call checkmenukey           ; check for menu (=function) keys
 
     mov dx, sp                  ; set dx to "clean" stack
+
     push offset getkeyagain     ; default to 'no full screen update'
     push offset updateview      ; edit keys may change view, so update it after processing
 
@@ -1215,11 +1220,6 @@ done_render:
 skipkey:
     pop ax                      ; skip view update
     ret
-handle_esc:
-    cmp [menustackidx], 0       ; in main menu?
-    jz quit                     ; then ask to quit;
-    dec [menustackidx]          ; else pop one menu level
-    ret
 
 main endp
 
@@ -1294,6 +1294,8 @@ lck1 equ ($ - ck) shr 1
     CKey CSRDOWN_KEY,      movedown
     CKey HOME_KEY,         movefirst
     CKey END_KEY,          movelast
+    CKey ESCAPE_SCAN,      handle_esc
+
 lck equ ($ - ck) shr 1
 
 ;--- in: dx=clean SP
@@ -1340,7 +1342,7 @@ checkmenukey proc
 found:
     add cl, [bx].MENULVL.bMenuStart
     movzx bx, cl
-    cmp [bx][startmenudefs], -2 ; item deactivated?
+    cmp [bx][startmenudefs], MENUS_INACTIVE
     jz @B
     shl bx, 1
     pop cx                      ; skip return address
@@ -1362,10 +1364,157 @@ initmenustack::
     mov [bx].MENULVL.bMenuStart, dl
     mov [bx].MENULVL.bMenuSize, dh
     mov [bx].MENULVL.bSpaces, cl
+    mov [bMenu], 1
     ret
 
 pushmenustack endp
 
+resetmenustack proc
+    mov [menustackidx], 0
+    mov [bMenu], 1
+    ret
+resetmenustack endp
+
+;--- set menuitem CL to AL
+
+setmenuitem proc
+    push bx
+    movzx bx, cl
+    cmp al, [bx+startmenudefs]   ; will item change?
+    jz done
+    mov [bx+startmenudefs], al
+    movzx bx, [menustackidx]
+    shl bx, 2
+    add bx, offset menustack
+    mov ah, [bx].MENULVL.bMenuStart
+    cmp ah, cl
+    jnc @F
+    add ah, [bx].MENULVL.bMenuSize
+    cmp cl, ah
+@@:
+    adc [bMenu], 0
+done:
+    pop bx
+    ret
+setmenuitem endp
+
+;--- handle ESC
+;--- in: DX=clean SP
+
+handle_esc proc
+    cmp [menustackidx], 0       ; in main menu?
+    jz @F
+    dec [menustackidx]          ; else pop one menu level
+    mov [bMenu], 1
+    pop ax                      ; skip updateview call
+    ret
+@@:
+    push dx
+    call quit
+    pop sp                      ; reset SP to make a full screen update
+    ret
+handle_esc endp
+
+;--- cursor move keys
+;--- home
+;--- end
+;--- csr-up
+;--- csr-down
+;--- csr-left
+;--- csr-right
+
+movefirst:
+    mov ax, [spot]
+    neg ax
+    mov dl, 0
+    jmp domove
+
+movelast:
+    mov ax, VIEWBYTES
+    dec ax
+    sub ax,[spot]
+    mov dl, 0
+    jmp domove
+
+moveup:
+    mov ax, -16
+    mov cx, -4
+    jmp moveupdn
+movedown:
+    mov ax, 16
+    mov cx, 4
+moveupdn:
+    mov dl, [bHL]
+    cmp [editmode], EM_ASCII
+    je domove
+    cmp [displaymode], DM_BINARY
+    jne domove
+    mov ax, cx
+    jmp domove
+
+moveleft:
+    mov ax, -1
+    mov cl, 8
+    jmp moveleftright
+moveright:
+    mov ax, 1
+    mov cl, 0
+moveleftright:
+    mov dl, [bHL]
+    cmp [editmode], EM_ASCII
+    je domove
+    cmp [displaymode], DM_HEX
+    je dohexadd
+;--- binary move left/right
+    add dl,al
+    cmp dl,8+1
+    pushf
+    jb @F
+    mov dl,cl
+@@:
+    cmp dl,4
+    jnz @F
+    add dl,al
+@@:
+    popf
+    jnb domove
+    xor ax, ax
+    jmp domove
+dohexadd:     ; hex move left/right
+    add dl, al
+    cmp dl, 2
+    pushf
+    and dl, 1
+    popf
+    jnb domove
+    xor ax, ax
+;    jmp domove
+
+;--- common code for up,down,left,right
+
+domove proc
+    add ax, [spot]
+    cmp ax, VIEWBYTES
+    jae done
+
+    push [spot]                   ; back old cursor spot up
+    call movecursor               ; spot is changed to ax
+    pop ax
+
+    cmp [displaymode], DM_BINARY
+    jne dontchangescreens
+    mov bx, [spot]              ; figures out if we've crossed a 128-byte
+    shl ax, 1                   ; barrier by checking if the high bits have
+    shl bx, 1                   ; changed.  if so, then we need to redraw,
+    cmp bh, ah                  ; otherwise there's no need to waste CPU.
+    je dontchangescreens
+    call printsector
+    call printoffset
+dontchangescreens:
+;    call printoffset           ; is called by movecursor
+done:
+    ret
+domove endp
 
 ;--- alloc AX bytes on the dgroup heap
 
@@ -1694,6 +1843,7 @@ savetodisk endp
 restrictsectors proc
     mov dx, offset abmsg                  ; "above/below"?
     call printbottom
+    call darkclr
 rsgetkeys:
     call cursorgetkey
     cmp al, ESCAPE_KEY
@@ -1742,21 +1892,26 @@ submenu_functions proc
     @mitem 30, restrictsectors
     @mitem 29, submenu_fill
 if ?EXT
-    @mitem -2, unformat, funcmf3    ; "unformat"
-    @mitem -2, undelete, funcmf4    ; "undelete"
+    @mitem MENUS_INACTIVE, unformat, FUNCM_UNFORMAT
+    @mitem MENUS_INACTIVE, undelete, FUNCM_UNDELETE
 endif
     @mend funcmenu
 
-    mov al, -2
-    cmp [filesys], FS_EXFAT       ; no "undelete" for exFAT!
-    jz @F
-    test [filesys], FS_FATXX
-    jz @F
-    mov al, MENUF_UNFORMAT
-@@:
-    mov [funcmf3], al             ; set/remove "unformat"
-    mov dx, funcmenu + lfuncmenu shl 8
+    mov dx, funcmenu + 2 shl 8   ; only 2 menu items for non-fat file systems
     mov cl, 3
+    test [filesys], FS_FATXX
+    jz pushmenustack
+if ?EXT
+    mov al, MENUS_INACTIVE
+    cmp [filesys], FS_EXFAT       ; no "unformat" for exFAT!
+    jz @F
+    mov al, MENUS_UNFORMAT
+@@:
+    mov cl, FUNCM_UNFORMAT
+    call setmenuitem              ; set/remove "unformat"
+endif
+    mov cl, 3
+    mov dh, lfuncmenu
     jmp pushmenustack
 
 submenu_functions endp
@@ -3004,7 +3159,7 @@ nextentry:
     cmp byte ptr [si], 0
     jz done
     push di
-    mov al, 17h                 ; light grey
+    mov al, COL_STATTEXT        ; light grey
     cmp byte ptr [si], 0E5h
     jz @F
     cmp byte ptr [si+0Bh], 0Fh  ; LFN?
@@ -3021,7 +3176,7 @@ nextchar1:
     dec dl
     jnz nextchar1
     mov dl, 16-11
-    mov al, 17h
+    mov al, COL_STATTEXT
 nextchar2:
     inc di
     stosb
@@ -3055,13 +3210,13 @@ dirview_ascii_exfat proc
     call cbuffer_offset
     mov cx, 512 / DIRENTSIZE
 nextentry:
-    mov ah, 17h
+    mov ah, COL_STATTEXT
     cmp byte ptr [si], 0C1h
     jnz @F
     mov ah, 1Fh
 @@:
     push di
-    mov al, 17h
+    mov al, COL_STATTEXT
     inc di
     stosb
     mov al, ah
@@ -3406,16 +3561,17 @@ submenu_file proc
 
     @mstart filemenu               ; file menu cmd table
     @mitem 14, submenu_fileoptions
-    @mitem 15, submenu_fileoptions, filemenu_restore
+    @mitem 15, submenu_fileoptions, FILEMENU_RESTORE
     @mitem  6, select_disk
     @mend filemenu
 
-    mov al, MENUF_RESTORE
+    mov al, MENUS_RESTORE
     cmp [ioreq.drvtype], DT_CDROM
     jne @F
-    mov al,-2                      ; for CDROMs, remove "restore"
+    mov al, MENUS_INACTIVE         ; for CDROMs, remove "restore"
 @@:
-    mov [filemenu_restore], al
+    mov cl, FILEMENU_RESTORE
+    call setmenuitem
     mov dx, filemenu + lfilemenu shl 8
     mov cl, 3
     jmp pushmenustack
@@ -3801,7 +3957,7 @@ donerestchain:
     call readcursect
     mov dx, offset donewritedisk
     call printerror
-;    mov [menustackidx], 0     ; auto return to main menu
+;    call resetmenustack       ; auto return to main menu
     ret
 clusterr:
     mov dx, offset sprintfbuffer
@@ -3898,7 +4054,7 @@ submenu_fileoptions proc
     @mitem 11, srfat2
     @mitem 12, srroot
     @mitem 22, srdisk
-    @mitem -2, srchain, ldfileoptf7 
+    @mitem MENUS_INACTIVE, srchain, LDFILEOPT_CHAIN
     @mend ldfileoptmenu
 
     cmp ah, F2_KEY
@@ -4119,7 +4275,7 @@ dosavedata:
     popf
     pop eax
     jc donesavedata
-    mov [menustackidx], 0        ; if file op was successful, go back to main menu
+    call resetmenustack          ; if file op was successful, go back to main menu
     jmp sectorswritten2file
 
 toobig::
@@ -4198,7 +4354,7 @@ donedump:
     mov eax, [dwDataend]
     inc eax
     call sectorswritten2file
-    mov [menustackidx], 0               ; leave file option menu, back to main menu
+    call resetmenustack               ; leave file option menu, back to main menu
 done:
     ret
 
@@ -4299,7 +4455,7 @@ donejump:
     jb @F
     mov [ioreq.dwSector], ebx
     call readsect
-    mov [menustackidx], 0  ; auto return to main menu
+    call resetmenustack   ; auto return to main menu
 @@:
 done:
     ret
@@ -4320,107 +4476,6 @@ jumptolastsect::
     jmp donejump
 
 submenu_jumpto endp
-
-;--- main menu, cursor move keys
-;--- home
-;--- end
-;--- csr-up
-;--- csr-down
-;--- csr-left
-;--- csr-right
-
-movefirst:
-    mov ax, [spot]
-    neg ax
-    mov dl, 0
-    jmp domove
-
-movelast:
-    mov ax, VIEWBYTES
-    dec ax
-    sub ax,[spot]
-    mov dl, 0
-    jmp domove
-
-moveup:
-    mov ax, -16
-    mov cx, -4
-    jmp moveupdn
-movedown:
-    mov ax, 16
-    mov cx, 4
-moveupdn:
-    mov dl, [bHL]
-    cmp [editmode], EM_ASCII
-    je domove
-    cmp [displaymode], DM_BINARY
-    jne domove
-    mov ax, cx
-    jmp domove
-
-moveleft:
-    mov ax, -1
-    mov cl, 8
-    jmp moveleftright
-moveright:
-    mov ax, 1
-    mov cl, 0
-moveleftright:
-    mov dl, [bHL]
-    cmp [editmode], EM_ASCII
-    je domove
-    cmp [displaymode], DM_HEX
-    je dohexadd
-;--- binary move left/right
-    add dl,al
-    cmp dl,8+1
-    pushf
-    jb @F
-    mov dl,cl
-@@:
-    cmp dl,4
-    jnz @F
-    add dl,al
-@@:
-    popf
-    jnb domove
-    xor ax, ax
-    jmp domove
-dohexadd:     ; hex move left/right
-    add dl, al
-    cmp dl, 2
-    pushf
-    and dl, 1
-    popf
-    jnb domove
-    xor ax, ax
-;    jmp domove
-
-;--- common code for up,down,left,right
-
-domove proc
-    add ax, [spot]
-    cmp ax, VIEWBYTES
-    jae done
-
-    push [spot]                   ; back old cursor spot up
-    call movecursor               ; spot is changed to ax
-    pop ax
-
-    cmp [displaymode], DM_BINARY
-    jne dontchangescreens
-    mov bx, [spot]              ; figures out if we've crossed a 128-byte
-    shl ax, 1                   ; barrier by checking if the high bits have
-    shl bx, 1                   ; changed.  if so, then we need to redraw,
-    cmp bh, ah                  ; otherwise there's no need to waste CPU.
-    je dontchangescreens
-    call printsector
-    call printoffset
-dontchangescreens:
-;    call printoffset           ; is called by movecursor
-done:
-    ret
-domove endp
 
 ;-------------------------------------------------------
 ; viewmode; see the variable definition for details
@@ -4703,27 +4758,16 @@ exfat_dirview proc
 
 ;--- (de)activate "Chain"
 
-    xor dx, dx
-    cmp [menustackidx], 2        ; simple check if "file options" may be active.
-    jnz nochainadjust
-    mov al, -2
+    mov al, MENUS_INACTIVE
     mov ah, NO_CHAIN
     cmp [si+bx].EXFDIRP.etype, 0C0h          ; file stream entry?
     jnz @F
-    mov al, MENUF_CHAIN
+    mov al, MENUS_CHAIN
     mov ah, FILE_CHAIN
 @@:
-    cmp al, [ldfileoptf7]
-    setnz dl
-    mov [ldfileoptf7], al
     mov [chainflag], ah
-nochainadjust:
-    and dx, dx         ; only reprint the current menu if menu has been changed
-    jz @F
-    pusha
-    call printmenu
-    popa
-@@:
+    mov cl, LDFILEOPT_CHAIN
+    call setmenuitem
 
     mov [scrn_xy], VIEWROW * 100h + 1
     mov cl, 78
@@ -4957,52 +5001,34 @@ dirview proc
     cmp [filesys], FS_EXFAT
     jz exfat_dirview
 
-;--- adjust menus.
-;--- (the menu adjustment is currently a bit silly implemented, too complicated )
-
-    xor dx, dx                   ; dl and dh used as flags if the menu has to be printed
-
 ;--- de(activate) "chain" in "file options" menu.
 
-    cmp [menustackidx], 2        ; simple check if "file options" may be active.
-    jnz nochainadjust
-    mov al, -2
+    mov al, MENUS_INACTIVE
     mov ah, NO_CHAIN
     cmp byte ptr [si+bx], 0      ; dir entry empty?
     jz @F
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
     jz @F
-    mov al, MENUF_CHAIN
+    mov al, MENUS_CHAIN
     mov ah, FILE_CHAIN
 @@:
-    cmp al, [ldfileoptf7]
-    setnz dl
-    mov [ldfileoptf7], al
     mov [chainflag], ah
-nochainadjust:
+    mov cl, LDFILEOPT_CHAIN
+    call setmenuitem
 
+if ?EXT
 ;--- (de)activate "undelete" in "functions" menu depending on current entry status
 
-    cmp [menustackidx], 1        ; simple check if "functions" may be active
-    jnz noundeleteadjust
-    mov al, -2
+    mov al, MENUS_INACTIVE
     cmp byte ptr [si+bx], 0E5h
     jnz @F
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
     jz @F
-    mov al, MENUF_UNDELETE
+    mov al, MENUS_UNDELETE
 @@:
-    cmp al, [funcmf4]
-    setnz dh
-    mov [funcmf4], al
-noundeleteadjust:
-
-    and dx, dx         ; only reprint the current menu if a menu has been changed above
-    jz @F
-    pusha
-    call printmenu
-    popa
-@@:
+    mov cl, FUNCM_UNDELETE
+    call setmenuitem
+endif
 
     mov [scrn_xy], VIEWROW * 100h + 1
 
@@ -5179,8 +5205,9 @@ done:
     ret
 
 clearentryview:
-    mov cx, 4 shl 8 or 78
-    mov ax, COL_DEFAULT shl 8 or SPACE
+    mov cx, 4 shl 8 or (MAXCOL-1)
+;    mov ax, COL_DEFAULT shl 8 or SPACE
+    mov ax, COL_STATTEXT shl 8 or SPACE
 @@:
     call fillcell
     inc [scrn_row]
@@ -5235,8 +5262,10 @@ printattr endp
 
 chainmenuitem proc
 
-    mov [ldfileoptf7], MENUF_CHAIN
     mov [chainflag], FAT_CHAIN   ; we're in a FAT
+    mov al, MENUS_CHAIN
+    mov cl, LDFILEOPT_CHAIN
+    call setmenuitem
     ret
 
 chainmenuitem endp
@@ -7085,7 +7114,7 @@ donefileread:
     call readcursect
     popf
     jc @F
-    mov [menustackidx], 0                 ; if file op was successful, go back to main menu
+    call resetmenustack                   ; if file op was successful, go back to main menu
     call updatescreen                     ; let the user see the new content
     mov dx, offset donewritedisk
     call nuprinterror
@@ -7821,17 +7850,19 @@ clearsecarea proc
     les di, [vidaddr]
     mov bx, [vidcolsize]
     add di, bx
+    sub bx, 52*2
     add di, 2*9
-    mov ax, COL_DEFAULT shl 8 or SPACE
+    mov al, SPACE
     mov dl, 32
-@@:
-    push di
+nextrow:
     mov cx, 52
-    rep stosw
-    pop di
+@@:
+    stosb
+    inc di
+    loop @B
     add di, bx
     dec dl
-    jnz @B
+    jnz nextrow
     ret
 clearsecarea endp
 
@@ -8740,10 +8771,13 @@ binaryspotcalc:
     ret
 spot2xy endp
 ;-------------------------------------------------------
-getyn:                          ; prints [Y/N] on the screen
-    mov dx, offset ynmsg        ; carry flag set if 'Y'
+;--- prints " [Y/n]" on the screen
+;--- carry flag set if 'Y'
+getyn proc
+    mov dx, offset ynmsg
     call printstring
-getyn2:
+    call darkclr
+nextkey:
     call cursorgetkey
     cmp al,'A'
     jb @F
@@ -8756,13 +8790,14 @@ getyn2:
     cmp al, 'n'
     je returnn
     cmp al, ESCAPE_KEY
-    jne getyn2
+    jne nextkey
 returnn:
     clc
     ret
 returny:
     stc
     ret
+getyn endp
 ;-------------------------------------------------------
 quit proc
     mov dx, offset quitmsg
@@ -8836,6 +8871,8 @@ quit endp
 
 printmenu proc
 
+    cmp [bMenu], 0                       ; menu to be printed
+    jz done
     push ds
     pop es
     movzx bx, [menustackidx]
@@ -8850,7 +8887,7 @@ printmenu proc
 nextmenuitem:
     mov ah, [si]       ; load menu string index
     inc si
-    cmp ah, -2
+    cmp ah, MENUS_INACTIVE
     jz skipitem
     mov di, offset menustrings  ; scan menu string table
     inc ah
@@ -8886,10 +8923,12 @@ skipitem:
     inc dh                      ; increase function key number
     dec ch
     jnz nextmenuitem
-done:
     mov byte ptr [bx], 0
     pop dx
-    jmp printbottom             ; and finally print the menu
+    call printbottom             ; and finally print the menu
+    mov [bMenu], 0
+done:
+    ret
 
 printmenu endp
 
@@ -8948,8 +8987,14 @@ checkabort:             ; sets equal flag if escape key was pressed
 checksetview proc
     cmp [viewmode], dl              ; check if the "view" mode
     je no_viewmode_change           ; is already set.
-    mov [funcmf4], -2               ; hack: remove "undelete"
-    mov [ldfileoptf7], -2           ; hack: remove "chain"
+if ?EXT
+    mov cl, FUNCM_UNDELETE
+    mov al, MENUS_INACTIVE
+    call setmenuitem                ; remove "undelete"
+endif
+    mov cl, LDFILEOPT_CHAIN
+    mov al, MENUS_INACTIVE          ; remove "chain"
+    call setmenuitem
     cmp [viewmode], VM_DIRECTORY    ; is old view directory?
     jnz @F
     call nodirview_ascii
@@ -8962,10 +9007,11 @@ clearviewarea::
     mul cx
     add di, ax
     mov dl, 7
+;    mov ax, COL_DEFAULT shl 8 or SPACE
+    mov ax, COL_STATTEXT shl 8 or SPACE
 @@:
     push di
     push cx
-    mov ax, COL_DEFAULT shl 8 or SPACE
     mov cx, MAXCOL+1
     rep stosw
     pop cx
@@ -8999,6 +9045,7 @@ printbottom:
     mov [scrn_xy], BOTTOMROW*100h + 01h
 ;    mov [lastbottomtext], dx
     call printstring
+    mov [bMenu], 1
 
 ;--- fall thru
 ;--- clear rest of bottom line

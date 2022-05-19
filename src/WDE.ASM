@@ -1090,11 +1090,11 @@ mlog:
 nomount:
 endif
 
-    call printoffset            ; print current offset
-
     mov dx, initialmenu + linitialmenu shl 8
     mov cl, 3
     call initmenustack
+
+    call printoffset            ; print current offset
 
 Start endp
 
@@ -1819,6 +1819,7 @@ nextkey:
     cmp al, ESCAPE_KEY
     jnz nextkey
     call clearscreen
+    call clearviewarea
     call printoffset
     ret
 helpscreen endp
@@ -3060,6 +3061,7 @@ updatescreen proc
     push NORMMASK
     call swtclr
     mov [bDark],0
+    call clearviewarea
 @@:
     call printtopline
     cmp [wBps], VIEWBYTES             ; in case the sector doesn't exactly fit on the screen, update offset
@@ -5151,7 +5153,6 @@ copyvol:
 ;--- print cluster
 
     mov [scrn_col], 40+3
-
     mov dx, offset szCluster
     call printstring
 
@@ -7254,10 +7255,9 @@ getdecvalue endp
 
 printtopline proc
     pushad
-    mov [scrn_xy], 0021           ; set row 0, col 21
+    mov [scrn_xy], 22
     mov [bRegion], RG_UNDEFINED
     mov eax, [dwCurSector]
-
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("%lu"), eax
     call printstring
@@ -7302,12 +7302,12 @@ notinfat:                          ; not in reserved and not in fat
 
     mov [bRegion], RG_ROOT
 
-    mov dx, offset inrootmsg             ; "[root]
-    test [filesys], FS_FAT32             ; root in data region?
+    mov dx, offset inrootmsg           ; "[root]
+    test [filesys], FS_FAT32           ; root in data region?
     jnz dispclust
 
 continuecount:
-    call printstring
+    call printstring                   ; print [boot/reserved] or cluster# 
 abortdc:
     mov cl, MAXCOL                     ; clear to last column
     sub cl, [scrn_col]
@@ -7331,6 +7331,9 @@ done:
 
 inreserved:
     mov [bRegion], RG_RESERVED
+	mov cl, sizeof inreservedmsg - 1
+	mov al, COL_DEFAULT
+	call fillattr
     mov dx, offset inreservedmsg
     jmp continuecount
 
@@ -7416,6 +7419,11 @@ dispclust:
     mov al, SPACE
     call fillchar
     mov [scrn_col], dl
+
+	mov cl, 8
+	mov al, COL_STATTEXT
+	call fillattr
+
     mov dx, offset szCluster
     call printstring
 if 1
@@ -7692,15 +7700,21 @@ donechar2:
 ;--- display the 32 offsets at position 1 (6 digits)
 
 printaddresses:
-    mov [scrn_col], 1
-    mov [scrn_row], 00h
+    mov [scrn_xy], 1
+	mov al, COL_STATTEXT
+	mov cl, 7
+	call fillattr
     mov dx, offset offsetmsg
     call printstring                    ; 'Offset:'
-    mov [scrn_col], 13
+
+    mov [scrn_col], 14
+	mov al, COL_STATTEXT
+	mov cl, 7
+	call fillattr
     mov dx, offset szSector
     call printstring                    ; 'Sector:'
-    movzx eax, [sectofs]
 
+    movzx eax, [sectofs]
     mov bx, 10h                         ; 16 bytes per line in hex mode
     mov cx, 32                          ; 32 vertical lines for editing
     cmp [displaymode], DM_BINARY
@@ -7850,19 +7864,17 @@ clearsecarea proc
     les di, [vidaddr]
     mov bx, [vidcolsize]
     add di, bx
-    sub bx, 52*2
     add di, 2*9
-    mov al, SPACE
+    mov ax, COL_DEFAULT shl 8 or SPACE
     mov dl, 32
-nextrow:
-    mov cx, 52
 @@:
-    stosb
-    inc di
-    loop @B
+    push di
+    mov cx, 52
+    rep stosw
+    pop di
     add di, bx
     dec dl
-    jnz nextrow
+    jnz @B
     ret
 clearsecarea endp
 
@@ -7938,8 +7950,9 @@ vmode_ok:
 vinit endp
 
 clearscreen proc
-    mov dl, 43
+
     les di, [vidaddr]
+    mov dl, 43
     mov ax, COL_DEFAULT shl 8 or SPACE
 @@:
     push di

@@ -59,9 +59,21 @@ endif
         MAXCOL           equ 79 ; last col
         ROWXXX           equ 1  ; row where all displays start
         VIEWROW          equ 34 ; start of "view" area
-        COLHEX           equ 10 ; column where hex display starts
-        COLBIN           equ 11 ; column where binary display starts
+        COLHEX           equ  9 ; column where hex display starts
+        COLBIN           equ 10 ; column where binary display starts
         COLASC           equ 63 ; column where ascii display starts
+
+;--- top line columns
+        COLOFFST         equ  1 ; column where text "offset:" is displayed
+        COLOFFS          equ  9 ; column where value of offset is displayed
+        COLSECTORT       equ 14 ; column where text "sector:" is displayed
+        COLSECTOR        equ 22 ; column where value of sector is displayed
+        COLREGION        equ 35 ; column where region "[xxxx]" is displayed
+        COLENDHEX        equ 59 ; end hex area ( used to display "cluster: xxx" )
+        COLCHS           equ 63 ; column where CHS: c/h/s is displayed
+
+        COLBSV1          equ 23 ; bootsector view pos 1
+        COLBSV2          equ 63 ; bootsector view pos 2
         VIEWBYTES        equ 32*16 ; 32 rows a 16 bytes
 
         CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
@@ -233,8 +245,8 @@ endif
         CTRLPAGEUP_KEY   EQU 84h
         CTRLUP_KEY       EQU 8dh
 if ?ALTKEYS
-        ALTLEFT_KEY      EQU 9Bh
-        ALTRIGHT_KEY     EQU 9Dh
+        ALTPGUP_KEY      EQU 99h
+        ALTPGDN_KEY      EQU 0A1h
 endif
 
 ; "handling" variable
@@ -750,17 +762,9 @@ bSecSh          db ?            ; shift factor for wBps
 bIdx            db ?            ; curr index if lfns are displayed in dirview
 bDark           db ?            ; 1=screen foreground color not bright
 bMenu           db ?            ; 1=menu update required
+bShift          db ?            ; kbd shift status
 
-;--- unformat fields
     align dword
-maxsize         dd ?            ; maximum filesize to recover
-minsize         dd ?            ; minimum filesize to recover
-nextsize        dd ?            ; next smallest filesize to recover
-lostdirs        dw ?            ; total lost directories found
-rootdirs        dw ?            ; total root directories found
-wDirs           dw ?            ; total dirs found
-
-lasttick        dw ?            ; timer ticks since last call
 if ?DEBUG
 starttime       dd ?            ; to measure time for lengthy operations
 endif
@@ -768,6 +772,7 @@ endif
 oldint24        dd ?
                 dw ?            ; add a word to oldint24 in case it runs in dpmi32
 pFatCache       dw ?
+lasttick        dw ?            ; timer ticks since last call
 rembytes        dw ?            ; remaining bytes when dealing with
                                 ; non-standard sized sectors
 
@@ -1284,8 +1289,8 @@ ck  label word
     CKey CTRLEND_KEY,      jumptolastsect
     CKey TAB_SCAN,         changemode
 if ?ALTKEYS
-    CKey ALTLEFT_KEY,      prevcluster
-    CKey ALTRIGHT_KEY,     nextcluster
+    CKey ALTPGUP_KEY,      prevcluster
+    CKey ALTPGDN_KEY,      nextcluster
 endif
 lck1 equ ($ - ck) shr 1
     CKey CSRLEFT_KEY,      moveleft
@@ -1782,8 +1787,8 @@ quickhelptext label byte
     db "Ctrl+Left     - Search previous cluster in chain",0
     db "Ctrl+Enter    - Jump to FAT entry for this cluster",0
 if ?ALTKEYS
-    db "Alt+Right     - Forward 1 cluster",0
-    db "Alt+Left      - Back 1 cluster",0
+    db "Alt+PageUp    - Back 1 cluster",0
+    db "Alt+PageDown  - Forward 1 cluster",0
 endif
     db "Enter         - If in directory, jump to start cluster of entry",0
     db 0    
@@ -2415,10 +2420,23 @@ searchpredecessor proc
     je recursefat
     test [bRegion], RG_DATA             ; or in data?
     jz done
+
+    call getkbdstatus                   ; get kbd status in AH
+    and ah, 11b                         ; mask out shift status
+    mov [bShift], ah
+
     mov eax, [dwCurSector]
     call sector2cluster                 ; get cluster number in EAX
-    mov esi, setcluster
+    mov esi, preindata
     jmp recursefatdata
+preindata:
+    cmp [bShift], 0
+    jz setcluster
+    call cluster2sector                 ; if shift has been pressed
+    movzx ecx, [bSpC]                   ; go to last sector of previous cluster
+    dec ecx
+    add eax, ecx
+    jmp setsector
 
 recursefat:
     call getentrynumber                 ; get eax = current entry number
@@ -2562,6 +2580,7 @@ handle_enter proc
 setcluster::
     mov ebx, eax                        ; store in ebx for invalclusterror 
     call cluster2sector                 ; multiply it out to get the
+setsector::
     cmp eax, [dwDataend]                ; corresponding sector number
     ja invalclusterror                  ; verify that it's a valid sector
 setcluster2:
@@ -2800,33 +2819,9 @@ abort:
 
 scanforcluster endp
 
-;--- submenu "find": "string hex next MBR boot sector, FAT, directory,..."
+;--- find directory entry with specific start cluster (in EBX)
 
-submenu_find proc
-
-    @mstart searchmenu
-    @mitem 27, findstring
-    @mitem 28, findhex
-    @mitem 43, findnext
-;    @mitem  1, finddirentry
-    @mitem 17, findmbr
-    @mitem 46, findbs
-    @mitem 31, findfat
-    @mitem 26, finddir
-    @mend searchmenu
-
-    mov dx, searchmenu + lsearchmenu shl 8
-    mov cl, 2
-    jmp pushmenustack
-
-finddirentry::
-if 0 ; in case the "search directory entry" function should be a menu item
-    mov eax, [dwLastCluster]
-    mov dx,offset sprintfbuffer
-    invoke sprintf, dx, offset szCluster3, eax
-    call gethexvalue
-    jc _ret
-endif
+finddirentry proc
 if ?DEBUG
     mov level, 0
 endif
@@ -2863,9 +2858,42 @@ denotfound:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, offset nodirentryfound, ebx
     call nuprinterror
+_ret:
     ret
 
-;--- find directory entries
+finddirentry endp
+
+;--- submenu "find": "string hex next MBR boot sector, FAT, directory,..."
+
+submenu_find proc
+
+    @mstart searchmenu
+    @mitem 27, findstring
+    @mitem 28, findhex
+    @mitem 43, findnext
+    @mitem MENUS_INACTIVE, findfileentry
+    @mitem 17, findmbr
+    @mitem 46, findbs
+    @mitem 31, findfat
+    @mitem 26, finddir
+    @mend searchmenu
+
+    mov dx, searchmenu + lsearchmenu shl 8
+    mov cl, 2
+    jmp pushmenustack
+
+;--- find file
+;--- current sector must be a directory
+
+findfileentry:
+if 0
+    mov ax, _ret
+    call getfilename
+    jcxz _ret
+endif
+    ret
+
+;--- find directories
 
 finddir:
     mov bp, finddircb
@@ -3058,9 +3086,7 @@ updatescreen proc
 
     cmp [bDark],0
     jz @F
-    push NORMMASK
-    call swtclr
-    mov [bDark],0
+    call stdclr
     call clearviewarea
 @@:
     call printtopline
@@ -5860,7 +5886,7 @@ nextitem:
 
     mov dx, CStr("Signature")
     call printstring
-    call spaceandcolon
+    call printcolclear
     mov word ptr [highlight.ofs],1FEh
     mov word ptr [highlight.siz_],0402h
     call bshighlight
@@ -5885,7 +5911,7 @@ basicbs:
 
     mov word ptr [highlight.siz_], cx
     call printstring
-    call spaceandcolon
+    call printcolclear
     mov dx, bx
     xor bx, bx
     call printvalue_hl
@@ -5983,7 +6009,7 @@ basicbs:
 
     mov word ptr [highlight.siz_], cx
     call printstring
-    call spaceandcolon
+    call printcolclear
     mov dx, bx
     xor bx, bx
     call printvalue_hl
@@ -6062,7 +6088,7 @@ basicbs:
 
     mov word ptr [highlight.siz_], cx
     call printstring
-    call spaceandcolon
+    call printcolclear
     mov dx, bx
     xor bx, bx
     call printvalue_hl
@@ -6163,7 +6189,7 @@ nextcluster proc
     mov eax, [dwCurSector]
     call sector2cluster
     jc done
-    cmp bh, ALTLEFT_KEY
+    cmp bh, ALTPGUP_KEY
     setnz cl
     sub cl, 1
     cmc
@@ -7018,20 +7044,22 @@ allzero2:
 
 IsDirectory endp
 
-;-------------------------------------------------------
-spaceandcolon:                    ; i don't like this function, it was created
-    mov dl, ':'                   ; for optimal code size instead of clean,
-    call printchar                ; reusable code
-    mov dl, SPACE
-    mov cl, 63                    ; it places the cursor in the right position
-    cmp [scrn_col], 47            ; to display the next string when showing
-    ja loopwipeview               ; the bootsector view
-    mov cl, 23
-loopwipeview:
+;--- bootsector view:
+;--- print ':' then clear the rest to pos 23/63
+
+printcolclear proc
+    mov dl, ':'
     call printchar
-    cmp [scrn_col], cl
-    jb loopwipeview
+    mov cl, COLBSV1
+    sub cl, [scrn_col]
+    jnc @F
+    mov cl, COLBSV2
+    sub cl, [scrn_col]
+@@:
+    call fillspace
+    add [scrn_col], cl
     ret
+printcolclear endp
 
 ;--- read file to restore sectors/cluster/FAT/root/... (but not "restore chain")
 ;--- IN: eax = start sector
@@ -7130,22 +7158,24 @@ printentry proc
     cmp [bRegion], RG_FAT
     jne abortentry
 
-    mov [scrn_col], 52
-;--- reset color to default
-    mov cl, 8
-    mov ax, COL_DEFAULT shl 8 or SPACE
-    call fillcell
-
     call getentrynumber
+    mov cl, COLENDHEX
     mov dl, 8
     test eax, 0ffff0000h
     jnz @F
     test [filesys], FS_FAT32
     jnz @F
     mov dl, 4
-    add [scrn_col], 4
 @@:
+    sub cl, dl
+    mov [scrn_col], cl
+    mov cl, dl
+
     call rendernumhex
+
+    mov al, COL_DEFAULT
+    call fillattr
+
     call printstring
 abortentry:
     ret
@@ -7255,19 +7285,25 @@ getdecvalue endp
 
 printtopline proc
     pushad
-    mov [scrn_xy], 22
     mov [bRegion], RG_UNDEFINED
+
+    mov [scrn_xy], COLSECTOR
+    mov cl, 10
+    mov al, COL_DEFAULT
+    call fillattr
+
     mov eax, [dwCurSector]
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, CStr("%lu"), eax
     call printstring
 
-    mov cl, 36
+    mov cl, COLREGION
     sub cl, [scrn_col]
     call fillspace
     add [scrn_col], cl
-
-;    mov [scrn_col], 36
+    mov cl, sizeof inreservedmsg - 1 ;"[boot/reserved]", "[fat-x]", "[root", "[data]"
+    mov al, COL_DEFAULT
+    call fillattr
 
     mov eax, [dwCurSector]
 
@@ -7314,16 +7350,21 @@ abortdc:
     call fillspace
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne done
-    mov eax, [dwCurSector]
     cmp [ioreq.rwfunc], RWF_NEWINT13
     jnz @F
     test [diskinfobuffer.flags], 2     ; CHS valid?
     jz done
 @@:
+    mov [scrn_xy], (0 shl 8) or COLCHS
+    mov dx, CStr("CHS: ")
+    call printstring
+    mov cl, 11
+    mov al, COL_DEFAULT
+    call fillattr
+    mov eax, [dwCurSector]
     call getchsx
-    mov [scrn_xy], (0 shl 8) or 63     ; column 63
     mov dx, offset sprintfbuffer
-    invoke sprintf, dx, CStr("CHS: %u/%u/%u"), ax, bx, cx
+    invoke sprintf, dx, CStr("%u/%u/%u"), ax, bx, cx
     call printstring
 done:
     popad
@@ -7331,25 +7372,19 @@ done:
 
 inreserved:
     mov [bRegion], RG_RESERVED
-	mov cl, sizeof inreservedmsg - 1
-	mov al, COL_DEFAULT
-	call fillattr
     mov dx, offset inreservedmsg
     jmp continuecount
 
 infat:
     mov [bRegion], RG_FAT
-    push [scrn_xy]
-    call printentry
-    pop [scrn_xy]
     mov dx, offset infatmsg           ; "[FAT-"
     call printstring
     mov dl, '1'
     mov eax, [dwFat1end]
     cmp [dwCurSector], eax
-    jb firstfat
+    jb @F
     mov dl, '2'
-firstfat:
+@@:
     call printchar
     mov dl, ']'
     call printchar
@@ -7357,18 +7392,22 @@ firstfat:
 
     test [filesys], FS_FATXX
     je abortdc
-    mov cl, 45
+    mov cl, COLENDHEX - 15
     test [filesys], FS_FAT32
     jnz @F
-    mov cl, 49
+    mov cl, COLENDHEX - 11
 @@:
     mov dl, cl
     sub cl, [scrn_col]
     call fillspace
     mov [scrn_col], dl
+	mov cl, sizeof entrymsg - 1
+	mov al, COL_STATTEXT
+	call fillattr
     mov dx, offset entrymsg           ; "Entry: "
     call printstring
-    mov [scrn_col], 60                ; column where ascii region starts
+    call printentry
+    mov [scrn_col], COLENDHEX         ; column where hex region ends
     jmp abortdc
 
 setmbrview:
@@ -7410,9 +7449,9 @@ dispclust:
     mov ax, dx
     pop dx
     mov ch, dl
-    add dl, 9   ; sizeof "Cluster: "
+    add dl, sizeof szCluster - 1
     neg dl
-    add dl, 60
+    add dl, COLENDHEX
     mov cl, dl
     sub cl, [scrn_col]
     push ax
@@ -7420,10 +7459,9 @@ dispclust:
     call fillchar
     mov [scrn_col], dl
 
-	mov cl, 8
+	mov cl, sizeof szCluster - 1
 	mov al, COL_STATTEXT
 	call fillattr
-
     mov dx, offset szCluster
     call printstring
 if 1
@@ -7697,20 +7735,20 @@ donechar2:
     cmp cx, bx
     jne nextchar3
 
-;--- display the 32 offsets at position 1 (6 digits)
+;--- display the 32 offsets at position 1 (4 digits)
 
 printaddresses:
-    mov [scrn_xy], 1
-	mov al, COL_STATTEXT
-	mov cl, 7
-	call fillattr
+    mov [scrn_xy], 0 shl 8 or COLOFFST
+    mov al, COL_STATTEXT
+    mov cl, sizeof offsetmsg - 1
+    call fillattr
     mov dx, offset offsetmsg
     call printstring                    ; 'Offset:'
 
-    mov [scrn_col], 14
-	mov al, COL_STATTEXT
-	mov cl, 7
-	call fillattr
+    mov [scrn_col], COLSECTORT
+    mov al, COL_STATTEXT
+    mov cl, sizeof szSector - 1
+    call fillattr
     mov dx, offset szSector
     call printstring                    ; 'Sector:'
 
@@ -7727,7 +7765,7 @@ printaddresses:
 
 nextaddress:
     call printcrlf
-    mov dl,6
+    mov dl, 4                           ; render 4 digits
     call rendernumhex
     call printstring
     add ax, bx
@@ -7735,21 +7773,22 @@ nextaddress:
     ret
 printsector endp
 
-;--- print value of current offset in row 0, update the entry# in fatview
-;--- and set the 2 cursor attributes
+;--- print value of current offset in row 0.
+;--- in FAT view, print the entry#
 
 printoffset proc
 
-    mov [scrn_xy], 0009
+    mov [scrn_xy], COLOFFS
+    mov cl, 3
+    mov al, COL_DEFAULT
+    call fillattr
     call spot2bufofs                    ; bx = sectofs + spot
     mov ax, bx
-
     mov dl,3
     call rendernumhex
     call printstring
 
     call printentry                     ; if in FAT, print current entry (=cluster)
-
     ret
 
 printoffset endp
@@ -7933,6 +7972,11 @@ vmode_ok:
     mov word ptr [vidaddr+0], bx
     mov word ptr [vidaddr+2], di
 
+    les di, [vidaddr]
+    mov ax, COL_STATTEXT shl 8 or SPACE
+    mov cx,MAXCOL+1
+    rep stosw
+
     call clearscreen
 
     mov cx, 2000h                         ; hide cursor
@@ -7951,8 +7995,14 @@ vinit endp
 
 clearscreen proc
 
+    mov [scrn_xy], 0
+    mov al, SPACE
+    mov cl, MAXCOL+1
+    call fillchar
+
     les di, [vidaddr]
-    mov dl, 43
+    add di, [vidcolsize]
+    mov dl, 43-1
     mov ax, COL_DEFAULT shl 8 or SPACE
 @@:
     push di
@@ -8385,23 +8435,28 @@ darkclr3::
     jz @F
     inc [bDark]
     cmp [bDark], 3
-    jnz @F
-    push DARKMASK
-    call swtclr
+    jz darkx
 @@:
     ret
 darkclr::
-    push DARKMASK
-    call swtclr
     mov [bDark], 1
-    ret
-swtclr::
+darkx:
     pushf
     pusha
-    mov bp, sp
-    mov ax, [bp+16+2+2]
-    les di,[vidaddr]
-    mov ch, BOTTOMROW
+    mov ax, DARKMASK
+    jmp swtclr
+stdclr::
+    mov [bDark], 0
+    pushf
+    pusha
+    mov ax, NORMMASK
+    mov ch, 32
+    jmp @F
+swtclr:
+    mov ch, BOTTOMROW-1
+@@:
+    les di, [vidaddr]
+    add di, [vidcolsize]
     mov dl, MAXCOL
     inc di
 nextrow:
@@ -8421,7 +8476,7 @@ nextattr:
     jnz nextrow
     popa
     popf
-    ret 2
+    ret
 
 printerror endp
 
@@ -8506,7 +8561,7 @@ done:
 validfirstfilechar endp
 endif
 
-;--- get a filename entered in menu line
+;--- get a filename entered in menu row
 ;--- IN:  AX: tabproc
 ;--- OUT: CX=length of filename
 ;---      AH=last key scan code (check for TAB)

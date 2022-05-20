@@ -96,8 +96,8 @@ WDe User Manual
     Ctrl+Right    - Jump to next cluster in chain
     Ctrl+Left     - Search previous cluster in chain
     Ctrl+Enter    - Jump to FAT entry for this cluster
-    Alt+Right     - Forward 1 cluster
-    Alt+Left      - Back 1 cluster
+    Alt+PgUp      - Back 1 cluster
+    Alt+PgDown    - Forward 1 cluster
     Enter         - If in directory, jump to start cluster of entry
 
 
@@ -205,9 +205,11 @@ WDe User Manual
                     there's none, message "End of Chain reached" will appear.
        Ctrl+Left:   will search - by scanning the FAT - the cluster's
                     predecessor. See the notes for Ctrl+Left in the FAT area.
+                    By holding one of the Shift keys together with Ctrl-Left,
+                    WDe will jump to the last sector of the previous cluster.
        Ctrl+Enter:  will jump to the corresponding FAT entry.
-       Alt+Left:    will jump to the first sector of the previous cluster.
-       Alt+Right:   will jump to the first sector of the next cluster.
+       Alt+PgUp:    will jump to the first sector of the previous cluster.
+       Alt+PgDown:  will jump to the first sector of the next cluster.
 
        Additionally, when in a directory:
 

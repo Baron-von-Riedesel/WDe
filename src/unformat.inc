@@ -53,6 +53,17 @@ LOST_DIRECTORY          EQU 2
 
 unformat proc
 
+    push bp
+    mov bp, sp
+    sub sp, 3*4+3*2
+
+maxsize    equ <dword ptr [bp-4]>  ; maximum filesize to recover
+minsize    equ <dword ptr [bp-8]>  ; minimum filesize to recover
+nextsize   equ <dword ptr [bp-12]> ; next smallest filesize to recover
+lostdirs   equ < word ptr [bp-14]> ; total lost directories found
+rootdirs   equ < word ptr [bp-16]> ; total root directories found
+wDirs      equ < word ptr [bp-18]> ; total dirs found
+
     mov [fromfat], FF_FAT1            ; always use fat 1
     mov dx, CStr('Scanning Fat...')
     call printbottom
@@ -227,6 +238,9 @@ unformatError4:
 @@:
 abortUnformat:
     call readcursect
+
+    mov sp, bp
+    pop bp
     ret
 
 unformat endp
@@ -724,5 +738,12 @@ processcmd:
     ret
 
 checkDirValidity endp
+
+maxsize    equ <>
+minsize    equ <>
+nextsize   equ <>
+lostdirs   equ <>
+rootdirs   equ <>
+wDirs      equ <>
 
 ;---------------------------------------------------------

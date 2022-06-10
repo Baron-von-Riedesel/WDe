@@ -58,6 +58,11 @@
   ( or directory structure ) of a drive and thus speed up certain functions
   considerably.
 
+   There's buildd.bat supplied to create debug versions of WDe/WDeX. Those
+  versions will write debug information to either the screen ( or a file,
+  if stdout is redirected ) or - if running in a NTVDM and WDeVDD.dll is 
+  loaded - to the Windows debug terminal.
+
 
   5. License
 

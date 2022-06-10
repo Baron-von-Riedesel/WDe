@@ -33,7 +33,7 @@ CGROUP group _TEXT, _TEXT2
 DGROUP group _DATA2, _BSS
 
 ifndef ?DEBUG
-?DEBUG           EQU 0  ; 1=debug displays on ( prints on stdout or menu row )
+?DEBUG           EQU 0  ; 1=debug displays on ( prints on stdout/debug terminal )
 endif
 ifndef ?EXT
 ?EXT             EQU 1  ; 1=enable "undelete" & "unformat" functions
@@ -577,34 +577,34 @@ psize           db 'Sects ',0
 searchingmsg    db 'Searching...',0
 writetodiskmsg  db 'Writing To Disk...',0
 restoremsg      db 'Restoring...',0
-writingmsg      db 'Writing File...',0
+writetofilemsg  db 'Writing File...',0
 
 readingdrive    db 'Reading Drive...',0
 recursemsg      db 'Recursing Chain... %s, curr. cluster %lX / %lX',0
 
 searcherror     db 'No (more) Matches Found',0
-abortfmsg       db 'Aborted Writing File',0
-abortdmsg       db 'Aborted Writing to Disk',0
+abortwfmsg      db 'Aborted Writing File',0
+abortwdmsg      db 'Aborted Writing to Disk',0
 
 donewritefile   db 'Finished Writing File, %lu sector(s) written',0
 donewritedisk   db 'Finished Writing to Disk',0
-
-toosmall        db 'File Too Small',0
-filenotfound    db 'File Not Found',0
-filetoobigmsg   db 'File Size Cannot Exceed 4GB-1',0
 nodirentryfound db 'No Directory Entry Found With Start Cluster %lX',0
 directoryscanmsg db 'Scanning Directory Tree..., curr. cluster %lX',0
 
-errorread       db 'Error Reading File',0
+filetoosmall    db 'File Too Small',0
+filenotfound    db 'File Not Found',0
+filetoobigmsg   db 'File Size Cannot Exceed 4GB-1',0
+
+filereaderr     db 'Error Reading File',0
 filewriteerr    db 'Error Writing File',0
 filecreateerr   db 'Error Creating File',0
 
-invalidpmsg     db 'Invalid Sector Range',0
+szInvalidRange  db 'Invalid Sector Range',0
 
-sectorrerror    db 'Error Reading Sector %lu',0
-sectorrerror2   db ' - Abort/Zero-Fill [A/Z]? ',0
-sectorrerror3   db ' - Abort/Skip/Ignore All [A/S/I]? ',0
-sectorwerror    db 'Error Writing Sector %lu',0
+szSectorRErr    db 'Error Reading Sector %lu',0
+szSectorRErr2   db ' - Abort/Zero-Fill [A/Z]? ',0
+szSectorRErr3   db ' - Abort/Skip/Ignore All [A/S/I]? ',0
+szSectorWErr    db 'Error Writing Sector %lu',0
 invalstartclust db 'Invalid Start Cluster',0
 nochainmsg      db 'Recursive Link Not Found',0
 nosearchstring  db 'No search string defined yet',0
@@ -827,6 +827,8 @@ endm
     int 26h
     pop dx
 endm
+@dbgout macro text:vararg
+endm
 endif
 
     include sprintf.inc
@@ -887,7 +889,7 @@ dbgbuff db 80 dup (?)
 _BSS ends
 endif
 
-;--- print a line on stdout
+;--- print a line on stdout/debug terminal if ?DEBUG=1
 
 @dprintfln macro formstr, args:vararg 
 if ?DEBUG
@@ -897,14 +899,33 @@ if ?DEBUG
  else
     invoke sprintf, offset dbgbuff, CStr(formstr,13,10,'$'), args
  endif
-    pusha
-    mov dx, offset dbgbuff
-    mov ah,9
-    int 21h
-    popa
+    call _dbgout
     popf
 endif
 endm
+
+if ?DEBUG
+_dbgout proc
+    push dx
+    push ax
+    mov dx, offset dbgbuff
+if ?VDD
+    cmp [hVdd],-1
+    jz @F
+    push 41h
+    mov ax, [hVdd]
+    Dispatch
+    jmp done ; note that the VDD has restored AX already
+@@:
+endif
+    mov ah,9
+    int 21h
+    pop ax
+done:
+    pop dx
+    ret
+_dbgout endp
+endif
 
     include setargv.inc
 
@@ -1643,7 +1664,7 @@ isfilename:
     mov eax, [dwFilesize]       ; file must be 1+ sectors in size
     cmp eax, 512
     jnc @F
-    mov dx, offset toosmall     ; "File too small"
+    mov dx, offset filetoosmall ; "File too small"
     call nuprinterror
     jmp driveerror
 @@:
@@ -2281,7 +2302,7 @@ done:
     clc
     ret
 abort:
-    mov dx, offset abortdmsg      ; "abort writing to disk"
+    mov dx, offset abortwdmsg     ; "abort writing to disk"
     call printerror
 error:
     stc
@@ -3998,7 +4019,7 @@ invalstart2:
     mov dx, offset invalstartclust          ; "invalid start cluster"
     jmp error
 disperread:
-    mov dx, offset errorread
+    mov dx, offset filereaderr
 error:
     call printerror
 done:
@@ -4234,7 +4255,7 @@ restsecrange:                 ; restore sector range
     cmp eax, ebx
     jae filesizeok
 toosmallerr:
-    mov dx, offset toosmall   ; "File too small"
+    mov dx, offset filetoosmall
     call printerror
     ret
 filesizeok:  
@@ -4311,12 +4332,12 @@ toobig::
     jmp printerror
 
 invalidperror::
-    mov dx, offset invalidpmsg   ;"invalid sector range"
+    mov dx, offset szInvalidRange; "invalid sector range"
     jmp printerror
 
 writeprogress::
     mov eax, [dwValue]
-    mov cx, offset writingmsg 
+    mov cx, offset writetofilemsg 
     jmp printprogress
 
 savedata endp
@@ -7085,7 +7106,7 @@ readfile proc
     cmp [dwFilesize], eax
     pop eax
 
-    mov dx, offset toosmall
+    mov dx, offset filetoosmall
     jb nuprinterror
 
     mov [handling], QUERY_SKIP           ; inside readfile
@@ -7106,7 +7127,7 @@ readfileloop:
     mov dx, offset sectbuffer
     int 21h
     jnc noreaderror
-    mov dx, offset errorread
+    mov dx, offset filereaderr
 error:
     call printerror
     stc
@@ -7123,7 +7144,7 @@ noreaderror:
     jc continue_loop
     call checkabort
     jne @F
-    mov dx, offset abortdmsg              ; "abort writing to disk"
+    mov dx, offset abortwdmsg             ; "abort writing to disk"
     call nuprinterror
     stc
     jmp donefileread
@@ -8348,25 +8369,27 @@ diskaccess endp
 access_error proc
     cmp [handling], IGNORE_ERRORS     ; inside access_error
     je done
-    mov ax, offset sectorrerror       ; "Error reading Sector %lu"
+    mov ax, offset szSectorRErr       ; "Error reading Sector %lu"
     cmp [ioreq.bRW], RW_WRITE
     jne @F
-    mov ax, offset sectorwerror       ; "Error writing Sector %lu"
+    mov ax, offset szSectorWErr       ; "Error writing Sector %lu"
 @@:
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, ax, [ioreq.dwSector]
     cmp [handling], ABORT_OPERATION   ; inside access_error
     je sectorerror2
 
+;--- handling QUERY_FILL and QUERY_SKIP
+
 ;--- v0.99: save current menu text in BX?
 ;--- this won't work anymore, since menu text is rendered in sprintfbuffer
 ;    mov bx, [lastbottomtext]
 
     call printbottom
-    mov dx, offset sectorrerror3      ; "abort, skip, ignore all"
+    mov dx, offset szSectorRErr3      ; "abort, skip, ignore all"
     cmp [handling], QUERY_SKIP        ; inside access_error
     je @F
-    mov dx, offset sectorrerror2      ; "abort, zero-fill"
+    mov dx, offset szSectorRErr2      ; "abort, zero-fill"
 @@:
     call printstring
 gak:
@@ -9258,7 +9281,7 @@ exit:
     ret
 
 abort:
-    mov dx, offset abortfmsg
+    mov dx, offset abortwfmsg
     jmp wferror
 errorwrite:
     mov dx, offset filewriteerr
@@ -9354,7 +9377,7 @@ error:
     mov dx, offset filecreateerr
     jmp @F
 doabortf:
-    mov dx, offset abortfmsg
+    mov dx, offset abortwfmsg
 @@:
     call printerror
     stc

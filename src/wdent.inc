@@ -13,18 +13,6 @@ Dispatch macro
     db 0C4h, 0C4h, 58h, 2
     endm
 
-;--- display string on the windows debug terminal.
-;--- this works only if running in a WinXP/Vista DOS-Box.
-@DbgOut macro text:vararg
-local xxx
-ifdef _DEBUG
-    call dbgout
-    jmp xxx
-    db text,0
-xxx:
-endif
-endm
-
 @int13 equ <call int13>
 @int21 equ <call int21>
 @int25 equ <call int25>
@@ -107,9 +95,6 @@ initvdd proc
     mov cl, 2Fh
     mov word ptr [int2F+0], ax
     mov byte ptr [int2F+2], cl
-ifdef _DEBUG
-    mov byte ptr [dbgout], ch    ; nop
-endif
     pop ds
     assume ds:DGROUP
 @@:
@@ -125,15 +110,4 @@ exitvdd proc
 @@:
     ret
 exitvdd endp
-
-ifdef _DEBUG
-dbgout proc
-    ret                          ; location will be patched with NOP if VDD found
-    push ax
-    push 41h
-    mov ax, [hVdd]
-    Dispatch
-    ret
-dbgout endp
-endif
 

@@ -22,6 +22,7 @@ WDe V0.99 [__.__.2022]
   - filenames now accepted as cmdline parameters.
   - -m cmdline option may now be entered without number.
   - added option -8 to setm43.exe and setm432.exe.
+  - debug version writes to debug terminal when running in a NTVDM.
     
 
 WDe V0.50 [12.05.2022]

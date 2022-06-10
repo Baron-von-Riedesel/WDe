@@ -761,6 +761,8 @@ local bMode:dword
 	invoke setESP, ebx
 	invoke setAX, si	;restore AX value
 
+;--- ebx contains flat address of ss:sp
+
 	.if di == 13h
 		invoke disk_access, si
 	.elseif di == 21h
@@ -781,22 +783,17 @@ local bMode:dword
 			@DbgOutC <"WDEVDD.Dispatch: can't handle this call",13,10>
 			jmp error
 		.endif
-ifdef _DEBUG
-	.elseif di == 41h
-		invoke getSP
-		movzx ebx,ax
-		invoke getSS
-		movzx eax, ax
-		shl eax, 4
-		add ebx, eax
-		invoke getCS
-		movzx eax, ax
-		shl eax, 4
-		movzx ecx, word ptr [ebx]
-		add ecx, 2
-		add eax, ecx
+	.elseif di == 41h	; string to display in DS:DX
+		invoke getDX
+		movzx ebx, ax
+		invoke getDS
+		invoke VdmMapFlat, eax, ebx, bMode
+		mov esi, eax
+		.while byte ptr [esi]	; go to end of string
+			inc esi
+		.endw
+		mov byte ptr [esi-1], 0	; remove the '$'
 		invoke OutputDebugStringA, eax
-endif
 	.else
 		@DbgOutC <"WDEVDD.Dispatch: can't handle this call",13,10>
 		jmp error

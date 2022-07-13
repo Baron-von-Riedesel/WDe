@@ -320,11 +320,19 @@ _TEXT2 segment
 _TEXT2 ends
 endm
 
-PTABENT struc
+CHSENT struct
+bDH   db ?
+bCL   db ?
+bCH   db ?
+CHSENT ends
+
+;--- partition entry in an MBR
+
+PTABENT struct
 bBoot db ?
-      db 3 dup (?)  ; +1  start CHS
+sCHS  CHSENT <?>    ; +1  start CHS
 bType db ?
-      db 3 dup (?)  ; +5  end CHS
+eCHS  CHSENT <?>    ; +5  end CHS
 start dd ?          ; +8  start LBA
 size_ dd ?          ; +12 size LBA
 PTABENT ends
@@ -763,6 +771,8 @@ bIdx            db ?            ; curr index if lfns are displayed in dirview
 bDark           db ?            ; 1=screen foreground color not bright
 bMenu           db ?            ; 1=menu update required
 bShift          db ?            ; kbd shift status
+bUpdateScreen   db ?
+bUpdateView     db ?
 
     align dword
 if ?DEBUG
@@ -979,16 +989,54 @@ endif
 
     mov [stackbot], sp
     mov [_mem], sp       ; set start of heap
+
+if ?PM
+    call initpm
+    call wdepm
+    mov bl, 24h                 ; use DPMI to modify int vector, since
+    mov ax, 204h                ; DS MUST hold DGROUP selector when int 21h is called
+    int 31h
+    @storevec [oldint24]
+    mov cx, cs
+    @movofs dx, offset myint24
+    mov al, 5
+    int 31h
+else
+    mov ax, 3524h               ; back up old int 24h ( must be done AFTER switch to pm )
+    int 21h
+    mov word ptr [oldint24+0], bx
+    mov word ptr [oldint24+2], es
+    push ds
+    mov dx, offset myint24      ; new address in DS:DX
+    push cs
+    pop ds
+    mov ah, 25h                 ; set up new int 24h
+    int 21h
+    pop ds
+endif
+
     mov es,[_psp]
     call _setargv        ; scan command line, setup _argc and _argv
 
+    call main            ; won't return
+
+Start endp
+
+;--- check cmdline params and do video and other initialization.
+;--- please note that _argc and _argv are no global variables,
+;--- they're stack variables defined inside _setargv() and no
+;--- longer valid once BP is changed/ SP is reset.
+
+init_wde proc
+
     mov bx, [_argv]
     mov cx, [_argc]
+
+_argv equ <>             ; "undefine" _argc & _argv
+_argc equ <>
+
     add bx, 2            ; skip "filename" argument ( doesn't exist )
     dec cx
-
-_argv equ <>
-_argc equ <>
 
 nextarg:
     jcxz no_drive
@@ -1048,30 +1096,6 @@ has_drive:
 
     call setseeds1
     call vinit                  ; init video mode, init screen
-if ?PM
-    call initpm
-    call wdepm
-    mov bl, 24h                 ; use DPMI to modify int vector, since
-    mov ax, 204h                ; DS MUST hold DGROUP selector when int 21h is called
-    int 31h
-    @storevec [oldint24]
-    mov cx, cs
-    @movofs dx, offset myint24
-    mov al, 5
-    int 31h
-else
-    mov ax, 3524h               ; back up old int 24h ( must be done AFTER switch to pm )
-    int 21h
-    mov word ptr [oldint24+0], bx
-    mov word ptr [oldint24+2], es
-    push ds
-    mov dx, offset myint24      ; new address in DS:DX
-    push cs
-    pop ds
-    mov ah, 25h                 ; set up new int 24h
-    int 21h
-    pop ds
-endif
     popa
 
     cmp al, -1
@@ -1121,20 +1145,28 @@ endif
     call initmenustack
 
     call printoffset            ; print current offset
+    ret
 
-Start endp
+init_wde endp
 
-;--- falls thru!
+;--- main program
 
 main proc
 
+    call init_wde
     mov sp, [stackbot]
+    mov bUpdateScreen, 1
+
+main_loop:
+    cmp bUpdateScreen, 0
+    jz @F
     mov [handling], ABORT_OPERATION  ; inside main
     call updatescreen           ; print line 0, sector area and view area
-
-    push offset main
-
-getkeyagain:
+@@:
+    cmp bUpdateView, 0
+    jz @F
+    call updateview
+@@:
     call printmenu
     push 1
     call showcursor
@@ -1142,18 +1174,9 @@ getkeyagain:
     push 0
     call showcursor
 
-    cmp al, ENTER_KEY           ; jump to cluster ( in FAT or directory )
-    je handle_enter
-    cmp ax, CTRLENTER_KEY       ; jump to FAT/directory entry for current cluster/entry
-    je handle_ctlenter
+    push main_loop
 
     call checkmenukey           ; check for menu (=function) keys
-
-    mov dx, sp                  ; set dx to "clean" stack
-
-    push offset getkeyagain     ; default to 'no full screen update'
-    push offset updateview      ; edit keys may change view, so update it after processing
-
     call ctrlkeys               ; check for control keys
 
 ;    cmp ah, DEL_KEY             ; allow writing of null when the "del" key in ascii
@@ -1242,9 +1265,7 @@ done_render:
     mov cl, 1
     call fillchar               ; display ascii value
     jmp moveright
-
 skipkey:
-    pop ax                      ; skip view update
     ret
 
 main endp
@@ -1321,10 +1342,12 @@ lck1 equ ($ - ck) shr 1
     CKey HOME_KEY,         movefirst
     CKey END_KEY,          movelast
     CKey ESCAPE_SCAN,      handle_esc
-
 lck equ ($ - ck) shr 1
+    CKey ENTER_KEY,        handle_enter
+    CKey 0Ah,              handle_ctlenter
 
-;--- in: dx=clean SP
+;--- check ctrl keys
+;--- AL=ascii code, AH=scan code
 
 ctrlkeys proc
     push ax
@@ -1336,6 +1359,11 @@ ctrlkeys proc
     repnz scasb
     pop ax
     jz @F
+    scasb          ; enter key? ( is ascii value )
+    jz @F          ; then jump to cluster ( in FAT or directory )
+    inc di
+    cmp ax, CTRLENTER_KEY ; check both ascii & scan code for this key (so ctrl-j won't work)
+    je @F          ; jump to FAT/directory entry for current cluster/entry
     ret
 @@:
     pop cx         ; skip return address
@@ -1343,7 +1371,7 @@ ctrlkeys proc
     sub di, offset ckc
     cmp di, lck1
     jnb @F
-    mov sp, dx     ; clean stack ( skip calls meant for "simple" control keys )
+    mov [bUpdateScreen], 1
 @@:
     shl di, 1
     jmp word ptr cs:[di][ck]  ; function tables are in the code segment
@@ -1432,12 +1460,10 @@ handle_esc proc
     jz @F
     dec [menustackidx]          ; else pop one menu level
     mov [bMenu], 1
-    pop ax                      ; skip updateview call
     ret
 @@:
-    push dx
     call quit
-    pop sp                      ; reset SP to make a full screen update
+    mov bUpdateScreen, 1
     ret
 handle_esc endp
 
@@ -1539,6 +1565,7 @@ domove proc
 dontchangescreens:
 ;    call printoffset           ; is called by movecursor
 done:
+    mov bUpdateView, 1
     ret
 domove endp
 
@@ -1689,7 +1716,7 @@ setdrive proc
     mov dx, offset szDrive      ; prompt
     call printbottom            ; print on the bottom of the screen
     call darkclr
-getkeyagain:
+kbd_loop:
     call cursorgetkey           ; cursorgetkey turns the cursor on, gets
                                 ; a key and then shuts the cursor back off
                                 ; again (for normal editing)
@@ -1709,7 +1736,7 @@ getkeyagain:
     sub al, 20h                 ; 20h is 'a'-'A', so 'a' = 0, 'b' = 2, etc
     cmp al, 26                  ; same concept as above
     jbe done
-    jmp getkeyagain
+    jmp kbd_loop
 
 hdphysical:
 ;--- this is for setting up the editing for a physical
@@ -1822,7 +1849,7 @@ endif
 helpscreen proc
 
     call clearscreen
-    mov [scrn_xy],0205h
+    mov [scrn_xy], 0205h
     mov dx, offset quickhelptext
 nextline:
     call printstring
@@ -1847,6 +1874,7 @@ nextkey:
     call clearscreen
     call clearviewarea
     call printoffset
+    mov bUpdateScreen, 1
     ret
 helpscreen endp
 
@@ -2702,12 +2730,12 @@ specview:
     mov [dwFat12start], eax
 @@:
     mov [viewmode2], VM2_STATIC
-    call checksetview  ;set viewmode to DL
-    ret
+    jmp checksetview  ;set viewmode to DL
 ;-------------------------------------------------------
 autoview:
     mov [viewmode2], VM2_AUTODETECT
-    ret
+    jmp detectview
+
 submenu_view endp
 
 ;---- in: sector# in [ioreq.dwSector]
@@ -2833,10 +2861,14 @@ found:
     lea sp, [esp+4]
     ret
 
-;--- nothing to clean-up, just exit to main
+;--- aborting; the directory scan left the stack in a kink
+;--- of "unknown" state. We could just jump to main() - but
+;--- it seems to be better to return to the "getmessage()" loop...
 abort:
     call readcursect
-    jmp main
+    mov bp, [stackbot]
+    lea sp, [bp-2]
+    ret
 
 scanforcluster endp
 
@@ -2867,6 +2899,7 @@ endif
     call scanforcluster
     jnc denotfound
 defound:
+    mov [bUpdateScreen], 1
     xchg eax, [dwCurSector]
     call pushsecstack
     mov ax, dx
@@ -3116,12 +3149,20 @@ updatescreen proc
     call printoffset
 @@:
     call printsector
+    mov bUpdateScreen, 0
 
+    mov bUpdateView, 1
     cmp [viewmode2], VM2_STATIC       ; forced view?
-    je updateview
+    je @F
+    call detectview
+@@:
+    ret
+
+updatescreen endp
 
 ;--- detect the view type
 
+detectview proc
     mov dl, [bRegion]
     test dl, RG_RESERVED or RG_FAT or RG_ROOT or RG_DATA  ; known region?
     jz setDLview                      ; if no, assume lower bits define view (MBR or default)
@@ -3184,9 +3225,8 @@ choosefatview:
     mov [dwFat12start], eax
 setDLview:
     call checksetview                 ; set viewmode to DL
-    jmp updateview
-
-updatescreen endp
+    ret
+detectview endp
 
 if 1
 
@@ -3430,6 +3470,7 @@ stringfound:
     movzx eax, ax
     add eax, [ioreq.dwSector]
     mov [dwCurSector], eax
+    mov [bUpdateScreen], 1
 sx1:
 ;--- set sector offset
     mov ax, 1
@@ -4533,6 +4574,7 @@ submenu_jumpto endp
 
 updateview proc
 
+    mov bUpdateView, 0
     mov al,[viewmode]
     cmp al, VM_BOOTSECTOR
     je bsview
@@ -5597,7 +5639,7 @@ nextpart:
     call printstring
     mov dl, SPACE
     call printchar
-    mov ax, 10h
+    mov ax, sizeof PTABENT
     mul cx
     mov bx, PTABOFS
     add bx, ax
@@ -5616,7 +5658,7 @@ nextpart:
     mov [highlight.ofs], bx
     call bshighlight
 
-    mov al, byte ptr [si+bx]
+    mov al, [si+bx].PTABENT.bBoot
     mov dl,2
     call rendernumhex
     call printstring
@@ -5646,11 +5688,11 @@ donepart:
 
     mov word ptr [highlight+2], 0201h
     mov [highlight.ofs], bx
-    add [highlight.ofs], 4
 
     call bshighlight
 
-    mov al, byte ptr [si+bx+4]
+;    mov al, byte ptr [si+bx].PTABENT.bType
+    mov al, byte ptr [si+bx]   ; bx holds offset to PTABENT.bType
     mov dl, 2
     call rendernumhex
     call printstring
@@ -5739,17 +5781,16 @@ showpart:
 dontshowpart:
 
     call mbrcommon
+
     mov dx, offset endchs
-
-    add bx, 4
-
     call printchs
     call mbrcommon
 
     mov dx, offset startlba
     call printstring
 
-    mov dx, 4
+;    mov dx, 4
+    xor dx, dx
     mov [highlight.siz_], 4
     call printvalue_hl
 
@@ -5758,7 +5799,8 @@ dontshowpart:
     mov dx, offset psize
     call printstring
 
-    mov dx, 8
+;    mov dx, 8
+    mov dx, 4
     mov [highlight.siz_], 4
     call printvalue_hl
 
@@ -6520,6 +6562,7 @@ use1308:
     mul ebx                             ; * sectors
     dec eax                             ; - 1
     mov [dwDataend], eax
+    mov [diskinfobuffer.flags], 2
     mov [ioreq.rwfunc], RWF_OLDINT13
 done:
     ret
@@ -6795,6 +6838,7 @@ if 1
 ;--- image files are "physical" as default ( they won't show MBR automatically! )
 ;--- Use "GoTo" and "Restrict" to select a logical disk
     mov [ioreq.drvtype], DT_PHYSICAL
+    mov [diskinfobuffer.flags], 0
     jmp copypartitioninfo
 else
     ret
@@ -6810,22 +6854,29 @@ setvariables endp
 include FATFS.INC
 ;-------------------------------------------------------
 
+;--- print CHS of a MBR entry
+;--- DX=string to display
+;--- BX=offset PTABENT in MBR + 0/4 (bBoot/bType)
+;--- SI=sector buffer start
+;--- out: BX = BX + sizeof bBoot/bType + sizeof CHSENT
+
 printchs proc
 
     call printstring
+    inc bx                   ; skip bBoot/bType
     mov [highlight.ofs], bx
 
-    movzx eax, byte ptr [si+bx+3]
-    mov ah, byte ptr [si+bx+2]
+    movzx eax, [si+bx].CHSENT.bCH
+    mov ah, [si+bx].CHSENT.bCL
     shr ah, 6
-    add [highlight.ofs], 2
+    inc [highlight.ofs]
     mov [highlight.siz_], 2
     call printeaxvalue_hl
 
     mov dl, '/'
     call printchar
 
-    movzx eax, byte ptr [si+bx+1]
+    movzx eax, [si+bx].CHSENT.bDH
     dec [highlight.ofs]
     mov [highlight.siz_], 1
     call printeaxvalue_hl
@@ -6833,9 +6884,10 @@ printchs proc
     mov dl, '/'
     call printchar
 
-    movzx eax, byte ptr [si+bx+2]
-    and al, 111111b
+    movzx eax, [si+bx].CHSENT.bCL
+    and al, 3Fh
     inc [highlight.ofs]
+    add bx, sizeof CHSENT
     jmp printeaxvalue_hl
 
 printchs endp
@@ -7371,11 +7423,8 @@ abortdc:
     call fillspace
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne done
-    cmp [ioreq.rwfunc], RWF_NEWINT13
-    jnz @F
     test [diskinfobuffer.flags], 2     ; CHS valid?
     jz done
-@@:
     mov [scrn_xy], (0 shl 8) or COLCHS
     mov dx, CStr("CHS: ")
     call printstring
@@ -7422,9 +7471,9 @@ infat:
     sub cl, [scrn_col]
     call fillspace
     mov [scrn_col], dl
-	mov cl, sizeof entrymsg - 1
-	mov al, COL_STATTEXT
-	call fillattr
+    mov cl, sizeof entrymsg - 1
+    mov al, COL_STATTEXT
+    call fillattr
     mov dx, offset entrymsg           ; "Entry: "
     call printstring
     call printentry
@@ -7480,9 +7529,9 @@ dispclust:
     call fillchar
     mov [scrn_col], dl
 
-	mov cl, sizeof szCluster - 1
-	mov al, COL_STATTEXT
-	call fillattr
+    mov cl, sizeof szCluster - 1
+    mov al, COL_STATTEXT
+    call fillattr
     mov dx, offset szCluster
     call printstring
 if 1
@@ -7940,13 +7989,12 @@ clearsecarea endp
 
 ;-------------------------------------------------------
 ; vinit: - check/set video mode, print copyright info.
-; runs in real-mode even for wdex.
 
 vinit proc
 
 ;--- check if video mode suits, else set 43x80 mode.
     push ds
-    push 0
+    push _0000H
     pop ds
     mov ax, ds:[44Ah] ;cols
     add ax, ax
@@ -7991,8 +8039,17 @@ vmode_ok:
     mov [vidrows], ch
     mov [vidpg], dl
     mov word ptr [vidaddr+0], bx
+if ?PM
+    mov cx, di
+    mov dx, di
+    shl dx, 4
+    shr cx, 12
+    mov bx, word ptr [vidaddr+2]
+    mov ax, 7
+    int 31h
+else
     mov word ptr [vidaddr+2], di
-
+endif
     les di, [vidaddr]
     mov ax, COL_STATTEXT shl 8 or SPACE
     mov cx,MAXCOL+1
@@ -8073,6 +8130,7 @@ printhelp endp
 
 ;--- translate sector# in eax to 
 ;--- cylinder in cl[6.7]+ch, head in DH, sector in cl[0..5]
+;--- to prepare for int 13h, ah=02/03.
 ;--- modifies ecx, ebx, edx, eax
 
 getchs proc
@@ -8103,8 +8161,8 @@ getchs proc
     ret
 getchs endp
 
-;--- this routine is better and should replace getchs
-;--- returns CHS in ax,bx,cx
+;--- translate sector# in eax to CHS in ax,bx,cx.
+;--- to display CHS in topline.
 
 getchsx proc
     movzx cx, [heads]
@@ -8154,6 +8212,7 @@ readsect:
     jc @F
     push [ioreq.dwSector]
     pop [dwCurSector]
+    mov [bUpdateScreen], 1
 @@:
     ret
 
@@ -8466,6 +8525,7 @@ darkclr::
 darkx:
     pushf
     pusha
+    mov [bUpdateScreen], 1
     mov ax, DARKMASK
     jmp swtclr
 stdclr::
@@ -8601,7 +8661,7 @@ if ?LFN
     mov cx, ax
 else
     xor cx, cx
-getkeyagain:
+kbd_loop:
     call cursorgetkey
 
     cmp al, ENTER_KEY
@@ -8614,10 +8674,10 @@ getkeyagain:
     je handle_tab
 
     cmp cx, 68
-    je getkeyagain
+    je kbd_loop
 
     call validpathchar
-    jc getkeyagain
+    jc kbd_loop
 
     mov dl, al
     call printchar
@@ -8625,28 +8685,28 @@ getkeyagain:
     mov byte ptr [di], al
     inc di
     inc cx
-    jmp getkeyagain
+    jmp kbd_loop
 
 backspace:  
-    jcxz getkeyagain                    ; no characters left to delete
+    jcxz kbd_loop              ; no characters left to delete
     dec cx
     call backcommon
     dec di
-    jmp getkeyagain
+    jmp kbd_loop
 handle_tab:
-    cmp bl, 0                           ; TAB exits only if called by setdrive
-    jnz getkeyagain
+    cmp bl, 0                  ; TAB exits only if called by setdrive
+    jnz kbd_loop
 abort:
     xor cx, cx
 done:
-    mov byte ptr [di], 0                ; null-terminate filename
+    mov byte ptr [di], 0       ; null-terminate filename
 endif
     ret
 getfilename endp
 
 ;-------------------------------------------------------
-cbuffer_offset:                 ; take what's in [scrn_xy] and set es:di to address
-    push ax                       ; of the respective byte in the screen buffer
+cbuffer_offset:                ; take what's in [scrn_xy] and set es:di to address
+    push ax                    ; of the respective byte in the screen buffer
     push dx
     les di,[vidaddr]
     movzx ax, [scrn_row]
@@ -9110,6 +9170,7 @@ clearviewarea::
     add di, cx
     dec dl
     jnz @B
+    mov bUpdateView, 1
 no_viewmode_change:
     ret
 checksetview endp

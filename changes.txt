@@ -1,5 +1,10 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
+WDe V1.00 [__.__.2022]
+  - rearranged startup code so there's no writing to the screen before
+    main() has been reached; makes debuggers happy.
+
+
 WDe V0.99 [20.06.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.
   - fixed: to enter a cluster# in "goto cluster" did jump to a wrong

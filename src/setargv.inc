@@ -90,8 +90,8 @@ endif
     sub bp, dx              ; alloc the really needed space for argc/argv
     mov [bp-6], ax          ; store return address
 
-_argc equ <word ptr bp-2>
-_argv equ <word ptr bp-4>
+_argc equ <bp-2>
+_argv equ <bp-4>
 
     mov [_argv], bp
     mov [_argc], cx
@@ -124,7 +124,7 @@ noargs:
 ;    assume ds:DGROUP
 if ?DUMMYFN
     mov [bx], ax            ; store 0 as dummy filename
-    inc [_argc]
+    inc word ptr [_argc]
 endif
     lea sp, [bp-6]
     ret

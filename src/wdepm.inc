@@ -224,18 +224,13 @@ getdescriptors proc
     xor cx, cx
     mov ax, 7
     int 31h
-    add bx, 8
-    movzx ecx, word ptr [vidaddr+2]
-    mov word ptr [vidaddr+2], bx
-    shl ecx, 4
-    mov dx, cx
-    shr ecx, 16
-    int 31h
     mov dx, 7fffh   ; set limits to 07FFFh
     xor cx, cx
     mov ax, 8
     int 31h
-    sub bx, 8
+    add bx, 8
+    mov word ptr [vidaddr+2], bx	; base will be set later
+    mov ax, 8
     int 31h
 done:
     ret

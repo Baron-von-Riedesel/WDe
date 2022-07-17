@@ -508,70 +508,78 @@ partA5          db 'FreeBSD',0
 
 parthid         db 'Hid Fat',0 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B
 
-menustrings     label byte
-                db 'Save',0                             ; 0
-                db 'File',0                             ; 1
-                db 'Goto',0                             ; 2
-                db 'View',0                             ; 3
-                db 'Find',0                             ; 4
-                db 'Functions',0                        ; 5
-                db 'Change Disk',0                      ; 6
-                db 'Sector',0                           ; 7
-                db 'Boot Sector',0                      ; 8
-                db 'Cluster',0                          ; 9
-                db 'Fat1',0                             ; 10
-                db 'Fat2',0                             ; 11
-                db 'Root',0                             ; 12
-                db 'Data Area',0                        ; 13
-                db 'Save to File',0                     ; 14
-                db 'Restore from File',0                ; 15
-                db 'Input',0                            ; 16
-                db 'MBR',0                              ; 17
-                db 'Partition1',0                       ; 18
-                db 'Partition2',0                       ; 19
-                db 'Partition3',0                       ; 20
-                db 'Partition4',0                       ; 21
-szPartition     db 'Partition',0                        ; 22
-                db 'Chain',0                            ; 23
-                db 'Dump CD As ISO',0                   ; 24
-                db 'Auto',0                             ; 25
-                db 'Directory',0                        ; 26
-                db 'String',0                           ; 27
-                db 'Hex',0                              ; 28
-                db 'Fill',0                             ; 29
-                db 'Restrict',0                         ; 30
-                db 'Fat',0                              ; 31
-                db 'Incremental',0                      ; 32
-                db 'Decremental',0                      ; 33
-                db 'Random',0                           ; 34
-                db '8Bit',0                             ; 35
-                db '12Bit',0                            ; 36
-                db '16Bit',0                            ; 37
-                db '32Bit',0                            ; 38
-part01          db 'Fat12',0                            ; 39
-part04060E      db 'Fat16',0                            ; 40
-part0B0C        db 'Fat32',0                            ; 41
-                db 'Inverse',0                          ; 42
-                db 'Next',0                             ; 43
-                db 'Help',0                             ; 44
-                db '$MFT',0                             ; 45
-                db 'BootSec',0                          ; 46
+;--- define menu strings and identifiers (MS_xxx).
+;--- identifiers are used as arguments in menu item definitions (@mitem).
 
-;--- a few menu items are dynamically (de)activated. 
-;--- in those cases the menu string# must be known;
-;--- hence the MENUS_xxx definitions.
-
-MENUS_INACTIVE equ -1
-MENUS_RESTORE equ 15
-MENUS_CHAIN   equ 23
-
-if ?EXT
-MENUS_UNFORMAT equ 47
-MENUS_UNDELETE equ 48
-                db 'UnFormat',0                         ; 47
-                db 'UnDelete',0                         ; 48
+?MIDX = 0
+@mstring macro text, name_
+ifnb <name_>
+MS_&name_ equ ?MIDX
+else
+MS_&text equ ?MIDX
 endif
+	db '&text&',0
+?MIDX = ?MIDX + 1
+endm
 
+MS_INACTIVE equ -1
+
+menustrings label byte
+    @mstring Save
+    @mstring File
+    @mstring Goto
+    @mstring View
+    @mstring Find
+    @mstring Functions
+    @mstring <Change Disk>, Change_Disk
+    @mstring Sector
+    @mstring <Boot Sector>, Boot_Sector
+    @mstring Cluster
+    @mstring Fat1
+    @mstring Fat2
+    @mstring Root
+    @mstring <Data Area>, Data_Area
+    @mstring <Save to File>, Save_to_File
+    @mstring <Restore from File>, Restore_from_File
+    @mstring Input
+    @mstring MBR
+    @mstring Partition1
+    @mstring Partition2
+    @mstring Partition3
+    @mstring Partition4
+szPartition label byte
+    @mstring Partition
+    @mstring Chain
+    @mstring <Dump CD As ISO>, Dump_CD_As_ISO
+    @mstring Auto
+    @mstring Directory
+    @mstring String
+    @mstring Hex
+    @mstring Fill
+    @mstring Restrict
+    @mstring Fat
+    @mstring Incremental
+    @mstring Decremental
+    @mstring Random
+    @mstring 8Bit
+    @mstring 12Bit
+    @mstring 16Bit
+    @mstring 32Bit
+part01 label byte
+    @mstring Fat12
+part04060E label byte
+    @mstring Fat16
+part0B0C label byte
+    @mstring Fat32
+    @mstring Inverse
+    @mstring Next
+    @mstring Help
+    @mstring $MFT
+    @mstring BootSec
+if ?EXT
+    @mstring UnFormat
+    @mstring UnDelete
+endif
 
 startchs        db 'S-CHS ',0
 endchs          db 'E-CHS ',0
@@ -769,8 +777,8 @@ bSkipFat        db ?
 bSecSh          db ?            ; shift factor for wBps
 bIdx            db ?            ; curr index if lfns are displayed in dirview
 bDark           db ?            ; 1=screen foreground color not bright
-bMenu           db ?            ; 1=menu update required
 bShift          db ?            ; kbd shift status
+bUpdateMenu     db ?            ; 1=menu update required
 bUpdateScreen   db ?
 bUpdateView     db ?
 
@@ -942,13 +950,13 @@ endif
 ;--- main menu definition
 
     @mstart initialmenu
-    @mitem 44, helpscreen
-    @mitem  1, submenu_file
-    @mitem  2, submenu_jumpto
-    @mitem  3, submenu_view
-    @mitem  4, submenu_find
-    @mitem  5, submenu_functions
-    @mitem  0, savetodisk
+    @mitem MS_Help, helpscreen
+    @mitem MS_File, submenu_file
+    @mitem MS_Goto, submenu_jumpto
+    @mitem MS_View, submenu_view
+    @mitem MS_Find, submenu_find
+    @mitem MS_Functions, submenu_functions
+    @mitem MS_Save, savetodisk
     @mend initialmenu
 
 Start proc
@@ -1154,20 +1162,23 @@ init_wde endp
 main proc
 
     call init_wde
-    mov sp, [stackbot]
+    mov sp, [stackbot]          ; reset SP after init_wde ( makes argc, argv invalid )
     mov bUpdateScreen, 1
 
 main_loop:
     cmp bUpdateScreen, 0
     jz @F
-    mov [handling], ABORT_OPERATION  ; inside main
-    call updatescreen           ; print line 0, sector area and view area
+    mov [handling], ABORT_OPERATION
+    call updatescreen           ; print line 0 and sector area
 @@:
     cmp bUpdateView, 0
     jz @F
     call updateview
 @@:
+    cmp bUpdateMenu, 0          ; menu to be printed?
+    jz @F
     call printmenu
+@@:
     push 1
     call showcursor
     call getkey
@@ -1396,7 +1407,7 @@ checkmenukey proc
 found:
     add cl, [bx].MENULVL.bMenuStart
     movzx bx, cl
-    cmp [bx][startmenudefs], MENUS_INACTIVE
+    cmp [bx][startmenudefs], MS_INACTIVE
     jz @B
     shl bx, 1
     pop cx                      ; skip return address
@@ -1418,14 +1429,14 @@ initmenustack::
     mov [bx].MENULVL.bMenuStart, dl
     mov [bx].MENULVL.bMenuSize, dh
     mov [bx].MENULVL.bSpaces, cl
-    mov [bMenu], 1
+    mov [bUpdateMenu], 1
     ret
 
 pushmenustack endp
 
 resetmenustack proc
     mov [menustackidx], 0
-    mov [bMenu], 1
+    mov [bUpdateMenu], 1
     ret
 resetmenustack endp
 
@@ -1446,7 +1457,7 @@ setmenuitem proc
     add ah, [bx].MENULVL.bMenuSize
     cmp cl, ah
 @@:
-    adc [bMenu], 0
+    adc [bUpdateMenu], 0
 done:
     pop bx
     ret
@@ -1459,7 +1470,7 @@ handle_esc proc
     cmp [menustackidx], 0       ; in main menu?
     jz @F
     dec [menustackidx]          ; else pop one menu level
-    mov [bMenu], 1
+    mov [bUpdateMenu], 1
     ret
 @@:
     call quit
@@ -1944,11 +1955,11 @@ restrictsectors endp
 submenu_functions proc
 
     @mstart funcmenu
-    @mitem 30, restrictsectors
-    @mitem 29, submenu_fill
+    @mitem MS_Restrict, restrictsectors
+    @mitem MS_Fill, submenu_fill
 if ?EXT
-    @mitem MENUS_INACTIVE, unformat, FUNCM_UNFORMAT
-    @mitem MENUS_INACTIVE, undelete, FUNCM_UNDELETE
+    @mitem MS_INACTIVE, unformat, FUNCM_UNFORMAT
+    @mitem MS_INACTIVE, undelete, FUNCM_UNDELETE
 endif
     @mend funcmenu
 
@@ -1957,10 +1968,10 @@ endif
     test [filesys], FS_FATXX
     jz pushmenustack
 if ?EXT
-    mov al, MENUS_INACTIVE
+    mov al, MS_INACTIVE
     cmp [filesys], FS_EXFAT       ; no "unformat" for exFAT!
     jz @F
-    mov al, MENUS_UNFORMAT
+    mov al, MS_UnFormat
 @@:
     mov cl, FUNCM_UNFORMAT
     call setmenuitem              ; set/remove "unformat"
@@ -1984,12 +1995,12 @@ endif
 submenu_fill proc
 
     @mstart fillmenu
-    @mitem 28, fillhex
-    @mitem 27, fillstring
-    @mitem 32, fillincr
-    @mitem 33, filldecr
-    @mitem 42, fillinverse
-    @mitem 34, fillrandom
+    @mitem MS_Hex,         fillhex
+    @mitem MS_String,      fillstring
+    @mitem MS_Incremental, fillincr
+    @mitem MS_Decremental, filldecr
+    @mitem MS_Inverse,     fillinverse
+    @mitem MS_Random,      fillrandom
     @mend fillmenu
 
     mov dx, fillmenu + lfillmenu shl 8
@@ -2016,10 +2027,10 @@ submenu_fill endp
 submenu_incdec proc
 
     @mstart incdecmenu
-    @mitem 35, fillbit8
-    @mitem 36, fillbit12
-    @mitem 37, fillbit16
-    @mitem 38, fillbit32
+    @mitem MS_8Bit,  fillbit8
+    @mitem MS_12Bit, fillbit12
+    @mitem MS_16Bit, fillbit16
+    @mitem MS_32Bit, fillbit32
     @mend incdecmenu
 
     mov dx, incdecmenu + lincdecmenu shl 8
@@ -2708,13 +2719,13 @@ handle_enter endp
 submenu_view proc
 
     @mstart viewmenu
-    @mitem 25, autoview
-    @mitem 17, specview
-    @mitem  8, specview
-    @mitem 39, specview
-    @mitem 40, specview
-    @mitem 41, specview
-    @mitem 26, specview
+    @mitem MS_Auto, autoview
+    @mitem MS_MBR,  specview
+    @mitem MS_Boot_Sector, specview
+    @mitem MS_Fat12, specview
+    @mitem MS_Fat16, specview
+    @mitem MS_Fat32, specview
+    @mitem MS_Directory, specview
     @mend viewmenu
 
     mov dx, viewmenu + lviewmenu shl 8
@@ -2738,13 +2749,16 @@ autoview:
 
 submenu_view endp
 
-;---- in: sector# in [ioreq.dwSector]
-
 if ?DEBUG
     .data?
 level dw ?    ; level of subdirectory reentrance
     .code
 endif
+
+;--- scan entries in a directory sector for a specific start cluster
+;--- in: ebx=cluster to find
+;---     sector# in [ioreq.dwSector]
+;--- if directory entries are found, recursively call scanforcluster.
 
 scandir proc
     @dprintfln "scandir(%u): sector=%lu", level, [ioreq.dwSector]
@@ -2861,13 +2875,11 @@ found:
     lea sp, [esp+4]
     ret
 
-;--- aborting; the directory scan left the stack in a kink
-;--- of "unknown" state. We could just jump to main() - but
-;--- it seems to be better to return to the "getmessage()" loop...
+;--- aborting; due to recursion SP has to be restored. 
+
 abort:
+    mov sp, bp
     call readcursect
-    mov bp, [stackbot]
-    lea sp, [bp-2]
     ret
 
 scanforcluster endp
@@ -2878,6 +2890,7 @@ finddirentry proc
 if ?DEBUG
     mov level, 0
 endif
+	mov bp, sp
     @dprintfln "finddirentry: ebx=%lX", ebx
     cmp ebx, 2
     jb _ret
@@ -2922,14 +2935,14 @@ finddirentry endp
 submenu_find proc
 
     @mstart searchmenu
-    @mitem 27, findstring
-    @mitem 28, findhex
-    @mitem 43, findnext
-    @mitem MENUS_INACTIVE, findfileentry
-    @mitem 17, findmbr
-    @mitem 46, findbs
-    @mitem 31, findfat
-    @mitem 26, finddir
+    @mitem MS_String, findstring
+    @mitem MS_Hex, findhex
+    @mitem MS_Next, findnext
+    @mitem MS_INACTIVE, findfileentry
+    @mitem MS_MBR, findmbr
+    @mitem MS_BootSec, findbs
+    @mitem MS_Fat, findfat
+    @mitem MS_Directory, finddir
     @mend searchmenu
 
     mov dx, searchmenu + lsearchmenu shl 8
@@ -3650,15 +3663,15 @@ findcommon endp
 submenu_file proc
 
     @mstart filemenu               ; file menu cmd table
-    @mitem 14, submenu_fileoptions
-    @mitem 15, submenu_fileoptions, FILEMENU_RESTORE
-    @mitem  6, select_disk
+    @mitem MS_Save_to_File, submenu_fileoptions
+    @mitem MS_Restore_from_File, submenu_fileoptions, FILEMENU_RESTORE
+    @mitem MS_Change_Disk, select_disk
     @mend filemenu
 
-    mov al, MENUS_RESTORE
+    mov al, MS_Restore_from_File
     cmp [ioreq.drvtype], DT_CDROM
     jne @F
-    mov al, MENUS_INACTIVE         ; for CDROMs, remove "restore"
+    mov al, MS_INACTIVE            ; for CDROMs, remove "restore"
 @@:
     mov cl, FILEMENU_RESTORE
     call setmenuitem
@@ -4120,31 +4133,31 @@ srcommon endp
 submenu_fileoptions proc
 
     @mstart cdfileoptmenu
-    @mitem 14, srsecrange
-    @mitem 24, dumpiso
+    @mitem MS_Save_to_File, srsecrange
+    @mitem MS_Dump_CD_As_ISO, dumpiso
     @mend cdfileoptmenu
 
 ;--- physical: F1=Input F2=MBR F3=P1 F4=P2 F5=P3 F6=P4
 
     @mstart pdfileoptmenu
-    @mitem 16, srsecrange
-    @mitem 17, srsector0
-    @mitem 18, srhdcheck
-    @mitem 19, srhdcheck
-    @mitem 20, srhdcheck
-    @mitem 21, srhdcheck
+    @mitem MS_Input, srsecrange
+    @mitem MS_MBR, srsector0
+    @mitem MS_Partition1, srhdcheck
+    @mitem MS_Partition2, srhdcheck
+    @mitem MS_Partition3, srhdcheck
+    @mitem MS_Partition4, srhdcheck
     @mend pdfileoptmenu
 
 ;--- logical: F1=Input F2=Boot F3=Fat1 F4=Fat2 F5=Root F6=Partition [F7=chain]
 
     @mstart ldfileoptmenu
-    @mitem 16, srsecrange
-    @mitem  8, srsector0
-    @mitem 10, srfat1
-    @mitem 11, srfat2
-    @mitem 12, srroot
-    @mitem 22, srdisk
-    @mitem MENUS_INACTIVE, srchain, LDFILEOPT_CHAIN
+    @mitem MS_Input,       srsecrange
+    @mitem MS_Boot_Sector, srsector0
+    @mitem MS_Fat1,        srfat1
+    @mitem MS_Fat2,        srfat2
+    @mitem MS_Root,        srroot
+    @mitem MS_Partition,   srdisk
+    @mitem MS_INACTIVE, srchain, LDFILEOPT_CHAIN
     @mend ldfileoptmenu
 
     cmp ah, F2_KEY
@@ -4455,28 +4468,28 @@ dumpiso endp
 submenu_jumpto proc
 
     @mstart pdjumpmenu
-    @mitem 16, jumptosector
-    @mitem 17, jumptobootsector
-    @mitem 18, jumptop1
-    @mitem 19, jumptop2
-    @mitem 20, jumptop3
-    @mitem 21, jumptop4
+    @mitem MS_Input, jumptosector
+    @mitem MS_MBR, jumptobootsector
+    @mitem MS_Partition1, jumptop1
+    @mitem MS_Partition2, jumptop2
+    @mitem MS_Partition3, jumptop3
+    @mitem MS_Partition4, jumptop4
     @mend pdjumpmenu
 
     @mstart ldjumpmenu
-    @mitem  7, jumptosector
-    @mitem  8, jumptobootsector
-    @mitem  9, jumptocluster
-    @mitem 10, jumptofat1
-    @mitem 11, jumptofat2
-    @mitem 12, jumptoroot
-    @mitem 13, jumptodata
+    @mitem MS_Sector,      jumptosector
+    @mitem MS_Boot_Sector, jumptobootsector
+    @mitem MS_Cluster,     jumptocluster
+    @mitem MS_Fat1,        jumptofat1
+    @mitem MS_Fat2,        jumptofat2
+    @mitem MS_Root,        jumptoroot
+    @mitem MS_Data_Area,   jumptodata
     @mend ldjumpmenu
 
     @mstart ntfsjumpmenu
-    @mitem  7, jumptosector
-    @mitem  8, jumptobootsector
-    @mitem 45, jumptomft
+    @mitem MS_Sector,      jumptosector
+    @mitem MS_Boot_Sector, jumptobootsector
+    @mitem MS_$MFT,        jumptomft
     @mend ntfsjumpmenu
 
     mov cl, 2
@@ -4849,11 +4862,11 @@ exfat_dirview proc
 
 ;--- (de)activate "Chain"
 
-    mov al, MENUS_INACTIVE
+    mov al, MS_INACTIVE
     mov ah, NO_CHAIN
     cmp [si+bx].EXFDIRP.etype, 0C0h          ; file stream entry?
     jnz @F
-    mov al, MENUS_CHAIN
+    mov al, MS_Chain
     mov ah, FILE_CHAIN
 @@:
     mov [chainflag], ah
@@ -5094,13 +5107,13 @@ dirview proc
 
 ;--- de(activate) "chain" in "file options" menu.
 
-    mov al, MENUS_INACTIVE
+    mov al, MS_INACTIVE
     mov ah, NO_CHAIN
     cmp byte ptr [si+bx], 0      ; dir entry empty?
     jz @F
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
     jz @F
-    mov al, MENUS_CHAIN
+    mov al, MS_Chain
     mov ah, FILE_CHAIN
 @@:
     mov [chainflag], ah
@@ -5110,12 +5123,12 @@ dirview proc
 if ?EXT
 ;--- (de)activate "undelete" in "functions" menu depending on current entry status
 
-    mov al, MENUS_INACTIVE
+    mov al, MS_INACTIVE
     cmp byte ptr [si+bx], 0E5h
     jnz @F
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
     jz @F
-    mov al, MENUS_UNDELETE
+    mov al, MS_UnDelete
 @@:
     mov cl, FUNCM_UNDELETE
     call setmenuitem
@@ -5353,7 +5366,7 @@ printattr endp
 chainmenuitem proc
 
     mov [chainflag], FAT_CHAIN   ; we're in a FAT
-    mov al, MENUS_CHAIN
+    mov al, MS_Chain
     mov cl, LDFILEOPT_CHAIN
     call setmenuitem
     ret
@@ -9022,8 +9035,6 @@ quit endp
 
 printmenu proc
 
-    cmp [bMenu], 0                       ; menu to be printed
-    jz done
     push ds
     pop es
     movzx bx, [menustackidx]
@@ -9038,7 +9049,7 @@ printmenu proc
 nextmenuitem:
     mov ah, [si]       ; load menu string index
     inc si
-    cmp ah, MENUS_INACTIVE
+    cmp ah, MS_INACTIVE
     jz skipitem
     mov di, offset menustrings  ; scan menu string table
     inc ah
@@ -9077,8 +9088,7 @@ skipitem:
     mov byte ptr [bx], 0
     pop dx
     call printbottom             ; and finally print the menu
-    mov [bMenu], 0
-done:
+    mov [bUpdateMenu], 0
     ret
 
 printmenu endp
@@ -9140,11 +9150,11 @@ checksetview proc
     je no_viewmode_change           ; is already set.
 if ?EXT
     mov cl, FUNCM_UNDELETE
-    mov al, MENUS_INACTIVE
+    mov al, MS_INACTIVE
     call setmenuitem                ; remove "undelete"
 endif
     mov cl, LDFILEOPT_CHAIN
-    mov al, MENUS_INACTIVE          ; remove "chain"
+    mov al, MS_INACTIVE             ; remove "chain"
     call setmenuitem
     cmp [viewmode], VM_DIRECTORY    ; is old view directory?
     jnz @F
@@ -9197,7 +9207,7 @@ printbottom:
     mov [scrn_xy], BOTTOMROW*100h + 01h
 ;    mov [lastbottomtext], dx
     call printstring
-    mov [bMenu], 1
+    mov [bUpdateMenu], 1
 
 ;--- fall thru
 ;--- clear rest of bottom line

@@ -24,6 +24,7 @@
   If the current text mode has less than 43 rows, WDE will switch to the
   standard text mode, but loads the 8x8 font instead of the usual 8x16 one
   and restricts the scan lines to 350, thus achieving the needed 43 rows.
+  In other words, WDe needs at least an EGA video card to work.
 
    There are 2 small tools, SETM43/SETM432, supplied. These may allow WDE
   to use a better looking font (8x14) with still 43 lines, but there is no

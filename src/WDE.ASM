@@ -419,16 +419,37 @@ DISKIO ends
 
 ;--- disk info returned by Int 13h, ah=48h
 
-DINFO1 struct
-_size    dw ?
-flags    dw ?
-cyls     dd ?
-heads    dd ?
-secs     dd ?
+EDD10 struct
+_size     dw ? ;+0
+flags     dw ?
+cyls      dd ? ;+4
+heads     dd ?
+secs      dd ? ;+12
 totalsecL dd ?
-totalsecH dd ?
-bps      dw ?
-DINFO1 ends
+totalsecH dd ? ;+20
+bps       dw ? ;+24
+EDD10 ends
+
+FEDD_CHSVALID equ 2
+
+EDD20 struct
+	EDD10 <>
+lpCfg dd ?
+EDD20 ends
+
+EDD30 struct
+	EDD20 <>
+wSig      dw ?			;+1E
+bLength   db ?			;+20 length of path
+          db 3 dup (?)	;    reserved        
+szBus     db 4 dup (?)	;+24
+szIFType  db 8 dup (?)	;+28
+qwIFPath  db 8 dup (?)	;+30
+szDevPath db 8 dup (?)	;+38
+          db ?			;+40
+bChecksum db ?			;+41
+          db 8 dup (?)  ;+42
+EDD30 ends
 
 CDREQ struct
 _size    db ?
@@ -480,8 +501,10 @@ HIGHLIGHT ends
 
     .const
 
-introtext       db 'WDe V0.99',0
+introtext       db 'WDe V1.0',0
 copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
+viderror        db "No EGA/VGA detected",13,10,'$'
+cpuerror        db "No 80386+ CPU",13,10,'$'
 
 owmsg           db 'File Exists - A(ppend), O(verwrite) or C(ancel)? ',0
 fdmsg           db 'Floppy disk [y/N]? ',0
@@ -806,7 +829,7 @@ stringbuffer    db 74 dup (?)   ; buffered string for find/fill
 stringlen       dw ?
 sprintfbuffer   db 80 dup (?)   ; buffer for sprintf
 ioreq           IOREQ <?>
-diskinfobuffer  DINFO1 <?>      ; buffer for int13h "get drive info"
+diskinfobuffer  EDD30 <>        ; buffer for int13h "get drive info"
 cdheader        CDREQ <?>       ; cd device request header
 drivepacket     DISKIO <?>      ; used by int 25h/26h and int 21h/ax=7305h
 dapacket        DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
@@ -829,10 +852,8 @@ if ?PM
     include wdepm.inc
 endif
 
-;--- code to access WDEVDD on NT platforms.
-
 if ?VDD
-    include wdent.inc
+    include wdent.inc	; to access WDEVDD on NT platforms.
 else
 @int13 equ <int 13h>
 @int21 equ <int 21h>
@@ -851,100 +872,9 @@ endif
 
     include sprintf.inc
 if ?DEBUG
-    include ..\Test\timer.inc
+    include timer.inc
 endif
-
-;--- get time in ms
-
-@getstarttime macro
-if ?DEBUG
-    pushad
-    call gettimer
-    mov starttime, eax
-    popad
-endif
-endm
-
-;--- print measured time on menu row
-
-@printtime macro formstr 
-if ?DEBUG
-    pushf
-    pushad
-    call gettimer
-    sub eax, starttime
-    sub sp, 80
-    mov dx, sp
-    invoke sprintf, dx, CStr(formstr), eax
-    call printerror
-    add sp, 80
-    popad
-    popf
-endif
-endm
-
-@printduration macro prefix
-if ?DEBUG
-    pushf
-    pushad
-    call gettimer
-    sub eax, starttime
-    sub sp, 80
-    mov bp, sp
-    invoke sprintf, bp, CStr( prefix, ": %u ms",13,10,'$'), eax
-    mov dx, bp
-    mov ah,9
-    int 21h
-    add sp, 80
-    popad
-    popf
-endif
-endm
-
-if ?DEBUG
-_BSS segment
-dbgbuff db 80 dup (?)
-_BSS ends
-endif
-
-;--- print a line on stdout/debug terminal if ?DEBUG=1
-
-@dprintfln macro formstr, args:vararg 
-if ?DEBUG
-    pushf
- ifb <args>
-    invoke sprintf, offset dbgbuff, CStr(formstr,13,10,'$')
- else
-    invoke sprintf, offset dbgbuff, CStr(formstr,13,10,'$'), args
- endif
-    call _dbgout
-    popf
-endif
-endm
-
-if ?DEBUG
-_dbgout proc
-    push dx
-    push ax
-    mov dx, offset dbgbuff
-if ?VDD
-    cmp [hVdd],-1
-    jz @F
-    push 41h
-    mov ax, [hVdd]
-    Dispatch
-    jmp done ; note that the VDD has restored AX already
-@@:
-endif
-    mov ah,9
-    int 21h
-    pop ax
-done:
-    pop dx
-    ret
-_dbgout endp
-endif
-
+    include debug.inc
     include setargv.inc
 
 ;--- main menu definition
@@ -961,11 +891,31 @@ endif
 
 Start proc
 
-;--- setup small memory model
-
-    cld
     mov dx, @data
     mov ds, dx
+	pushf
+	pushf
+	pop ax
+	or ah,70h		; a 80386 will have bit 15 cleared
+	push ax			; if bits 12-14 are 0, it is a 80286
+	popf			; or a bad emulation
+	pushf
+	pop ax
+	popf
+	and ah,0f0h
+	js @F			; bit 15 set? then its a 8086/80186
+	jnz is386
+@@:
+	mov dx, offset cpuerror
+	mov ah, 9
+	int 21h
+	mov ax,4C01h
+	int 21h
+
+;--- setup small memory model
+
+is386:
+    cld
     mov [_psp], es
     mov ax, ss
     sub ax, dx
@@ -1000,27 +950,7 @@ endif
 
 if ?PM
     call initpm
-    call wdepm
-    mov bl, 24h                 ; use DPMI to modify int vector, since
-    mov ax, 204h                ; DS MUST hold DGROUP selector when int 21h is called
-    int 31h
-    @storevec [oldint24]
-    mov cx, cs
-    @movofs dx, offset myint24
-    mov al, 5
-    int 31h
-else
-    mov ax, 3524h               ; back up old int 24h ( must be done AFTER switch to pm )
-    int 21h
-    mov word ptr [oldint24+0], bx
-    mov word ptr [oldint24+2], es
-    push ds
-    mov dx, offset myint24      ; new address in DS:DX
-    push cs
-    pop ds
-    mov ah, 25h                 ; set up new int 24h
-    int 21h
-    pop ds
+    call initwdepm
 endif
 
     mov es,[_psp]
@@ -1104,8 +1034,31 @@ has_drive:
 
     call setseeds1
     call vinit                  ; init video mode, init screen
-    popa
 
+if ?PM
+    mov bl, 24h                 ; use DPMI to modify int vector, since
+    mov ax, 204h                ; DS MUST hold DGROUP selector when int 21h is called
+    int 31h
+    @storevec [oldint24]
+    mov cx, cs
+    @movofs dx, offset myint24
+    mov al, 5
+    int 31h
+else
+    mov ax, 3524h               ; back up old int 24h ( must be done AFTER switch to pm )
+    int 21h
+    mov word ptr [oldint24+0], bx
+    mov word ptr [oldint24+2], es
+    push ds
+    mov dx, offset myint24      ; new address in DS:DX
+    push cs
+    pop ds
+    mov ah, 25h                 ; set up new int 24h
+    int 21h
+    pop ds
+endif
+
+    popa
     cmp al, -1
     jnz disk_entered
 
@@ -1152,7 +1105,7 @@ endif
     mov cl, 3
     call initmenustack
 
-    call printoffset            ; print current offset
+    call printoffset            ; print current offset (=spot)
     ret
 
 init_wde endp
@@ -1464,17 +1417,15 @@ done:
 setmenuitem endp
 
 ;--- handle ESC
-;--- in: DX=clean SP
 
 handle_esc proc
+    mov [bUpdateMenu], 1
     cmp [menustackidx], 0       ; in main menu?
     jz @F
     dec [menustackidx]          ; else pop one menu level
-    mov [bUpdateMenu], 1
     ret
 @@:
     call quit
-    mov bUpdateScreen, 1
     ret
 handle_esc endp
 
@@ -2551,7 +2502,7 @@ chainnotfound:
     mov dx, offset nochainmsg           ; "recursive link not found"
     call printerror
 done:
-    @printduration "searchpredecessor"
+    @dprintduration "searchpredecessor"
     ret
 searchpredecessor endp
 
@@ -2890,7 +2841,7 @@ finddirentry proc
 if ?DEBUG
     mov level, 0
 endif
-	mov bp, sp
+    mov bp, sp
     @dprintfln "finddirentry: ebx=%lX", ebx
     cmp ebx, 2
     jb _ret
@@ -3534,7 +3485,7 @@ getnextsector:
 
 stringnotfound:
     pop ax
-    @printtime "stringsearch; duration %lu ms"
+    @dprinttime "stringsearch; duration %lu ms"
     mov dx, offset searcherror    ; "no (nore) matches found"
     call nuprinterror
 abort:
@@ -4132,8 +4083,10 @@ srcommon endp
 
 submenu_fileoptions proc
 
+;--- CD, logical: F1=Input F2=Dump CD as ISO
+
     @mstart cdfileoptmenu
-    @mitem MS_Save_to_File, srsecrange
+    @mitem MS_Input, srsecrange
     @mitem MS_Dump_CD_As_ISO, dumpiso
     @mend cdfileoptmenu
 
@@ -4447,7 +4400,7 @@ drivedump:
     xor eax, eax
     mov di, offset writeprogress
     call writefile
-    @printtime "writefile duration: %lu ms"
+    @dprinttime "writefile duration: %lu ms"
 
 donedump:
     pushf
@@ -6516,28 +6469,29 @@ setphysvars proc
     jz use1308
 
     mov si, offset diskinfobuffer
-    mov [si].DINFO1._size, sizeof DINFO1
+    mov [si].EDD30._size, sizeof EDD30
+    mov [si].EDD30.flags, 0
     mov dl, [ioreq.bDrive]
     mov ah, 48h                         ; get drive parameters
     @int13
     jc use1308
 
-    mov eax, [si].DINFO1.totalsecL
+    mov eax, [si].EDD10.totalsecL
 ife ?SN64                               ; HUGE hd support?
     dec eax
 else
-    mov edx, [si].DINFO1.totalsecH
+    mov edx, [si].EDD10.totalsecH
     sub eax, 1
     sbb edx, 0
     mov [dwDataendH], edx
 endif
     mov [dwDataend], eax
-    mov ax, [si].DINFO1.bps
+    mov ax, [si].EDD10.bps
     call setBps
     jc secsizeerror 
-    mov ax,word ptr [si].DINFO1.cyls
-    mov bl,byte ptr [si].DINFO1.heads
-    mov cl,byte ptr [si].DINFO1.secs
+    mov ax,word ptr [si].EDD10.cyls
+    mov bl,byte ptr [si].EDD10.heads
+    mov cl,byte ptr [si].EDD10.secs
     mov [cylinders], ax
     mov [heads], bl
     mov [sectors], cl
@@ -6575,7 +6529,7 @@ use1308:
     mul ebx                             ; * sectors
     dec eax                             ; - 1
     mov [dwDataend], eax
-    mov [diskinfobuffer.flags], 2
+    mov [diskinfobuffer.flags], FEDD_CHSVALID
     mov [ioreq.rwfunc], RWF_OLDINT13
 done:
     ret
@@ -7242,7 +7196,7 @@ readfile endp
 
 printentry proc
     cmp [bRegion], RG_FAT
-    jne abortentry
+    jne done
 
     call getentrynumber
     mov cl, COLENDHEX
@@ -7263,7 +7217,7 @@ printentry proc
     call fillattr
 
     call printstring
-abortentry:
+done:
     ret
 printentry endp
 
@@ -7436,7 +7390,7 @@ abortdc:
     call fillspace
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne done
-    test [diskinfobuffer.flags], 2     ; CHS valid?
+    test [diskinfobuffer.flags], FEDD_CHSVALID
     jz done
     mov [scrn_xy], (0 shl 8) or COLCHS
     mov dx, CStr("CHS: ")
@@ -7856,7 +7810,7 @@ nextaddress:
     ret
 printsector endp
 
-;--- print value of current offset in row 0.
+;--- print value of current offset (=spot) in row 0.
 ;--- in FAT view, print the entry#
 
 printoffset proc
@@ -7871,7 +7825,7 @@ printoffset proc
     call rendernumhex
     call printstring
 
-    call printentry                     ; if in FAT, print current entry (=cluster)
+    call printentry                     ; in FAT view, print current entry# (=cluster)
     ret
 
 printoffset endp
@@ -8028,7 +7982,7 @@ vinit proc
     xor cx, cx
     int 10h                               ; returns BH=00 if color mode
     or cx, cx
-    jz fth
+    jz noegavga
     mov bl, 30h
     mov ax, 1201h                         ; AL=01: 350 scan lines in next mode set
     int 10h
@@ -8042,7 +7996,6 @@ vinit proc
     mov ax, 1112h
     mov bl, 0
     int 10h                               ; select font 8x8 ROM
-fth:
     mov ax, 80*2
     mov ch, 43
     xor bx, bx
@@ -8080,8 +8033,16 @@ endif
     mov [scrn_xy], 1612h                  ; print copyright
     mov dx, offset copyright
     call printstring
-
     ret
+noegavga:                                 ; v1.0: exit if no acceptable video adapter
+if ?PM
+    call exitwdepm
+endif
+    mov dx, offset viderror
+    mov ah, 9
+    int 21h
+    mov ax, 4C01h
+    int 21h
 vinit endp
 
 clearscreen proc
@@ -8995,30 +8956,26 @@ if 0
     int 10h
 doneset:
 else
-    mov ah, [vidrows]
-    dec ah
-    mov al, 0
-    mov [scrn_xy], ax
-    push ax
-
-    call cbuffer_offset
-    mov ax, 07*100h+SPACE; 07=white on black
-    mov cx, MAXCOL+1
-    rep stosw
-
-    pop dx
+    mov dh, [vidrows]
+    dec dh
+    mov dl, 0
+    mov [scrn_xy], dx
     mov bh, [vidpg]
     mov ah, 2           ; set cursor pos to bottom line
     int 10h
     mov cx, 0808h       ; make cursor visible and set shape
     mov ah, 1
     int 10h
+    mov ax, 07*100h+SPACE; 07=white on black
+    mov cl, MAXCOL+1
+    call fillcell
 endif
 if ?PM
     @loadvec [oldint24]
     mov bl, 24h
     mov ax, 0205h
     int 31h
+    call exitwdepm
 else
     mov ax, 2524h
     lds dx, [oldint24]
@@ -9127,15 +9084,15 @@ movecursor:             ; IN:   ax = new [spot]
                         ;       dl = new [bHL]
     mov [spot], ax
     mov [bHL], dl
-    jmp printoffset       ; and print new offset & cursors
+    jmp printoffset     ; and print new offset (=spot) 
   
 ;-------------------------------------------------------
 
 checkabort:             ; sets equal flag if escape key was pressed
     push ax
     push dx
-    mov ah, 06h           ; direct input is used since it takes
-    mov dl, 0ffh          ; keys off the keybuffer
+    mov ah, 06h         ; direct input is used since it takes
+    mov dl, 0ffh        ; keys off the keybuffer
     int 21h
     cmp al, ESCAPE_KEY
     pop dx

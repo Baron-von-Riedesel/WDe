@@ -3,6 +3,9 @@ WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 WDe V1.00 [__.__.2022]
   - rearranged startup code so there's no writing to the screen before
     main() has been reached; makes debuggers happy.
+  - added timer.inc ( used by debug version )
+  - wdex.com: restore pm interrupt vectors.
+  - quick exit if no EGA/VGA detected.
 
 
 WDe V0.99 [20.06.2022]

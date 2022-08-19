@@ -1,5 +1,8 @@
 @echo off
-rem build WDE.COM with Masm and jwlink
+rem
+rem build WDE.COM with MS tools Masm/Link
+rem
 if not exist "build\NUL" mkdir build
-ml -c -nologo -Flbuild\wde.lst -Fo build\wde.obj src\wde.asm
-jwlink format dos file build\wde.obj name build\WDE.COM op m=build\wde.map,q
+rem
+ml -c -nologo -Flbuild\wde.lst -Fobuild\wde.obj src\wde.asm
+\msvc\bin\link /NOLOGO/MAP:FULL build\WDe.obj, build\WDe.exe, build\WDe.map;

@@ -239,7 +239,7 @@ getdescriptors endp
 ;--- WDe protected-mode init
 ;--- in: DS=SS=DGROUP, ES=PSP, CS=_TEXT
 
-wdepm proc
+initwdepm proc
     mov [_psp], es                ; update PSP to a selector
     call getdescriptors           ; get descriptors for _0000H & vidseg
     jc error
@@ -278,5 +278,19 @@ done:
 error:
     mov ax,4cffh
     int 21h
-wdepm endp
+initwdepm endp
+
+exitwdepm proc
+    mov bl, 13h
+    @loadvec [oldint13]
+    mov ax, 205h
+    int 31h
+    mov bl, 21h
+    @loadvec [oldint21]
+    int 31h
+    mov bl, 2Fh
+    @loadvec [oldint2f]
+    int 31h
+    ret
+exitwdepm endp
 

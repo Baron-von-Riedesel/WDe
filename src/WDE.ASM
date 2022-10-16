@@ -187,6 +187,8 @@ endif
         DIR_CLUST_LOW    EQU 1Ah
         DIR_FILESIZE     EQU 1Ch
 
+        DIRLFN_CHKSUM    EQU 0Dh
+
 ; ascii
 ;        BACKSPACE_KEY    EQU 8
 ;        TAB_KEY          EQU 9
@@ -419,37 +421,16 @@ DISKIO ends
 
 ;--- disk info returned by Int 13h, ah=48h
 
-EDD10 struct
-_size     dw ? ;+0
-flags     dw ?
-cyls      dd ? ;+4
-heads     dd ?
-secs      dd ? ;+12
+DINFO1 struct
+_size    dw ?
+flags    dw ?
+cyls     dd ?
+heads    dd ?
+secs     dd ?
 totalsecL dd ?
-totalsecH dd ? ;+20
-bps       dw ? ;+24
-EDD10 ends
-
-FEDD_CHSVALID equ 2
-
-EDD20 struct
-	EDD10 <>
-lpCfg dd ?
-EDD20 ends
-
-EDD30 struct
-	EDD20 <>
-wSig      dw ?			;+1E
-bLength   db ?			;+20 length of path
-          db 3 dup (?)	;    reserved        
-szBus     db 4 dup (?)	;+24
-szIFType  db 8 dup (?)	;+28
-qwIFPath  db 8 dup (?)	;+30
-szDevPath db 8 dup (?)	;+38
-          db ?			;+40
-bChecksum db ?			;+41
-          db 8 dup (?)  ;+42
-EDD30 ends
+totalsecH dd ?
+bps      dw ?
+DINFO1 ends
 
 CDREQ struct
 _size    db ?
@@ -829,7 +810,7 @@ stringbuffer    db 74 dup (?)   ; buffered string for find/fill
 stringlen       dw ?
 sprintfbuffer   db 80 dup (?)   ; buffer for sprintf
 ioreq           IOREQ <?>
-diskinfobuffer  EDD30 <>        ; buffer for int13h "get drive info"
+diskinfobuffer  DINFO1 <?>      ; buffer for int13h "get drive info"
 cdheader        CDREQ <?>       ; cd device request header
 drivepacket     DISKIO <?>      ; used by int 25h/26h and int 21h/ax=7305h
 dapacket        DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
@@ -4083,10 +4064,8 @@ srcommon endp
 
 submenu_fileoptions proc
 
-;--- CD, logical: F1=Input F2=Dump CD as ISO
-
     @mstart cdfileoptmenu
-    @mitem MS_Input, srsecrange
+    @mitem MS_Save_to_File, srsecrange
     @mitem MS_Dump_CD_As_ISO, dumpiso
     @mend cdfileoptmenu
 
@@ -4656,6 +4635,7 @@ foundfirst:
     mov [bIdx], al
 nextentry:
     call dispentry
+	jc entriesdone
     mov al, [si+bx]
     and al, 0C0h
     cmp al, 40h      ; last entry?
@@ -4693,6 +4673,9 @@ entriesdone:
     mov dx, CStr('(deleted)')
     cmp byte ptr [si+bx], 0E5h
     jz wronglfn
+	mov dx, offset sprintfbuffer
+    cmp [bIdx], -2   ; wrong checksum?
+	jz wronglfn
     cmp [bIdx], -1   ; chain correct?
     jnz done
     mov dx, CStr("(invalid)")
@@ -4765,6 +4748,38 @@ noprint:
     dec ch
     jnz nextti
     pop bp
+if 1
+;--- is checksum correct?
+;--- the checksum byte calculation needs the SFN,
+;--- so it's done here only if the SFN is in the same sector
+
+	mov sprintfbuffer, 0
+	movzx ax, byte ptr [si+bx]
+	and al, 3Fh
+	shl ax, 5
+	add ax, bx
+	cmp ax, 512
+	jnc nochksum
+	mov di, ax
+	add di, si
+	mov cx, 11
+	mov ah, 0
+@@:
+	mov al, [di]
+	ror ah, 1
+	add ah, al
+	inc di
+	loop @B
+	movzx cx, byte ptr [si+bx+DIRLFN_CHKSUM]
+	cmp ah, cl
+	jz nochksum
+	movzx ax, ah
+	mov dx, offset sprintfbuffer
+	invoke sprintf, dx, CStr("(chksum incorrect, %X/%X)"), ax, cx
+	mov [bIdx],-2
+	stc
+nochksum:
+endif
     ret
 
 ;--- translate character
@@ -6469,29 +6484,28 @@ setphysvars proc
     jz use1308
 
     mov si, offset diskinfobuffer
-    mov [si].EDD30._size, sizeof EDD30
-    mov [si].EDD30.flags, 0
+    mov [si].DINFO1._size, sizeof DINFO1
     mov dl, [ioreq.bDrive]
     mov ah, 48h                         ; get drive parameters
     @int13
     jc use1308
 
-    mov eax, [si].EDD10.totalsecL
+    mov eax, [si].DINFO1.totalsecL
 ife ?SN64                               ; HUGE hd support?
     dec eax
 else
-    mov edx, [si].EDD10.totalsecH
+    mov edx, [si].DINFO1.totalsecH
     sub eax, 1
     sbb edx, 0
     mov [dwDataendH], edx
 endif
     mov [dwDataend], eax
-    mov ax, [si].EDD10.bps
+    mov ax, [si].DINFO1.bps
     call setBps
     jc secsizeerror 
-    mov ax,word ptr [si].EDD10.cyls
-    mov bl,byte ptr [si].EDD10.heads
-    mov cl,byte ptr [si].EDD10.secs
+    mov ax,word ptr [si].DINFO1.cyls
+    mov bl,byte ptr [si].DINFO1.heads
+    mov cl,byte ptr [si].DINFO1.secs
     mov [cylinders], ax
     mov [heads], bl
     mov [sectors], cl
@@ -6529,7 +6543,7 @@ use1308:
     mul ebx                             ; * sectors
     dec eax                             ; - 1
     mov [dwDataend], eax
-    mov [diskinfobuffer.flags], FEDD_CHSVALID
+    mov [diskinfobuffer.flags], 2
     mov [ioreq.rwfunc], RWF_OLDINT13
 done:
     ret
@@ -6913,7 +6927,7 @@ notfound:
 
 IsExfatDir endp
 
-;--- scan read buffer if it contains a directory (FAT type)
+;--- scan read buffer if it contains directory entries (FAT type)
 ;--- IN: SI=sector buffer
 ;--- OUT: not found: carry set
 ;---      found    : carry cleared
@@ -6938,7 +6952,7 @@ IsDirectory proc
 
 nextentry:
 
-;    cmp byte ptr [si+12+bx], 0         ; NT series *does* use this byte,
+;    cmp byte ptr [si+bx+12], 0         ; NT series *does* use this byte,
 ;    jne notfound                       ; so it may not be 0 on drives that
 ;                                       ; have been messed with by NT
     mov cl, 10
@@ -6986,14 +7000,14 @@ dontcheckseconddate:
 
     cmp eax, 0FFFFFF7h                          ; cluster can't be EOC and
     jae notfound                                ; the top nibble must = 0
-    cmp dword ptr [si+16h+bx], 0                ; pointless?
+    cmp dword ptr [si+bx+DIR_LASTUPDTIME], 0    ; check both time/date (pointless?)
     je notfound
 
     test byte ptr [si+bx+DIR_ATTRIBUTES], DIRECTORY  ; directory?
     jz entrynotdirectory
     test byte ptr [si+bx+DIR_ATTRIBUTES], VOLUME     ; can't also be a label.
     jnz notfound
-    cmp dword ptr [si+bx+DIR_FILESIZE], 0            ; filesize must = 0   
+    cmp dword ptr [si+bx+DIR_FILESIZE], 0 ; "size" of directories "should" be 0
     jne notfound
 entrynotdirectory:
 
@@ -7390,7 +7404,7 @@ abortdc:
     call fillspace
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne done
-    test [diskinfobuffer.flags], FEDD_CHSVALID
+    test [diskinfobuffer.flags], 2     ; CHS valid?
     jz done
     mov [scrn_xy], (0 shl 8) or COLCHS
     mov dx, CStr("CHS: ")
@@ -8538,6 +8552,8 @@ nextattr:
 printerror endp
 
 ;--- check char if it is a valid filename char
+;--- AL must be preserved
+
 validpathchar proc
 ife ?LFN
     cmp al, BACK_SLASH
@@ -8583,6 +8599,8 @@ validfilechar:
     je validchar
     cmp al, BACK_SLASH
     je invalidchar
+	and al, al
+	js checkoem
     cmp al, 'a'                   ; no lower case letters
     jae invalidchar
 validchar:
@@ -8591,6 +8609,17 @@ validchar:
 invalidchar:
     stc
     ret
+checkoem:
+;--- check special chars
+	int 3
+	push bx
+	mov bl, al
+	and bl, 7Fh
+	mov bh, 0
+	bt [oembittab],bx
+	pop bx
+	jnc invalidchar
+	jmp validchar
 validpathchar endp
 
 if ?LFN

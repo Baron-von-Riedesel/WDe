@@ -267,10 +267,10 @@ WDe User Manual
 
     3.3 - CD-Rom drives
 
-      For CD-Rom drives, WDe uses int2Fh's ax=1510h to read, though
-      drives cannot be written to as it is not supported by any known
-      CD-RW drives although WDe should write correctly if a drive were
-      to support it.  Drive parameters are obtained from the first
+      For CD-Rom drives, WDe uses int 2Fh, ax=1510h for read access. 
+      Usually, drives cannot be written to as it is not supported by any
+      known CD-RW drives although WDe should write correctly if a drive
+      were to support it.  Drive parameters are obtained from the first
       sector.  Due to CD-Rom sector size (2048/2352 bytes), WDe addresses
       them in separate sections.
 

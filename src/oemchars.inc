@@ -13,3 +13,17 @@ oemchars label byte
     db   0,  0,  0,  0,132,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0  ;e0-ef
     db   0,  0,  0,  0,  0,  0,148,  0,  0,  0,  0,  0,129,  0,  0,  0  ;f0-ff
 
+;--- accepted OEM chars in SFNs
+;--- currently German upper case umlauts (8E/99/9A) and "sz" (E1)
+
+oembittab label word
+;---------0---0---0---0
+;---------C---8---4---0
+	dw 0100000000000000b ;8X
+	dw 0000011000000000b ;9X
+	dw 0000000000000000b ;AX
+	dw 0000000000000000b ;BX
+	dw 0000000000000000b ;CX
+	dw 0000000000000000b ;DX
+	dw 0000000000000010b ;EX
+	dw 0000000000000000b ;FX

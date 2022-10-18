@@ -663,7 +663,7 @@ validatecmd:
     pop eax
     jnz invalidDir              ; if not, skip.
 
-    test byte ptr [si+DIR_ATTRIBUTES], DIRECTORY
+    test byte ptr [si+DIR_ATTRIBUTES], DA_DIRECTORY
     jz validate_done            ; jump if not a directory
 
     mov cx, [wDirs]

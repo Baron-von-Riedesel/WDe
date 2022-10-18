@@ -168,12 +168,12 @@ endif
         NEWINT13_WRITE_FLAG     EQU NO_VERIFY
 
 ; directory entry attribute bits
-        READONLY         EQU 00000001b
-        HIDDEN           EQU 00000010b
-        SYSTEM           EQU 00000100b
-        VOLUME           EQU 00001000b
-        DIRECTORY        EQU 00010000b
-        ARCHIVE          EQU 00100000b
+        DA_READONLY      EQU 00000001b
+        DA_HIDDEN        EQU 00000010b
+        DA_SYSTEM        EQU 00000100b
+        DA_VOLUME        EQU 00001000b
+        DA_DIRECTORY     EQU 00010000b
+        DA_ARCHIVE       EQU 00100000b
 
 ; fat directory data offsets
         DIR_ATTRIBUTES   EQU 0Bh
@@ -272,7 +272,7 @@ endif
         SR_SAVE          EQU 0
         SR_RESTORE       EQU 1
 
-; "chainflag" variable
+; "chainmode" variable
         NO_CHAIN         EQU 0
         FILE_CHAIN       EQU 1
         FAT_CHAIN        EQU 2
@@ -761,8 +761,8 @@ srflag          db ?            ; "file ops" menu flag
 undelflag       db ?            ; 
 driveflag       db ?            ; setdrive gets File or Drive? 0/1 respective
 commandflag     db ?            ; used by unformat
-chainflag       db ?            ; dictates what type of chain to save
-                                ; fat links/file
+chainmode       db ?            ; type of chain to save/restore (FAT/FILE)
+
 heads           db ?
 sectors         db ?
 handling        db ?            ; inside diskaccess(): how to handle errors
@@ -785,6 +785,7 @@ bShift          db ?            ; kbd shift status
 bUpdateMenu     db ?            ; 1=menu update required
 bUpdateScreen   db ?
 bUpdateView     db ?
+bIsDirectory    db ?            ; for "save file chain", 1 if file is a dir
 
     align dword
 if ?DEBUG
@@ -1375,6 +1376,7 @@ resetmenustack proc
 resetmenustack endp
 
 ;--- set menuitem CL to AL
+;--- if item changes AND is currently shown, set bUpdateMenu=1
 
 setmenuitem proc
     push bx
@@ -3689,13 +3691,13 @@ done:
 getfatxname endp
 
 ;--- submenu file options, key F7
-;--- IN: [chainflag] = FAT_CHAIN or FILE_CHAIN
+;--- IN: [chainmode] = FAT_CHAIN or FILE_CHAIN
 
 savechain proc
     mov [fromfat], FF_FAT1
     mov [bSkipFat], 0
     xor ebp, ebp
-    cmp [chainflag], FAT_CHAIN
+    cmp [chainmode], FAT_CHAIN
     je beginfatchainsave
 
 ;--- we're in a directory and are to save a file chain
@@ -3709,6 +3711,8 @@ savechain proc
 
     mov eax, dword ptr [si+bx+DIR_FILESIZE] ; filesize
     mov [dwFilesize], eax
+    test byte ptr [si+bx+DIR_ATTRIBUTES], DA_DIRECTORY
+    setnz bIsDirectory
     mov ax, word ptr [si+bx+DIR_CLUST_HIGH] ; high cluster word
     shl eax, 16
     mov ax, word ptr [si+bx+DIR_CLUST_LOW]  ; low cluster word
@@ -3826,7 +3830,12 @@ mydisp:
     jmp printbottom
 
 donechainsave:
-    cmp [chainflag], FAT_CHAIN          ; file chain?
+    cmp [chainmode], FAT_CHAIN          ; file chain?
+    je notruncate
+
+;--- if file chain is for a directory, file size is 0
+;--- in this case, don't ask if file is to be truncated.
+    cmp bIsDirectory, 1
     je notruncate
 
     mov ax, 4201h                       ; then seek from current file position
@@ -3869,7 +3878,7 @@ savechain endp
 
 ;--- called from submenu "file options"
 ;--- restore a cluster chain from a file
-;--- IN: [chainflag] = FAT_CHAIN or FILE_CHAIN
+;--- IN: [chainmode] = FAT_CHAIN or FILE_CHAIN
 ;        entry of file in DTA
 
 restorechain proc
@@ -3878,7 +3887,7 @@ restorechain proc
 ;    mov eax, [dwCurSector]
 ;    mov [dwSecBackup], eax
 
-    cmp [chainflag], FILE_CHAIN
+    cmp [chainmode], FILE_CHAIN
     jz @F
     call getcurrententry
     mov eax, ebx
@@ -4060,7 +4069,7 @@ sr_ok:
     ret
 srcommon endp
 
-;--- submenu "file options"
+;--- submenu "file options" for items "save to file"/"restore from file"
 
 submenu_fileoptions proc
 
@@ -4110,9 +4119,14 @@ submenu_fileoptions proc
     cmp [ioreq.drvtype], DT_PHYSICAL
     je setxxfileopt
 
-;--- for FAT drives, check if the menu item "chain" is to be added
+;--- for FAT drives, refresh menu item "chain"
 
-    mov [chainflag], NO_CHAIN      ; reset chain flag
+;    mov [chainmode], NO_CHAIN      ; reset chain flag
+	push cx
+	mov ah, NO_CHAIN
+	call setchainmode
+	pop cx
+	mov [bUpdateView], 1
 
 ;--- set menu "input, boot sector, fat1, ..."
 
@@ -4134,7 +4148,7 @@ srdisk:                            ; save/restore partition to/from file
     jmp dumpiso
 
 srchain:                           ; save/restore chain to/from file
-    cmp [chainflag], NO_CHAIN
+    cmp [chainmode], NO_CHAIN
     je @F
     cmp [srflag], SR_RESTORE
     je restorechain
@@ -4830,16 +4844,12 @@ exfat_dirview proc
 
 ;--- (de)activate "Chain"
 
-    mov al, MS_INACTIVE
     mov ah, NO_CHAIN
     cmp [si+bx].EXFDIRP.etype, 0C0h          ; file stream entry?
     jnz @F
-    mov al, MS_Chain
     mov ah, FILE_CHAIN
 @@:
-    mov [chainflag], ah
-    mov cl, LDFILEOPT_CHAIN
-    call setmenuitem
+    call setchainmode
 
     mov [scrn_xy], VIEWROW * 100h + 1
     mov cl, 78
@@ -5075,18 +5085,14 @@ dirview proc
 
 ;--- de(activate) "chain" in "file options" menu.
 
-    mov al, MS_INACTIVE
     mov ah, NO_CHAIN
     cmp byte ptr [si+bx], 0      ; dir entry empty?
     jz @F
     cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
     jz @F
-    mov al, MS_Chain
     mov ah, FILE_CHAIN
 @@:
-    mov [chainflag], ah
-    mov cl, LDFILEOPT_CHAIN
-    call setmenuitem
+    call setchainmode
 
 if ?EXT
 ;--- (de)activate "undelete" in "functions" menu depending on current entry status
@@ -5330,17 +5336,21 @@ nextchar:
 
 printattr endp
 
+;--- set AH=[chainmode] and menu item "Chain"
 
-chainmenuitem proc
+setchainmode proc
 
-    mov [chainflag], FAT_CHAIN   ; we're in a FAT
+    mov al, MS_INACTIVE
+    cmp ah, NO_CHAIN
+    jz @F
     mov al, MS_Chain
+@@:
+    mov [chainmode], ah
     mov cl, LDFILEOPT_CHAIN
     call setmenuitem
     ret
 
-chainmenuitem endp
-
+setchainmode endp
 
 ;--- FAT32/EXFAT view - 7 rows and 9 clusters/row are shown.
 ;--- in total that fits in 15 lines: 0,36,72,108,144,180,216,252,288,324,360,396,432,468,504
@@ -5351,7 +5361,8 @@ CLBYTES_PER_ROW = CLUSTER_PER_ROW * sizeof dword
 
 fat32viewmode proc
 
-    call chainmenuitem
+    mov ah, FAT_CHAIN
+    call setchainmode
 
     xor ebx, ebx
     call getentrynumberX
@@ -5422,7 +5433,8 @@ CLBYTES_PER_ROW = CLUSTER_PER_ROW * sizeof word
 
 fat16viewmode proc
 
-    call chainmenuitem
+    mov ah, FAT_CHAIN
+    call setchainmode
 
     xor ebx, ebx
     call getentrynumberX
@@ -5494,7 +5506,8 @@ CLBYTES_PER_ROW = 27 ; that's 18 * 1.5 (12 bits/entry)
 
 fat12viewmode proc
 
-    call chainmenuitem
+    mov ah, FAT_CHAIN
+    call setchainmode
 
     xor ebx, ebx
     call getentrynumberX
@@ -7003,9 +7016,9 @@ dontcheckseconddate:
     cmp dword ptr [si+bx+DIR_LASTUPDTIME], 0    ; check both time/date (pointless?)
     je notfound
 
-    test byte ptr [si+bx+DIR_ATTRIBUTES], DIRECTORY  ; directory?
+    test byte ptr [si+bx+DIR_ATTRIBUTES], DA_DIRECTORY  ; directory?
     jz entrynotdirectory
-    test byte ptr [si+bx+DIR_ATTRIBUTES], VOLUME     ; can't also be a label.
+    test byte ptr [si+bx+DIR_ATTRIBUTES], DA_VOLUME     ; can't also be a label.
     jnz notfound
     cmp dword ptr [si+bx+DIR_FILESIZE], 0 ; "size" of directories "should" be 0
     jne notfound

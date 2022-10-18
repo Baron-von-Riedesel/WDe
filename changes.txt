@@ -6,7 +6,12 @@ WDe V1.00 [__.__.2022]
   - added timer.inc ( used by debug version )
   - wdex.com: restore pm interrupt vectors.
   - quick exit if no EGA/VGA detected.
-
+  - wrong checksum of LFN entries detected.
+  - accept (some) OEM chars in SFNs (oemchar.inc, oembittab)
+  - fixed: sometimes, "chain" menu item was shown, but key F7 didn't
+    start the op.
+  - if a directory is to be saved as a file chain, don't ask if file
+    is to be truncated ( since file size is always 0 then ).
 
 WDe V0.99 [20.06.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.

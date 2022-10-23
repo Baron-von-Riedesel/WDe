@@ -27,7 +27,7 @@ cluster2sector proc
     add eax, [dwDataStart]
     jc errem2
 
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     je skipfat32adjust
     cmp [dwRootCluster], 2
     ja skipfat32adjust
@@ -57,7 +57,7 @@ sector2cluster proc
     loop @B
 skipfats:
 
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jnz @F
     mov cx, [wRootsectors]
     sub eax, ecx
@@ -97,7 +97,7 @@ getfatentry proc
     call locatefatentry               ; will set BX=offset in sector
     jc abort
     mov si, [pFatCache]
-    cmp [filesys], FS_FAT12
+    cmp [bFilesys], FS_FAT12
     jne fat1632
 
     push [dwFatSector]
@@ -118,7 +118,7 @@ f12gfs:
                                       ; to 0FFFFFFxh
 fat1632:
     mov eax, dword ptr [si+bx]
-    test [filesys], FS_FAT32          ; FAT32 or exFAT?
+    test [bFilesys], FS_FAT32         ; FAT32 or exFAT?
     jnz f32gfd
 f16gfd:
     movzx eax, ax                     ; clear top word for fat12/fat16
@@ -154,7 +154,7 @@ putfatentry proc
     call locatefatentry                 ; will copy FAT sector into FAT cache buffer
     jc abortpfe
     mov si, [pFatCache]
-    cmp [filesys], FS_FAT12
+    cmp [bFilesys], FS_FAT12
     jne dof132
 
     push [dwFatSector]
@@ -176,7 +176,7 @@ pmethod2:
 ;--- FAT16/FAT32
 
 dof132:
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     je isfat1x
 ;fat32pfe:
     and dword ptr [si+bx], 0F0000000h   ; preserve highest nibble in fat32
@@ -242,7 +242,7 @@ else
     jb done                     ; C set if ebx > dwLastCluster
 endif
 
-    mov cl, [filesys]           ; convert cluster number to FAT offset
+    mov cl, [bFilesys]          ; convert cluster number to FAT offset
     and cl, FS_FAT12 or FS_FAT16 or FS_FAT32
     shr cl, 1                   ; FAT32: 4->2, FAT16: 2->1, FAT12: 1->0
     jnz @F
@@ -411,7 +411,7 @@ getentrynumberX::              ; <--- if just the entry# of the sector start int
 ;--- here eax contains relative offset of current spot within FAT
 ;--- it's now to be divided thru 1.5 (FAT12), 2 (FAT16) or 4 (FAT32/exFAT)
 
-    mov cl, [filesys]                           ; 12=exFAT,4=FAT32,2=FAT16,1=FAT12
+    mov cl, [bFilesys]                          ; 12=exFAT,4=FAT32,2=FAT16,1=FAT12
     and cl, FS_FAT12 or FS_FAT16 or FS_FAT32    ; mask out the exFAT bit
     shr cl, 1             ; 4->2, 2->1, 1->0
     jz isfat12
@@ -436,7 +436,7 @@ getentrynumber endp
 ;
 ;-----------------------------------------------------------------
 go2entry proc
-    cmp [filesys], FS_FAT12
+    cmp [bFilesys], FS_FAT12
     jne nosmd
     mov ecx, 3
     mul ecx
@@ -448,7 +448,7 @@ noinc12:
     jmp sub512
 nosmd:
 
-    mov cl, [filesys]
+    mov cl, [bFilesys]
     and cl, FS_FAT12 or FS_FAT16 or FS_FAT32
     shr cl, 1
     shl eax, cl

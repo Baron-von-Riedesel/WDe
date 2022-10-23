@@ -1,4 +1,3 @@
-WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
 
 WDe User Manual
 
@@ -9,7 +8,6 @@ WDe User Manual
   2.2       Navigation and Editing
   3.0       Drive Support
   3.1       Physical Disks
-  3.1.1     BIOS Notes
   3.2       Logical Drives
   3.3       CD-Rom Drives
   3.4       Disk Images
@@ -100,6 +98,9 @@ WDe User Manual
     Alt+PgDown    - Forward 1 cluster
     Enter         - If in directory, jump to start cluster of entry
 
+    Keys in GPT of physical disks:
+
+    Enter         - Jump to start LBA of entry
 
 
   1.0 - Initial Screen and Commandline
@@ -243,16 +244,17 @@ WDe User Manual
       respectively.  Note that the 'CHS:' information rolls over to 0
       when a high enough sector is reached if the drive is big enough.
 
-      3.1.1 - BIOS Notes
+      Physical disks may be limited by the BIOS. If in doubt, a quick
+      calculation should be done by going to the last sector of the disk,
+      multiplying that value by 512 and ensuring that the result is the
+      actual size of the disk. If not, then it's likely that your BIOS
+      needs to be updated to support the drive.
 
-        Physical disks read by WDe are often limited by the BIOS.
-        A quick calculation should be done by going to the last sector
-        of the disk, multiplying that value by 512 and ensuring that
-        the result is the actual size of the disk.
-
-        If not, then it's likely that your BIOS needs to be updated
-        to support the drive.  It's also possible that WDe contains
-        a bug and is not reading it correctly.
+      Sector 0 of physical hard disks should contain a MBR ( Master Boot
+      Record ), containing partitioning information. This is true even if
+      the disk is "GPT partitioned", it's called a "protective" MBR then.
+      WDe should be able to detect and handle both MBR and GPT partitioned
+      disks, although it currently is limited to disk sizes of 2 TB.
 
     3.2 - Logical drives (A:, C:, etc)
 

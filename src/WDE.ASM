@@ -54,233 +54,266 @@ endif
 ?MOUNT           EQU 1  ; 1=support cmdline option -m
 ?EXTVIEW         EQU 0  ; 1=extended exFAT direntry view
 ?ALTKEYS         EQU 1  ; 1=handle Alt-Left/Right
+?GPT             EQU 1  ; 1=support GPT
 
-        BOTTOMROW        equ 42 ; last row (menu, messages)
-        MAXCOL           equ 79 ; last col
-        ROWXXX           equ 1  ; row where all displays start
-        VIEWROW          equ 34 ; start of "view" area
-        COLHEX           equ  9 ; column where hex display starts
-        COLBIN           equ 10 ; column where binary display starts
-        COLASC           equ 63 ; column where ascii display starts
+TRUE  equ 1
+FALSE equ 0
+
+BOTTOMROW        equ 42 ; last row (menu, messages)
+MAXCOL           equ 79 ; last col
+ROWXXX           equ 1  ; row where all displays start
+VIEWROW          equ 34 ; start of "view" area
+COLHEX           equ  9 ; column where hex display starts
+COLBIN           equ 10 ; column where binary display starts
+COLASC           equ 63 ; column where ascii display starts
 
 ;--- top line columns
-        COLOFFST         equ  1 ; column where text "offset:" is displayed
-        COLOFFS          equ  9 ; column where value of offset is displayed
-        COLSECTORT       equ 14 ; column where text "sector:" is displayed
-        COLSECTOR        equ 22 ; column where value of sector is displayed
-        COLREGION        equ 35 ; column where region "[xxxx]" is displayed
-        COLENDHEX        equ 59 ; end hex area ( used to display "cluster: xxx" )
-        COLCHS           equ 63 ; column where CHS: c/h/s is displayed
+COLOFFST         equ  1 ; column where text "offset:" is displayed
+COLOFFS          equ  9 ; column where value of offset is displayed
+COLSECTORT       equ 14 ; column where text "sector:" is displayed
+COLSECTOR        equ 22 ; column where value of sector is displayed
+COLREGION        equ 35 ; column where region "[xxxx]" is displayed
+COLENDHEX        equ 59 ; end hex area ( used to display "cluster: xxx" )
+COLCHS           equ 63 ; column where CHS: c/h/s is displayed
 
-        COLBSV1          equ 23 ; bootsector view pos 1
-        COLBSV2          equ 63 ; bootsector view pos 2
-        VIEWBYTES        equ 32*16 ; 32 rows a 16 bytes
+COLBSV1          equ 23 ; bootsector view pos 1
+COLBSV2          equ 63 ; bootsector view pos 2
+VIEWBYTES        equ 32*16 ; 32 rows a 16 bytes
 
-        CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
-        DIRENTSIZE       EQU 32   ; size of directory entry (FATxx + exFAT)
-        PTABOFS          equ 1BEh ; offset partititon table in MBR
+CD_SECTOR_OFFSET EQU 10h  ; can't read first 16 sectors of CDs
+DIRENTSIZE       EQU 32   ; size of directory entry (FATxx + exFAT)
+PTABOFS          equ 1BEh ; offset partititon table in MBR
 
-        DARKMASK         equ 0F700h
-        NORMMASK         equ 0FF08h
+DARKMASK         equ 0F700h
+NORMMASK         equ 0FF08h
 
-; "bRW" variable
-        RW_READ          EQU 0
-        RW_WRITE         EQU 1
-
-; "filesys" variable
-        FS_UNDEFINED     EQU 0
-        FS_FAT12         EQU 1  ; bits 0-2 (FAT12-FAT32) must not be changed;
-        FS_FAT16         EQU 2  ; they are used to calculate a shift factor.
-        FS_FAT32         EQU 4
-        FS_EXFAT         EQU 8 or FS_FAT32
-        FS_FATXX         EQU FS_FAT12 or FS_FAT16 or FS_FAT32 or FS_EXFAT
-        FS_NTFS          EQU 16
-
-; "bRegion" variable for figuring out what section we're on in the drive
-        RG_UNDEFINED     EQU 0
-        RG_RESERVED      EQU 00010000b
-        RG_FAT           EQU 00100000b
-        RG_ROOT          EQU 01000000b
-        RG_DATA          EQU 10000000b
-
-        ; if "region" does not have any of the lower 4 bits set, then
-        ; it is set with a viewmode
-
-; "viewmode" defines what the section at the bottom of the screen just above
-; the menu is used to display (for additional information)
-        VM_DATA          EQU 0          ; not manually set mode
-        VM_MBR           EQU 1
-        VM_BOOTSECTOR    EQU 2
-        VM_FAT12         EQU 3
-        VM_FAT16         EQU 4
-        VM_FAT32         EQU 5
-        VM_DIRECTORY     EQU 6
-        VM_FSINFO        EQU 10000000b  ; not manually set mode     
-
-; "viewmode2"
-        VM2_AUTODETECT   EQU 0
-        VM2_STATIC       EQU 1
-
-; colors for the display
+;--- colors for the display
 ifdef ?MONO
-        COL_EDIT         EQU 70h         ; just use black/white/grey
-        COL_DEFAULT      EQU 0fh
-        COL_INACTIVE     EQU 07h
-        COL_HIGHLIGHT    EQU 0F0h
+COL_EDIT         EQU 70h         ; just use black/white/grey
+COL_DEFAULT      EQU 0fh
+COL_INACTIVE     EQU 07h
+COL_HIGHLIGHT    EQU 0F0h
 else
-;        COL_EDIT         EQU 0cah        ; light green on red
-        COL_EDIT         EQU 0B0h        ; black on light cyan
-        COL_DEFAULT      EQU 1fh         ; white on blue
-        COL_INACTIVE     EQU 17h         ; light grey on blue
-        COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
-        COL_GREENFG      EQU 1Ah         ; light green on blue
-        COL_STATTEXT     EQU 17h         ; light grey on blue
+;COL_EDIT         EQU 0cah        ; light green on red
+COL_EDIT         EQU 0B0h        ; black on light cyan
+COL_DEFAULT      EQU 1fh         ; white on blue
+COL_INACTIVE     EQU 17h         ; light grey on blue
+COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
+COL_GREENFG      EQU 1Ah         ; light green on blue
+COL_STATTEXT     EQU 17h         ; light grey on blue
 endif
 
-; "editmode" variable
-        EM_DEFAULT       EQU 0
-        EM_ASCII         EQU 1
+; "bRW" variable
+RW_READ          EQU 0
+RW_WRITE         EQU 1
 
-; "displaymode" variable
-        DM_HEX           EQU 0
-        DM_BINARY        EQU 1
+; "bFilesys" variable
+FS_UNDEFINED     EQU 0
+FS_FAT12         EQU 1  ; bits 0-2 (FAT12-FAT32) must not be changed;
+FS_FAT16         EQU 2  ; they are used to calculate a shift factor.
+FS_FAT32         EQU 4
+FS_EXFAT         EQU 8 or FS_FAT32
+FS_FATXX         EQU FS_FAT12 or FS_FAT16 or FS_FAT32 or FS_EXFAT
+FS_NTFS          EQU 16
+
+; "bRegion" variable for figuring out what section we're on in the drive
+; it's meant for FAT disks only - if bits 4-7 are 0, bits 0-3 may contain
+; "viewmode" ( VM_MBR ).
+; if "bRegion" does not have any of the lower 4 bits set, then
+; it is set with a viewmode.
+RG_UNDEFINED     EQU 0
+RG_RESERVED      EQU 00010000b
+RG_FAT           EQU 00100000b
+RG_ROOT          EQU 01000000b
+RG_DATA          EQU 10000000b
+
+;--- "bViewmode" defines what the section at the bottom of the screen just above
+;--- the menu is used to display (for additional information)
+;--- VM_MBR to VM_DIRECTORY are tied to menu keys F2-F7!
+VM_DATA          EQU 0  ; not manually set mode
+VM_MBR           EQU 1
+VM_BOOTSECTOR    EQU 2
+VM_FAT12         EQU 3
+VM_FAT16         EQU 4
+VM_FAT32         EQU 5
+VM_DIRECTORY     EQU 6
+VM_FSINFO        EQU 7  ; not manually set mode     
+if ?GPT
+VM_GPTHDR        EQU 8  ; not manually set mode     
+VM_GPTENTRY      EQU 9  ; not manually set mode     
+endif
+
+; "bEditmode" variable
+EM_DEFAULT       EQU 0
+EM_ASCII         EQU 1
+
+; "bDisplaymode" variable
+DM_HEX           EQU 0
+DM_BINARY        EQU 1
 
 ;--- drvtype and rwfunc are connected
 
 ; "drvtype" variable
-        DT_PHYSICAL      EQU 0
-        DT_LOGICAL       EQU 2
-        DT_CDROM         EQU 4           ; CD-ROM is actually also a "logical" drive
-        DT_FILE          EQU 6
+DT_PHYSICAL      EQU 0
+DT_LOGICAL       EQU 2
+DT_CDROM         EQU 4           ; CD-ROM is actually also a "logical" drive
+DT_FILE          EQU 6
 
 ; "rwfunc" variable
-        RWF_OLDINT13     EQU 0
-        RWF_NEWINT13     EQU 1
-        RWF_OLDLOGICAL   EQU 2
-        RWF_NEWLOGICAL   EQU 3
-        RWF_CDCOOKED     EQU 4
-        RWF_CDRAW        EQU 5
-        RWF_FILE         EQU 6
+RWF_OLDINT13     EQU 0
+RWF_NEWINT13     EQU 1
+RWF_OLDLOGICAL   EQU 2
+RWF_NEWLOGICAL   EQU 3
+RWF_CDCOOKED     EQU 4
+RWF_CDRAW        EQU 5
+RWF_FILE         EQU 6
 
 ; flags for int 13h, ah=43h (RWF_NEWINT13 write)
-        NO_VERIFY               EQU 0
-        VERIFY                  EQU 2
-        NEWINT13_WRITE_FLAG     EQU NO_VERIFY
+NO_VERIFY               EQU 0
+VERIFY                  EQU 2
+NEWINT13_WRITE_FLAG     EQU NO_VERIFY
+
+SFNENTRY struct
+name_   db 11 dup (?)
+bAttr   db ?     ;+0B
+bRes    db ?     ;+0C
+bCreMSec db ?    ;+0D ms past creation
+wCreTime dw ?    ;+0E creation time (DOS 7)
+wCreDate dw ?    ;+10 creation date (DOS 7)
+wLADate  dw ?    ;+12 last access date (DOS 7)
+wClHigh  dw ?    ;+14 hiword start cluster#
+wLUTime  dw ?    ;+16 modified time
+wLUDate  dw ?    ;+18 modified date
+wClLow   dw ?    ;+1A loword start cluster#
+dwSize   dd ?    ;+1C file size in bytes
+SFNENTRY ends
 
 ; directory entry attribute bits
-        DA_READONLY      EQU 00000001b
-        DA_HIDDEN        EQU 00000010b
-        DA_SYSTEM        EQU 00000100b
-        DA_VOLUME        EQU 00001000b
-        DA_DIRECTORY     EQU 00010000b
-        DA_ARCHIVE       EQU 00100000b
+DA_READONLY      EQU 00000001b
+DA_HIDDEN        EQU 00000010b
+DA_SYSTEM        EQU 00000100b
+DA_VOLUME        EQU 00001000b
+DA_DIRECTORY     EQU 00010000b
+DA_ARCHIVE       EQU 00100000b
 
-; fat directory data offsets
-        DIR_ATTRIBUTES   EQU 0Bh
-        DIR_CREATEMSEC   EQU 0Dh
-        DIR_CREATETIME   EQU 0Eh
-        DIR_CREATEDATE   EQU 10h
-        DIR_LASTACCDATE  EQU 12h
-        DIR_CLUST_HIGH   EQU 14h
-        DIR_LASTUPDTIME  EQU 16h
-        DIR_LASTUPDDATE  EQU 18h
-        DIR_CLUST_LOW    EQU 1Ah
-        DIR_FILESIZE     EQU 1Ch
+; fat directory data offsets - replaced by SFNENTRY.x
+;DIR_ATTRIBUTES   EQU 0Bh
+;DIR_CREATEMSEC   EQU 0Dh
+;DIR_CREATETIME   EQU 0Eh
+;DIR_CREATEDATE   EQU 10h
+;DIR_LASTACCDATE  EQU 12h
+;DIR_CLUST_HIGH   EQU 14h
+;DIR_LASTUPDTIME  EQU 16h
+;DIR_LASTUPDDATE  EQU 18h
+;DIR_CLUST_LOW    EQU 1Ah
+;DIR_FILESIZE     EQU 1Ch
 
-        DIRLFN_CHKSUM    EQU 0Dh
+LFNENTRY struct
+bIdx     db ?           ;+00
+wName0   dw 5 dup (?)   ;+01 name chars 0-4
+bAttr    db ?           ;+0B
+         db ?           ;+0C
+bChkSum  db ?           ;+0D chksum of SFNENTRY.name_
+wName5   dw 6 dup (?)   ;+0E name chars 5-10
+         dw ?           ;+1A
+wNameB   dw 2 dup (?)   ;+1C name chars 11-12
+LFNENTRY ends
+
+;DIRLFN_CHKSUM    EQU 0Dh
 
 ; ascii
-;        BACKSPACE_KEY    EQU 8
-;        TAB_KEY          EQU 9
-;        CTRLENTER_KEY    EQU 10
-        ENTER_KEY        EQU 13
-        ESCAPE_KEY       EQU 27
+;BACKSPACE_KEY    EQU 8
+;TAB_KEY          EQU 9
+;CTRLENTER_KEY    EQU 10
+ENTER_KEY        EQU 13
+ESCAPE_KEY       EQU 27
 
-        SPACE            EQU ' ' ;20h
-        DOUBLE_QUOTE     EQU '"' ;22h
-        PERCENT          EQU '%' ;25h
-        ASTERISK         EQU '*' ;2ah
-        COMMA            EQU ',' ;2ch
-        PERIOD           EQU '.' ;2eh
-        FORWARD_SLASH    EQU '/' ;2fh
-        COLON            EQU ':' ;3ah
-        SEMICOLON        EQU 3bh; ';' ;3bh
-        LESS_THAN        EQU '<' ;3ch
-        GREATER_THAN     EQU '>' ;3eh
-        QUESTION_MARK    EQU '?' ;3fh
-        BACK_SLASH       EQU '\' ;5Ch
-        PIPE             EQU '|' ;7ch
+SPACE            EQU ' ' ;20h
+DOUBLE_QUOTE     EQU '"' ;22h
+PERCENT          EQU '%' ;25h
+ASTERISK         EQU '*' ;2ah
+COMMA            EQU ',' ;2ch
+PERIOD           EQU '.' ;2eh
+FORWARD_SLASH    EQU '/' ;2fh
+COLON            EQU ':' ;3ah
+SEMICOLON        EQU 3bh; ';' ;3bh
+LESS_THAN        EQU '<' ;3ch
+GREATER_THAN     EQU '>' ;3eh
+QUESTION_MARK    EQU '?' ;3fh
+BACK_SLASH       EQU '\' ;5Ch
+PIPE             EQU '|' ;7ch
 
 
 ; scan codes
-        ESCAPE_SCAN      EQU 01h
-        BACKSPACE_SCAN   EQU 0eh
-        TAB_SCAN         EQU 0fh
-        ENTER_SCAN       EQU 1ch
-        F1_KEY           EQU 3bh
-        F2_KEY           EQU 3ch
-        F3_KEY           EQU 3dh
-        F4_KEY           EQU 3eh
-        F5_KEY           EQU 3fh
-        F6_KEY           EQU 40h
-        F7_KEY           EQU 41h
-        F8_KEY           EQU 42h
+ESCAPE_SCAN      EQU 01h
+BACKSPACE_SCAN   EQU 0eh
+TAB_SCAN         EQU 0fh
+ENTER_SCAN       EQU 1ch
+F1_KEY           EQU 3bh
+F2_KEY           EQU 3ch
+F3_KEY           EQU 3dh
+F4_KEY           EQU 3eh
+F5_KEY           EQU 3fh
+F6_KEY           EQU 40h
+F7_KEY           EQU 41h
+F8_KEY           EQU 42h
 
-        HOME_KEY         EQU 47h
-        CSRUP_KEY        EQU 48h
-        PAGEUP_KEY       EQU 49h
-        CSRLEFT_KEY      EQU 4bh
-        CSRRIGHT_KEY     EQU 4dh
-        END_KEY          EQU 4fh
-        CSRDOWN_KEY      EQU 50h
-        PAGEDOWN_KEY     EQU 51h
-        INS_KEY          EQU 52h
-        DEL_KEY          EQU 53h
+HOME_KEY         EQU 47h
+CSRUP_KEY        EQU 48h
+PAGEUP_KEY       EQU 49h
+CSRLEFT_KEY      EQU 4bh
+CSRRIGHT_KEY     EQU 4dh
+END_KEY          EQU 4fh
+CSRDOWN_KEY      EQU 50h
+PAGEDOWN_KEY     EQU 51h
+INS_KEY          EQU 52h
+DEL_KEY          EQU 53h
 
-        CTRLENTER_KEY    EQU 1C0Ah  ;check both AH & AL (so 0A can be entered by ctrl-j)
+CTRLENTER_KEY    EQU 1C0Ah  ;check both AH & AL (so 0A can be entered by ctrl-j)
 
-        CTRLLEFT_KEY     EQU 73h
-        CTRLRIGHT_KEY    EQU 74h
-        CTRLEND_KEY      EQU 75h
-        CTRLPAGEDOWN_KEY EQU 76h
-        CTRLHOME_KEY     EQU 77h
-        CTRLPAGEUP_KEY   EQU 84h
-        CTRLUP_KEY       EQU 8dh
+CTRLLEFT_KEY     EQU 73h
+CTRLRIGHT_KEY    EQU 74h
+CTRLEND_KEY      EQU 75h
+CTRLPAGEDOWN_KEY EQU 76h
+CTRLHOME_KEY     EQU 77h
+CTRLPAGEUP_KEY   EQU 84h
+CTRLUP_KEY       EQU 8dh
 if ?ALTKEYS
-        ALTPGUP_KEY      EQU 99h
-        ALTPGDN_KEY      EQU 0A1h
+ALTPGUP_KEY      EQU 99h
+ALTPGDN_KEY      EQU 0A1h
 endif
 
 ; "handling" variable
-        ABORT_OPERATION  EQU 0   ;  abort by default
-        QUERY_FILL       EQU 1   ;  query user with "fill with zero"
-        QUERY_SKIP       EQU 2   ;  query user with "skip"
-        IGNORE_ERRORS    EQU 3   ;  ignore errors
+ABORT_OPERATION  EQU 0   ;  abort by default
+QUERY_FILL       EQU 1   ;  query user with "fill with zero"
+QUERY_SKIP       EQU 2   ;  query user with "skip"
+IGNORE_ERRORS    EQU 3   ;  ignore errors
 
 ; "fillflag" variable - low byte (type of fill)
-        FL_RANDOM        EQU 0
-        FL_INVERSE       EQU 1
-        FL_BIT8          EQU 2
-        FL_BIT12         EQU 3
-        FL_BIT16         EQU 4
-        FL_BIT32         EQU 5
+FL_RANDOM        EQU 0
+FL_INVERSE       EQU 1
+FL_BIT8          EQU 2
+FL_BIT12         EQU 3
+FL_BIT16         EQU 4
+FL_BIT32         EQU 5
 ;                     - high byte (for BIT fills)
-        FL_INCREMENT     EQU +1
-        FL_DECREMENT     EQU -1
+FL_INCREMENT     EQU +1
+FL_DECREMENT     EQU -1
 
 ; "srflag" variable
-        SR_SAVE          EQU 0
-        SR_RESTORE       EQU 1
+SR_SAVE          EQU 0
+SR_RESTORE       EQU 1
 
-; "chainmode" variable
-        NO_CHAIN         EQU 0
-        FILE_CHAIN       EQU 1
-        FAT_CHAIN        EQU 2
+; "bChainmode" variable
+NO_CHAIN         EQU 0
+FILE_CHAIN       EQU 1
+FAT_CHAIN        EQU 2
 
 ; "fromfat" variable
-        FF_FAT1          equ 0
-        FF_FAT2          equ 1
+FF_FAT1          equ 0
+FF_FAT2          equ 1
 
+;--- macros
 
 ;--- define a string in .const
 CStr macro text:vararg
@@ -338,6 +371,53 @@ eCHS  CHSENT <?>    ; +5  end CHS
 start dd ?          ; +8  start LBA
 size_ dd ?          ; +12 size LBA
 PTABENT ends
+
+if ?GPT
+;--- partition table header in a GPT
+;--- located at LBA 1
+
+GPTHDR struct
+sig        db 8 dup (?);+0 "EFI PART"
+dwRev      dd ?		;+8 00 00 01 00
+dwSizeHdr  dd ?		;+12
+dwCRC      dd ?		;+16
+dwRes1     dd ?		;+20
+qwCurLBA   dq ?		;+24
+qwBckLBA   dq ?		;+32
+qwFirstLBA dq ?		;+40
+qwLastLBA  dq ?		;+48
+guid       db 16 dup (?);+56
+qwPELBA    dq ?		;+72 start Partition entries 
+dwNumPE    dd ?		;+80 # of partition entries
+dwSizPE    dd ?		;+84 size of partition entry (128)
+dwCRCPE    dd ?		;+88
+;res2       db 420 dup (?)
+GPTHDR ends
+
+;--- partition table entry in a GPT
+;--- located at LBA 2-33
+
+GPTENTRY struct
+guidType   db 16 dup (?)
+guidInst   db 16 dup (?)
+qwFirstLBA dq ?
+qwLastLBA  dq ?
+qwFlags    dq ?
+PartName   dw 36 dup (?)	;UTF-16 name
+GPTENTRY ends
+
+;--- partition types:
+;--- EFI system partition (ESP): C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+;--- BIOS boot partition (Grub): 21686148-6449-6E6F-744E-656564454649
+;--- MS reserved partition:      E3C9E316-0B5C-4DB8-817D-F92DF00215AE
+
+;--- qwFlags values
+; bit 2: legacy
+; bit 60: read-only
+; bit 61: shadow copy
+; bit 62: hidden
+; bit 63: no drive letter
+endif
 
 ;--- struct BPB, located in boot sector
 
@@ -475,9 +555,9 @@ wSpot    dw ?
 SECITEM ends
 
 HIGHLIGHT struct
-ofs   dw ?
-siz_  db ?
-scsiz db ?
+ofs   dw ?    ; offset of var
+siz_  db ?    ; "document" size
+scsiz db ?    ; screen size
 HIGHLIGHT ends
 
     .const
@@ -509,6 +589,7 @@ partA5          db 'FreeBSD',0
 ;partA6          db 'OpenBSD',0
 ;partA9          db 'NetBSD',0
 ;partEB          db 'BeOS',0
+partEE          db 'EFI',0
 
 parthid         db 'Hid Fat',0 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B
 
@@ -551,6 +632,10 @@ menustrings label byte
     @mstring Partition2
     @mstring Partition3
     @mstring Partition4
+if ?GPT
+    @mstring <GPT Header>, GPT_Header
+    @mstring GPT
+endif
 szPartition label byte
     @mstring Partition
     @mstring Chain
@@ -634,11 +719,15 @@ endofchainmsg   db 'End of cluster chain reached',0
 secsizetoobig   db 'Sector size exceeds 4K',0
 errormsg        db ' - Press Any Key',0
 
-inmbrmsg        db '[MBR]',0
-infatmsg        db '[Fat-',0
-inrootmsg       db '[Root]',0
-indatamsg       db '[Data]',0
-inreservedmsg   db '[Boot/Reserved]',0
+szMBRmsg        db '[MBR]',0
+if ?GPT
+szGPTHdrmsg     db '[GPT Hdr]',0
+szGPTEntrymsg   db '[GPT]',0
+endif
+szReservedmsg   db '[Boot/Reserved]',0
+szFATmsg        db '[Fat-%u]',0
+szRootmsg       db '[Root]',0
+szDatamsg       db '[Data]',0
 
 ;--- prompts
 szHex           db 'Hex: ',0
@@ -668,10 +757,15 @@ _psp   dw 0
 _mem   dw 0   ; current top of memory
 _0000H dw 0   ; segment value/selector for access to BIOS data
 
+VIEWDEF struct
+wLbl  dw ?
+wProc dw ?
+VIEWDEF ends
+
 fifields label word
-    dw DStr('Total Free Clusters: '), offset printvalue_hl
-    dw DStr('First Free Cluster:  '), offset printhex_hl
-numfifields equ ($ - offset fifields) / (2 * sizeof word)
+    VIEWDEF <DStr('Total Free Clusters: '), offset printvalue_hl>
+    VIEWDEF <DStr('First Free Cluster:  '), offset printhex_hl>
+numfifields equ ($ - offset fifields) / sizeof VIEWDEF
 
 _BSS segment
 
@@ -693,13 +787,13 @@ bHL             db ? ; keeps track of whether we're editing high or low nibble
 
     align dword
 fromfat         db ? ; fat to use for getfatentry/putfatentry
-filesys         db ? ; type of fat
+bFilesys        db ? ; file system (FAT-xx, exFAT, NTFS)
 bSpC            db ? ; sectors per cluster
 bFats           db ? ; number of fats
 dwSpF           dd ? ; sectors per fat
 dwFat1end       dd ? ; end of first fat
 dwReserved      dd ? ; reserved sectors (start of fat)
-rootentries     dw ? ; number of root entries (unused)
+wRootentries    dw ? ; number of root entries (unused)
 wRootsectors    dw ? ; number of root sectors
 dwCurSector     dd ? ; current sector in sectbuffer
 if ?SN64
@@ -744,27 +838,27 @@ fsinfo          dw ? ; fsinfo sector (FAT32)
 wBps            dw ? ; current bytes per sector ( both physical/logical )
 rwhandle        dw ? ; file handle if device is DT_FILE
 wFilehandle     dw ? ; file handle for file ops
-cylinders       dw ? ; disk geometry for int 13h, ah=02/03
+wCylinders      dw ? ; disk geometry for int 13h, ah=02/03
 
 hdnumber        db ? ; hard drive number partition belongs to
 bSpCshift       db ? ; sectors per cluster for doing bitshifts
 spcc            db ? ; sectors per cluster counter
 bRegion         db ? ; what part of the disk we're in
-viewmode        db ? ; see VM_xxx
-viewmode2       db ? ; 0 = autodetect view, 1=force view
-displaymode     db ? ; hex or binary
-editmode        db ? ; what mode being edited in (ascii/default)
+bViewmode       db ? ; see VM_xxx
+bDisplaymode    db ? ; hex or binary
+bEditmode       db ? ; what mode being edited in (ascii/default)
+bStaticview     db ? ; 1=force viewmode, 0=autodetect viewmode
 
 fillflag        db ?,?
-area            db ?            ; specifies where on a drive we are
-srflag          db ?            ; "file ops" menu flag
-undelflag       db ?            ; 
-driveflag       db ?            ; setdrive gets File or Drive? 0/1 respective
+;area            db ?            ; specifies where on a drive we are
+srflag          db ?            ; "file ops" save/restore menu flag
+;undelflag       db ?            ; 
+driveflag       db ?            ; directs setdrive to ask for Filename(1) or Drive(0)
 commandflag     db ?            ; used by unformat
-chainmode       db ?            ; type of chain to save/restore (FAT/FILE)
+bChainmode      db ?            ; type of chain to save/restore (FAT/FILE)
 
-heads           db ?
-sectors         db ?
+bHeads          db ?
+bSectors        db ?
 handling        db ?            ; inside diskaccess(): how to handle errors
 menustackidx    db ?            ; index for menustack
 secstk_top      db ?            ; index for secstk
@@ -786,7 +880,9 @@ bUpdateMenu     db ?            ; 1=menu update required
 bUpdateScreen   db ?
 bUpdateView     db ?
 bIsDirectory    db ?            ; for "save file chain", 1 if file is a dir
-
+if ?GPT
+bTypeEE         db ?            ; EFI partition in MBR?
+endif
     align dword
 if ?DEBUG
 starttime       dd ?            ; to measure time for lengthy operations
@@ -1134,9 +1230,9 @@ main_loop:
 @@:
     call bufferinsi
     mov bx, [spot]
-    cmp [editmode], EM_ASCII
+    cmp [bEditmode], EM_ASCII
     je modascii
-    cmp [displaymode], DM_BINARY
+    cmp [bDisplaymode], DM_BINARY
     je modbinary
 modhex:
     sub al, '0'                 ; check for valid hex digit
@@ -1196,7 +1292,7 @@ displaybyte:                    ; display AL both in hex/binary and ascii
     mov dx, bx
     call spot2xy
     mov [scrn_xy], dx
-    cmp [displaymode], DM_HEX   ; hex or binary?
+    cmp [bDisplaymode], DM_HEX  ; hex or binary?
     je @F
     call rendernumbin
     jmp done_render
@@ -1442,9 +1538,9 @@ movedown:
     mov cx, 4
 moveupdn:
     mov dl, [bHL]
-    cmp [editmode], EM_ASCII
+    cmp [bEditmode], EM_ASCII
     je domove
-    cmp [displaymode], DM_BINARY
+    cmp [bDisplaymode], DM_BINARY
     jne domove
     mov ax, cx
     jmp domove
@@ -1458,9 +1554,9 @@ moveright:
     mov cl, 0
 moveleftright:
     mov dl, [bHL]
-    cmp [editmode], EM_ASCII
+    cmp [bEditmode], EM_ASCII
     je domove
-    cmp [displaymode], DM_HEX
+    cmp [bDisplaymode], DM_HEX
     je dohexadd
 ;--- binary move left/right
     add dl,al
@@ -1498,7 +1594,7 @@ domove proc
     call movecursor               ; spot is changed to ax
     pop ax
 
-    cmp [displaymode], DM_BINARY
+    cmp [bDisplaymode], DM_BINARY
     jne dontchangescreens
     mov bx, [spot]              ; figures out if we've crossed a 128-byte
     shl ax, 1                   ; barrier by checking if the high bits have
@@ -1784,6 +1880,10 @@ if ?ALTKEYS
     db "Alt+PageDown  - Forward 1 cluster",0
 endif
     db "Enter         - If in directory, jump to start cluster of entry",0
+    db 0
+    db "Keys in GPT of physical disks:",0
+    db 0
+    db "Enter         - Jump to start LBA of entry",0
     db 0    
     db "On exFAT disks, a file may have no associated FAT chain; in such",0
     db "cases the file is stored contiguous and Ctrl+Left/Right won't work.",0
@@ -1897,13 +1997,13 @@ if ?EXT
 endif
     @mend funcmenu
 
-    mov dx, funcmenu + 2 shl 8   ; only 2 menu items for non-fat file systems
+    mov dx, funcmenu + 2 shl 8    ; only 2 menu items for non-fat file systems
     mov cl, 3
-    test [filesys], FS_FATXX
+    test [bFilesys], FS_FATXX
     jz pushmenustack
 if ?EXT
     mov al, MS_INACTIVE
-    cmp [filesys], FS_EXFAT       ; no "unformat" for exFAT!
+    cmp [bFilesys], FS_EXFAT      ; no "unformat" for exFAT!
     jz @F
     mov al, MS_UnFormat
 @@:
@@ -2301,10 +2401,10 @@ printprogress:
 changemode proc
   cmp al, 0                     ; shift+tab?
   je @F
-  xor [editmode], EM_ASCII      ; switch between ascii/regular editing
+  xor [bEditmode], EM_ASCII     ; switch between ascii/regular editing
   ret
 @@:
-  xor [displaymode], DM_BINARY  ; switch between hex/binary editing
+  xor [bDisplaymode], DM_BINARY ; switch between hex/binary editing
   call clearsecarea
   xor dl, dl                    ; reset bHL
   mov ax, [spot]
@@ -2325,7 +2425,7 @@ jumpstkpop endp
 
 handle_ctlenter proc
 
-    test [filesys], FS_FATXX    ; must be a FAT drive
+    test [bFilesys], FS_FATXX   ; must be a FAT drive
     je done
     mov eax, [dwCurSector]
     test eax, eax
@@ -2361,7 +2461,7 @@ log2phys:
     ret
 
 ctlenter_fat:
-    cmp [filesys], FS_EXFAT     ; not yet for exFAT
+    cmp [bFilesys], FS_EXFAT    ; not yet for exFAT
     jz done
     call getentrynumber         ; translate [dwCurSector][spot] to entry# in EAX
     mov ebx, eax
@@ -2550,13 +2650,18 @@ invalclusterror endp
 ;--- handle Enter key
 ;--- in FAT area: jump to data area of cluster at current offset
 ;--- in DIR area: jump to starting cluster of dir entry
+;--- in GPT area: jump to current partition's start LBA
 
 handle_enter proc
 
-    test [filesys], FS_FATXX            ; FAT disk?
+if ?GPT
+    cmp [bViewmode], VM_GPTENTRY        ; in GPT?
+    je do_gptentry
+endif
+    test [bFilesys], FS_FATXX           ; FAT disk?
     je done
 
-    cmp [viewmode], VM_DIRECTORY
+    cmp [bViewmode], VM_DIRECTORY
     je do_direntry
 
     cmp [bRegion], RG_FAT
@@ -2577,7 +2682,7 @@ setcluster::
 setsector::
     cmp eax, [dwDataend]                ; corresponding sector number
     ja invalclusterror                  ; verify that it's a valid sector
-setcluster2:
+setsector2:
     mov [ioreq.dwSector], eax
     call readsect
     xor ax, ax
@@ -2591,15 +2696,16 @@ done:
 stacksetcluster:
     mov ebx, eax                        ; store in ebx for invalclusterror 
     call cluster2sector                 ; multiply it out to get the
+stacksetsector:
     cmp eax, [dwDataend]                ; corresponding sector number
     ja invalclusterror                  ; verify that it's a valid sector
     cmp eax, [dwCurSector]              ; don't push sector# if dst==src
-    jz setcluster2
+    jz setsector2
     push eax
     mov eax, [dwCurSector]
     call pushsecstack                   ; push sector# in eax onto sector stack
     pop eax
-    jmp setcluster2
+    jmp setsector2
 
 do_direntry:
 
@@ -2609,14 +2715,14 @@ do_direntry:
     mov bx, [spot]
     and bl, 11100000b
 
-    cmp [filesys], FS_EXFAT                    ; exFAT direntry structure?
+    cmp [bFilesys], FS_EXFAT            ; exFAT direntry structure?
     jz exfat_enter
 
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh   ; lfn entry?
+    cmp [si+bx].SFNENTRY.bAttr, 0Fh     ; lfn entry?
     jz done
-    mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
+    mov ax, [si+bx].SFNENTRY.wClHigh
     shl eax, 16
-    mov ax, word ptr [si+bx+DIR_CLUST_LOW]
+    mov ax, [si+bx].SFNENTRY.wClLow
 
     cmp eax, 2
 ;--- jump to root directory if cluster# invalid?
@@ -2645,6 +2751,21 @@ isprim:
     cmp al, EXFPTC_UPCASET
     jz @B
     ret
+if ?GPT
+do_gptentry:
+    call bufferinsi
+    mov bx, [spot]
+    and bl, 80h
+ ife ?SN64
+	cmp dword ptr [si+bx].GPTENTRY.qwFirstLBA+4, 0  ; ignore if LBA is not 32-bit
+	jnz done
+ endif
+	mov eax, dword ptr [si+bx].GPTENTRY.qwFirstLBA+0
+ if ?SN64
+	mov edx, dword ptr [si+bx].GPTENTRY.qwFirstLBA+4
+ endif
+	jmp stacksetsector
+endif
 
 handle_enter endp
 
@@ -2674,11 +2795,11 @@ specview:
     mov eax, [dwCurSector]
     mov [dwFat12start], eax
 @@:
-    mov [viewmode2], VM2_STATIC
-    jmp checksetview  ;set viewmode to DL
+    mov [bStaticview], TRUE
+    jmp setviewmode  ;set viewmode to DL
 ;-------------------------------------------------------
 autoview:
-    mov [viewmode2], VM2_AUTODETECT
+    mov [bStaticview], FALSE
     jmp detectview
 
 submenu_view endp
@@ -2699,24 +2820,24 @@ scandir proc
     mov si, offset sectbuffer
     mov cl, 512 / DIRENTSIZE
 nextentry:
-    cmp byte ptr [si], 0
+    cmp [si].SFNENTRY.name_, 0
     jz skipdir
-    cmp byte ptr [si], 0E5h
+    cmp [si].SFNENTRY.name_, 0E5h
     jz skipentry
-    cmp byte ptr [si+0Bh], 0Fh
+    cmp [si].SFNENTRY.bAttr, 0Fh
     jz skipentry
-    mov ax, [si+DIR_CLUST_HIGH]
+    mov ax, [si].SFNENTRY.wClHigh
     shl eax, 16
-    mov ax, [si+DIR_CLUST_LOW]
+    mov ax, [si].SFNENTRY.wClLow
     cmp eax, 0
     jz skipentry
     cmp eax, ebx
     jz found
-    test byte ptr [si+0Bh], 10h
+    test [si].SFNENTRY.bAttr, DA_DIRECTORY
     jz skipentry
-    cmp dword ptr [si], "   ."
+    cmp dword ptr [si].SFNENTRY.name_, "   ."
     jz skipentry
-    cmp dword ptr [si], "  .."
+    cmp dword ptr [si].SFNENTRY.name_, "  .."
     jz skipentry
     push cx
     push si
@@ -2735,7 +2856,7 @@ endif
     jc found2
     call diskaccess_read
 skipentry:
-    add si, DIRENTSIZE
+    add si, sizeof SFNENTRY
     dec cl
     jnz nextentry
     xor ax, ax
@@ -2828,7 +2949,7 @@ endif
     @dprintfln "finddirentry: ebx=%lX", ebx
     cmp ebx, 2
     jb _ret
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jnz @F
     call scanforclf1x
     jnc denotfound
@@ -3099,7 +3220,7 @@ updatescreen proc
     mov bUpdateScreen, 0
 
     mov bUpdateView, 1
-    cmp [viewmode2], VM2_STATIC       ; forced view?
+    cmp [bStaticview], TRUE           ; forced view?
     je @F
     call detectview
 @@:
@@ -3111,7 +3232,7 @@ updatescreen endp
 
 detectview proc
     mov dl, [bRegion]
-    test dl, RG_RESERVED or RG_FAT or RG_ROOT or RG_DATA  ; known region?
+    test dl, RG_RESERVED or RG_FAT or RG_ROOT or RG_DATA  ; known FAT region?
     jz setDLview                      ; if no, assume lower bits define view (MBR or default)
     cmp dl, RG_FAT
     je choosefatview
@@ -3156,10 +3277,10 @@ setfsview:
 ;-------------------------------------------------------
 choosefatview:
     mov dl, VM_FAT32
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jnz setDLview
     mov dl, VM_FAT16
-    cmp [filesys], FS_FAT16
+    cmp [bFilesys], FS_FAT16
     je setDLview
     mov dl, VM_FAT12
 
@@ -3171,7 +3292,7 @@ choosefatview:
 @@:
     mov [dwFat12start], eax
 setDLview:
-    call checksetview                 ; set viewmode to DL
+    call setviewmode                  ; set viewmode to DL
     ret
 detectview endp
 
@@ -3184,7 +3305,7 @@ if 1
 ;---  - rest in light gray
 
 dirview_ascii proc
-    cmp [filesys], FS_EXFAT           ; exFAT?
+    cmp [bFilesys], FS_EXFAT          ; exFAT?
     jz dirview_ascii_exfat            ; needs special handling
     pusha
     mov si, offset sectbuffer
@@ -3691,13 +3812,13 @@ done:
 getfatxname endp
 
 ;--- submenu file options, key F7
-;--- IN: [chainmode] = FAT_CHAIN or FILE_CHAIN
+;--- IN: [bChainmode] = FAT_CHAIN or FILE_CHAIN
 
 savechain proc
     mov [fromfat], FF_FAT1
     mov [bSkipFat], 0
     xor ebp, ebp
-    cmp [chainmode], FAT_CHAIN
+    cmp [bChainmode], FAT_CHAIN
     je beginfatchainsave
 
 ;--- we're in a directory and are to save a file chain
@@ -3706,16 +3827,16 @@ savechain proc
     mov bx,[spot]
     and bl, 11100000b                       ; chop off 0-31 bytes to set bx to
 
-    cmp [filesys], FS_EXFAT
+    cmp [bFilesys], FS_EXFAT
     jz exfat_savechain
 
-    mov eax, dword ptr [si+bx+DIR_FILESIZE] ; filesize
+    mov eax, [si+bx].SFNENTRY.dwSize        ; filesize
     mov [dwFilesize], eax
-    test byte ptr [si+bx+DIR_ATTRIBUTES], DA_DIRECTORY
+    test [si+bx].SFNENTRY.bAttr, DA_DIRECTORY
     setnz bIsDirectory
-    mov ax, word ptr [si+bx+DIR_CLUST_HIGH] ; high cluster word
+    mov ax, [si+bx].SFNENTRY.wClHigh        ; high cluster word
     shl eax, 16
-    mov ax, word ptr [si+bx+DIR_CLUST_LOW]  ; low cluster word
+    mov ax, [si+bx].SFNENTRY.wClLow         ; low cluster word
 
 savefilechain:                              ; <- common for both FATxx and exFAT file chain
     mov [dwSecBackup], eax                  ; back the cluster number up
@@ -3731,7 +3852,7 @@ savefilechain:                              ; <- common for both FATxx and exFAT
     jmp startchainsaving
 
 deliverfn:
-    cmp [filesys], FS_EXFAT
+    cmp [bFilesys], FS_EXFAT
     jnz @F
     call getexfatname
     xor ax, ax
@@ -3830,7 +3951,7 @@ mydisp:
     jmp printbottom
 
 donechainsave:
-    cmp [chainmode], FAT_CHAIN          ; file chain?
+    cmp [bChainmode], FAT_CHAIN          ; file chain?
     je notruncate
 
 ;--- if file chain is for a directory, file size is 0
@@ -3878,7 +3999,7 @@ savechain endp
 
 ;--- called from submenu "file options"
 ;--- restore a cluster chain from a file
-;--- IN: [chainmode] = FAT_CHAIN or FILE_CHAIN
+;--- IN: [bChainmode] = FAT_CHAIN or FILE_CHAIN
 ;        entry of file in DTA
 
 restorechain proc
@@ -3887,7 +4008,7 @@ restorechain proc
 ;    mov eax, [dwCurSector]
 ;    mov [dwSecBackup], eax
 
-    cmp [chainmode], FILE_CHAIN
+    cmp [bChainmode], FILE_CHAIN
     jz @F
     call getcurrententry
     mov eax, ebx
@@ -3898,7 +4019,7 @@ restorechain proc
     mov bx, [spot]
     and bl, 11100000b
 
-    cmp [filesys], FS_EXFAT
+    cmp [bFilesys], FS_EXFAT
     jnz @F
     mov eax, [si+bx].EXFDIRSS.dwFirstCl
     test [si+bx].EXFDIRSS.secflgs, EXFPF_NOCHAIN
@@ -3908,12 +4029,12 @@ restorechain proc
     mov [bSkipFat], 0
 if 0                            ; chain is restored even if file isn't big enough
     mov eax, [dwFilesize]
-    cmp eax, dword ptr [si+bx+DIR_FILESIZE]
+    cmp eax, [si+bx].SFNENTRY.dwSize
     jb toosmallerr
 endif
-    mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
+    mov ax, [si+bx].SFNENTRY.wClHigh
     shl eax, 16
-    mov ax, word ptr [si+bx+DIR_CLUST_LOW]
+    mov ax, [si+bx].SFNENTRY.wClLow
 
 restclusts:
 
@@ -4121,7 +4242,7 @@ submenu_fileoptions proc
 
 ;--- for FAT drives, refresh menu item "chain"
 
-;    mov [chainmode], NO_CHAIN      ; reset chain flag
+;    mov [bChainmode], NO_CHAIN      ; reset chain flag
 	push cx
 	mov ah, NO_CHAIN
 	call setchainmode
@@ -4131,7 +4252,7 @@ submenu_fileoptions proc
 ;--- set menu "input, boot sector, fat1, ..."
 
     mov dx, ldfileoptmenu + lldfileoptmenu shl 8
-    test [filesys], FS_FATXX       ; non-FAT drives?
+    test [bFilesys], FS_FATXX      ; non-FAT drives?
     jne setxxfileopt
     mov dh, 2                      ; then just allow "sectors" & "boot sector"
 setxxfileopt:
@@ -4148,7 +4269,7 @@ srdisk:                            ; save/restore partition to/from file
     jmp dumpiso
 
 srchain:                           ; save/restore chain to/from file
-    cmp [chainmode], NO_CHAIN
+    cmp [bChainmode], NO_CHAIN
     je @F
     cmp [srflag], SR_RESTORE
     je restorechain
@@ -4194,7 +4315,7 @@ srroot:                            ; save/restore root dir
     call srcommon
     mov eax, [dwRootSect]
     xor edx, edx
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     je @F
     mov dl, [bSpC]                 ; known bug: FAT32 root dir may be more than just 1 cluster!
     jmp dorootsr
@@ -4409,6 +4530,34 @@ done:
 
 dumpiso endp
 
+if ?GPT
+
+guid2string proc c pGuid:ptr BYTE, pszStr:ptr byte
+
+	mov bx, pGuid
+	add bx, 16
+	mov cx, 8
+	xor ax, ax
+@@:
+	dec bx
+	mov al, [bx]
+	push ax
+	loop @B
+	mov cl, 4
+@@:
+	sub bx, 2
+	push word ptr [bx]
+	loop @B
+	push CStr("{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}")
+	push pszStr
+	call sprintf
+	add sp, 14*2
+	ret
+
+guid2string endp
+
+endif
+
 ;--- submenu goto
 
 submenu_jumpto proc
@@ -4421,6 +4570,15 @@ submenu_jumpto proc
     @mitem MS_Partition3, jumptop3
     @mitem MS_Partition4, jumptop4
     @mend pdjumpmenu
+
+if ?GPT
+    @mstart pd2jumpmenu
+    @mitem MS_Input, jumptosector
+    @mitem MS_MBR, jumptobootsector
+    @mitem MS_GPT_Header, jumptogpthdr
+    @mitem MS_GPT, jumptogpt
+    @mend pd2jumpmenu
+endif
 
     @mstart ldjumpmenu
     @mitem MS_Sector,      jumptosector
@@ -4441,10 +4599,16 @@ submenu_jumpto proc
     mov cl, 2
 ;--- set menu "input, MBR, partition1, ..."
     mov dx, pdjumpmenu + lpdjumpmenu shl 8
+if ?GPT
+    cmp [bTypeEE], 0
+    jz @F
+    mov dx, pd2jumpmenu + lpd2jumpmenu shl 8
+@@:
+endif
     cmp [ioreq.drvtype], DT_PHYSICAL
     je @F
     mov dx, ntfsjumpmenu + lntfsjumpmenu shl 8
-    cmp [filesys], FS_NTFS
+    cmp [bFilesys], FS_NTFS
     jz @F
     mov dx, ldjumpmenu + 1 shl 8  ; for CDFS, just jump to sector
     cmp [ioreq.drvtype], DT_CDROM
@@ -4465,6 +4629,14 @@ jumptop3:
 jumptop4:
     mov ebx, [partitions+3*sizeof dword]
     jmp donejump
+if ?GPT
+jumptogpthdr:
+    mov ebx, 1
+    jmp donejump
+jumptogpt:
+    mov ebx, 2
+    jmp donejump
+endif
 
 jumptodata:
     mov ebx, [dwDataStart]
@@ -4504,6 +4676,7 @@ donejump:
     jb @F
     mov [ioreq.dwSector], ebx
     call readsect
+    jc @F
     call resetmenustack   ; auto return to main menu
 @@:
 done:
@@ -4526,39 +4699,204 @@ jumptolastsect::
 
 submenu_jumpto endp
 
-;-------------------------------------------------------
-; viewmode; see the variable definition for details
-;           this function is called for every key press in main menu,
-;           so don't do lengthy things here!
+;--- updateview() is called for every key press in main menu,
+;--- so don't do lengthy things here!
 
 updateview proc
 
-    mov bUpdateView, 0
-    mov al,[viewmode]
-    cmp al, VM_BOOTSECTOR
-    je bsview
-    cmp al, VM_FAT12
-    je fat12viewmode
-    cmp al, VM_FAT16
-    je fat16viewmode
-    cmp al, VM_FAT32
-    je fat32viewmode
-    cmp al, VM_DIRECTORY
-    je dirview
-    cmp al, VM_MBR
-    je mbrview
-    cmp al, VM_FSINFO
-    je fsinfoviewmode
+	.const
+vmvectors label word
+	dw offset dataview
+	dw offset mbrview
+	dw offset bootsectview
+	dw offset fat12view
+	dw offset fat16view
+	dw offset fat32view
+	dw offset dirview
+	dw offset fsinfoview
+if ?GPT
+	dw offset gpthdrview
+	dw offset gptentryview
+endif
+MAXVVECS equ ($ - offset vmvectors) / sizeof word
+	.code
 
-;    call clearview
-    ret
+	mov bUpdateView, 0
+	mov [scrn_xy], VIEWROW * 100h + 1
+	call bufferinsi
+	movzx bx,[bViewmode]
+	cmp bl, MAXVVECS
+	jnc dataview
+	shl bx, 1
+	jmp [bx][vmvectors]
+dataview:
+	ret
 
 updateview endp
 
+if ?GPT
+
+;--- GPT header view (LBA 1)
+
+gpthdrview proc
+
+    .data
+
+VIEWENT struct
+wOfs dw ?
+wLbl dw ?
+wFmt dw ?
+VIEWENT ends
+
+gpthdrviewtab label word
+    VIEWENT <GPTHDR.sig,       DStr('Signature'),              0808h>
+    VIEWENT <GPTHDR.dwSizeHdr, DStr('Size GPT Header'),        0804h>
+    VIEWENT <GPTHDR.qwPELBA,   DStr('Start Part. Entries'),    1408h>
+    VIEWENT <GPTHDR.dwNumPE,   DStr('Partition Entries'),      0804h>
+    VIEWENT <GPTHDR.qwFirstLBA,DStr('First LBA'),              1408h>
+    VIEWENT <GPTHDR.qwLastLBA, DStr('Last LBA'),               1408h>
+lgpthdrviewtab equ ($ - offset gpthdrviewtab) / sizeof VIEWENT
+
+    .code
+
+    mov di, offset gpthdrviewtab
+    mov cx, lgpthdrviewtab
+nextitem:
+    push cx
+    call basicbs
+    add di, sizeof VIEWENT
+
+    mov cl, 9
+    call fillspace
+
+    pop cx
+    mov [scrn_col], 40
+    test ch, 1
+    jz @F
+    call printcrlf
+@@:
+    inc ch
+    dec cl
+    jnz nextitem
+    ret
+basicbs:
+    mov bx, [di].VIEWENT.wOfs
+    mov dx, [di].VIEWENT.wLbl
+    mov cx, [di].VIEWENT.wFmt
+
+    mov word ptr [highlight.siz_], cx
+    call printstring
+    call printcolclear
+    mov dx, bx
+    xor bx, bx
+    call printvalue_hl
+    ret
+gpthdrview endp
+
+;--- GPT entry view (LBA 2-33)
+
+gptentryview proc
+
+    .data
+
+gptentviewtab label word
+    VIEWENT <GPTENTRY.guidType,  DStr('Type'),                   2610h>
+    VIEWENT <GPTENTRY.qwFirstLBA,DStr('First LBA'),              1408h>
+    VIEWENT <GPTENTRY.qwLastLBA, DStr('Last LBA'),               1408h>
+    VIEWENT <0,                  DStr('Size'),                   0>
+    VIEWENT <GPTENTRY.qwFlags,   DStr('Flags'),                  1008h>
+lgptentviewtab equ ($ - offset gptentviewtab) / sizeof VIEWENT
+
+    .code
+
+    mov bx,[spot]
+    and bl, 080h
+
+    mov di, offset gptentviewtab
+    mov cx, lgptentviewtab
+nextitem:
+    push cx
+    call basicbs
+    add di, sizeof VIEWENT
+
+    mov cl, 9
+    call fillspace
+
+    pop cx
+	cmp [scrn_col], 40
+    mov [scrn_col], 40
+	jb @F
+    call printcrlf
+@@:
+    loop nextitem
+
+	mov cx, length GPTENTRY.PartName
+	add si, bx
+	lea si, [si].GPTENTRY.PartName
+	mov di, offset sprintfbuffer
+	push ds
+	pop es
+@@:
+	lodsw
+	stosb
+	and ax, ax
+	loopnz @B
+	jz @F
+	mov al, 0
+	stosb
+@@:
+	dec di
+	sub di, offset sprintfbuffer
+	jz @F
+	mov cx, di
+	mov dx, CStr("Name: ")
+	call printstring
+	mov al, COL_DEFAULT
+	call fillattr
+	mov dx, offset sprintfbuffer
+	call printstring
+@@:
+cleareol:
+	mov cl, MAXCOL
+	sub cl, [scrn_col]
+	call fillspace
+    ret
+basicbs:
+    mov dx, [di].VIEWENT.wLbl
+    call printstring
+	mov dx, CStr(": ")
+	call printstring
+	call cleareol
+    mov cx, [di].VIEWENT.wFmt
+	jcxz @F
+    mov word ptr [highlight.siz_], cx
+    mov dx, [di].VIEWENT.wOfs
+    call printvalue_hl
+    ret
+@@:
+	mov eax, dword ptr [si+bx].GPTENTRY.qwLastLBA+0
+	mov edx, dword ptr [si+bx].GPTENTRY.qwLastLBA+4
+	sub eax, dword ptr [si+bx].GPTENTRY.qwFirstLBA+0
+	sbb edx, dword ptr [si+bx].GPTENTRY.qwFirstLBA+4
+	add eax, 1
+	adc edx, 0
+	shrd eax, edx, 11
+	shr edx, 11
+	invoke sprintf, addr sprintfbuffer, CStr("%llu MB"), edx::eax
+	mov cl, 24
+	mov al, COL_DEFAULT
+	call fillattr
+	mov dx, offset sprintfbuffer
+	call printstring
+	ret
+	
+gptentryview endp
+
+endif
+
 ;--- filesystem info view
 
-fsinfoviewmode proc
-    mov [scrn_xy], VIEWROW * 100h + 1
+fsinfoview proc
 
     call bufferinsi
     mov bx, 01E8h
@@ -4567,7 +4905,7 @@ fsinfoviewmode proc
     mov cx, numfifields
 nextitem: 
     push cx
-    mov dx, [di+0]
+    mov dx, [di].VIEWDEF.wLbl
     call printstring
 ;   dec bx
 
@@ -4584,16 +4922,16 @@ nextitem:
     call fillcell
     jmp dtsc
 vbik:
-    call word ptr [di+2]
+    call [di].VIEWDEF.wProc
 dtsc:
     add bx, sizeof dword
     call printcrlf
-    add di, 2*2
+    add di, sizeof VIEWDEF
     pop cx
     loop nextitem
     ret
 
-fsinfoviewmode endp
+fsinfoview endp
 
 ;--- print an 8 digit hex number
 ;--- si=buffer
@@ -4627,44 +4965,44 @@ lfnview proc
 ;--- scan forward to find first entry
 
 @@:
-    mov cl, [si+bx]
+    mov cl, [si+bx].LFNENTRY.bIdx
     test cl, 080h               ; stop if a "deleted" entry occurs
     jnz foundfirst
     and cl, 3Fh                 ; the LFN entries are located BEFORE the file entry
     cmp cl, 1                   ; and the first byte is an index, starting with 1
     jz foundfirst
-    cmp bx,  512 - DIRENTSIZE   ; last entry in this sector?
+    cmp bx,  512 - sizeof LFNENTRY ; last entry in this sector?
     jz foundfirst               ; then stop. This is then not the first, name is truncated
-    cmp byte ptr [si+bx+DIRENTSIZE+DIR_ATTRIBUTES], 0Fh
+    cmp [si+bx+sizeof LFNENTRY].LFNENTRY.bAttr, 0Fh
     jnz foundfirst              ; stop if next entry is "non-lfn"
-    add bx, DIRENTSIZE
+    add bx, sizeof LFNENTRY
     jmp @B
 foundfirst:
 
 ;--- now display the entries, descending, until last entry or sector begin is reached.
 ;--- check if the indices increment nicely, else mark the LFN as "invalid" in view.
 
-    mov al, [si+bx]
+    mov al, [si+bx].LFNENTRY.bIdx
     and al, 3Fh
     mov [bIdx], al
 nextentry:
     call dispentry
 	jc entriesdone
-    mov al, [si+bx]
+    mov al, [si+bx].LFNENTRY.bIdx
     and al, 0C0h
     cmp al, 40h      ; last entry?
     jz entriesdone
     cmp bx, 0        ; start of sector reached?
     jz entriesdone
-    sub bx, DIRENTSIZE
-    mov al, [si+bx]  ; LFN entries must have an "descending" index
+    sub bx, sizeof LFNENTRY
+    mov al, [si+bx].LFNENTRY.bIdx ; LFN entries must have an "descending" index
     inc [bIdx]
     and al, 3Fh
     cmp al, [bIdx]   ; is index incrementing?
     jz @F
     mov [bIdx], -1   ; mark LFN as invalid
 @@:
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    cmp [si+bx].LFNENTRY.bAttr, 0Fh
     jz nextentry
     mov [bIdx], -1
 entriesdone:
@@ -4702,9 +5040,9 @@ done:
     .const
 
 lfntab label byte  ; LFN char position & size within dir entry
-    db 1,5         ; pos  1, length 5
-    db 14,6        ; pos 14, length 6
-    db 28,2        ; pos 28, length 2
+    db LFNENTRY.wName0, length LFNENTRY.wName0 ; pos  1, length 5
+    db LFNENTRY.wName5, length LFNENTRY.wName5 ; pos 14, length 6
+    db LFNENTRY.wNameB, length LFNENTRY.wNameB ; pos 28, length 2
 
     include oemchars.inc
 
@@ -4768,7 +5106,7 @@ if 1
 ;--- so it's done here only if the SFN is in the same sector
 
 	mov sprintfbuffer, 0
-	movzx ax, byte ptr [si+bx]
+	movzx ax, [si+bx].LFNENTRY.bIdx
 	and al, 3Fh
 	shl ax, 5
 	add ax, bx
@@ -4776,7 +5114,7 @@ if 1
 	jnc nochksum
 	mov di, ax
 	add di, si
-	mov cx, 11
+	mov cx, sizeof SFNENTRY.name_ ;11
 	mov ah, 0
 @@:
 	mov al, [di]
@@ -4784,7 +5122,7 @@ if 1
 	add ah, al
 	inc di
 	loop @B
-	movzx cx, byte ptr [si+bx+DIRLFN_CHKSUM]
+	movzx cx, [si+bx].LFNENTRY.bChkSum
 	cmp ah, cl
 	jz nochksum
 	movzx ax, ah
@@ -4851,7 +5189,7 @@ exfat_dirview proc
 @@:
     call setchainmode
 
-    mov [scrn_xy], VIEWROW * 100h + 1
+;    mov [scrn_xy], VIEWROW * 100h + 1
     mov cl, 78
     mov ax, COL_DEFAULT shl 8 or SPACE
     call fillcell
@@ -5080,7 +5418,7 @@ dirview proc
     mov bx,[spot]
     and bl, 0E0h
 
-    cmp [filesys], FS_EXFAT
+    cmp [bFilesys], FS_EXFAT
     jz exfat_dirview
 
 ;--- de(activate) "chain" in "file options" menu.
@@ -5088,7 +5426,7 @@ dirview proc
     mov ah, NO_CHAIN
     cmp byte ptr [si+bx], 0      ; dir entry empty?
     jz @F
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
+    cmp [si+bx].SFNENTRY.bAttr, 0Fh  ; LFN entry?
     jz @F
     mov ah, FILE_CHAIN
 @@:
@@ -5100,7 +5438,7 @@ if ?EXT
     mov al, MS_INACTIVE
     cmp byte ptr [si+bx], 0E5h
     jnz @F
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh  ; LFN entry?
+    cmp [si+bx].SFNENTRY.bAttr, 0Fh  ; LFN entry?
     jz @F
     mov al, MS_UnDelete
 @@:
@@ -5108,13 +5446,13 @@ if ?EXT
     call setmenuitem
 endif
 
-    mov [scrn_xy], VIEWROW * 100h + 1
+;    mov [scrn_xy], VIEWROW * 100h + 1
 
 ;--- attribute value of 0Fh (R/O+hidden+system+volume) indicates a LFN entry
 
     call clearentryview
 
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    cmp [si+bx].SFNENTRY.bAttr, 0Fh
     jz lfnview
     cmp byte ptr [si+bx],0
     jz done
@@ -5129,7 +5467,7 @@ endif
     push si
     add si, bx
     mov cx, 11
-    cmp byte ptr [si+DIR_ATTRIBUTES], 08  ; volume?
+    cmp [si].SFNENTRY.bAttr, 08  ; volume?
     je copyvol
     mov cl, 8
     rep movsb
@@ -5178,23 +5516,23 @@ copyvol:
     mov dx, offset createdmsg
     call printstring
 
-    mov dx, DIR_CREATEDATE
+    mov dx, SFNENTRY.wCreDate ;DIR_CREATEDATE
     call printdate
 
 ;--- minute+second
 
-    mov cx, DIR_CREATETIME
-    mov dx, DIR_CREATEMSEC
+    mov cx, SFNENTRY.wCreTime ;DIR_CREATETIME
+    mov dx, SFNENTRY.bCreMSec ;DIR_CREATEMSEC
     call printtime
 
     mov dl, '.'
     call printchar
 
-    mov [highlight], (101h shl 16) or DIR_CREATEMSEC
+    mov [highlight], (101h shl 16) or SFNENTRY.bCreMSec ; DIR_CREATEMSEC
     add [highlight.ofs], bx
     call bshighlight
 
-    movzx ax, byte ptr [si+bx+DIR_CREATEMSEC]
+    movzx ax, [si+bx].SFNENTRY.bCreMSec
     cmp al, 199
     jbe @F
     mov al, 199
@@ -5214,7 +5552,7 @@ copyvol:
     mov dx, offset attributesmsg
     call printstring
 
-    mov dx, DIR_ATTRIBUTES
+    mov dx, SFNENTRY.bAttr ;DIR_ATTRIBUTES
     call printattr
     call printcrlf
 
@@ -5223,7 +5561,7 @@ copyvol:
     mov dx, offset accessedmsg    ; last accessed
     call printstring
 
-    mov dx, DIR_LASTACCDATE
+    mov dx, SFNENTRY.wLADate ;DIR_LASTACCDATE
     call printdate
 
 ;--- print cluster
@@ -5233,12 +5571,12 @@ copyvol:
     call printstring
 
 ;--- hiword cluster only displayed if it's != 0000 or filesys is FAT32/exFAT
-    mov [highlight], (0302h shl 16) or DIR_CLUST_HIGH
+    mov [highlight], (0302h shl 16) or SFNENTRY.wClHigh ;DIR_CLUST_HIGH
     add [highlight.ofs], bx
-    mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
+    mov ax, [si+bx].SFNENTRY.wClHigh
     and ax, ax
     jnz @F
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jz nohighcl
 @@:
     call bshighlight
@@ -5247,11 +5585,11 @@ copyvol:
     call printstring
 nohighcl:
     mov [highlight.scsiz], 4
-    add [highlight.ofs], (DIR_CLUST_LOW - DIR_CLUST_HIGH)
+    add [highlight.ofs], SFNENTRY.wClLow - SFNENTRY.wClHigh ;(DIR_CLUST_LOW - DIR_CLUST_HIGH)
     call bshighlight
 
     mov dl, 4
-    mov ax, word ptr [si+bx+DIR_CLUST_LOW]
+    mov ax, [si+bx].SFNENTRY.wClLow
     call rendernumhex
     call printstring
 
@@ -5262,10 +5600,10 @@ nohighcl:
     mov dx, offset modifiedmsg    ; last modified
     call printstring
 
-    mov dx, DIR_LASTUPDDATE
+    mov dx, SFNENTRY.wLUDate ;DIR_LASTUPDDATE
     call printdate
     xor dx, dx
-    mov cx, DIR_LASTUPDTIME
+    mov cx, SFNENTRY.wLUTime ;DIR_LASTUPDTIME
     call printtime
 
 ;--- print size
@@ -5276,7 +5614,7 @@ nohighcl:
     call printstring
 
     mov [highlight.siz_], 4
-    mov dx, DIR_FILESIZE
+    mov dx, SFNENTRY.dwSize ;DIR_FILESIZE
     call printvalue_hl
 done:
     ret
@@ -5336,7 +5674,7 @@ nextchar:
 
 printattr endp
 
-;--- set AH=[chainmode] and menu item "Chain"
+;--- set AH=chainmode and menu item "Chain"
 
 setchainmode proc
 
@@ -5345,7 +5683,7 @@ setchainmode proc
     jz @F
     mov al, MS_Chain
 @@:
-    mov [chainmode], ah
+    mov [bChainmode], ah
     mov cl, LDFILEOPT_CHAIN
     call setmenuitem
     ret
@@ -5359,7 +5697,7 @@ setchainmode endp
 CLUSTER_PER_ROW = 9
 CLBYTES_PER_ROW = CLUSTER_PER_ROW * sizeof dword
 
-fat32viewmode proc
+fat32view proc
 
     mov ah, FAT_CHAIN
     call setchainmode
@@ -5423,7 +5761,7 @@ done:
     mov cl, 7 * 7 + 6  ; 7 clusters, 7 digits/cluster, 6 spaces
     jmp fillspace
 
-fat32viewmode endp
+fat32view endp
   
 ;--- FAT16 view - 7 rows and 15 clusters/row are shown
 ;--- that fits in 18 rows: 0,30,60,90,120,150,180,210,240,270,300,330,360,390,420,450,480,510
@@ -5431,7 +5769,7 @@ fat32viewmode endp
 CLUSTER_PER_ROW = 15
 CLBYTES_PER_ROW = CLUSTER_PER_ROW * sizeof word
 
-fat16viewmode proc
+fat16view proc
 
     mov ah, FAT_CHAIN
     call setchainmode
@@ -5495,7 +5833,7 @@ done:
     mov cl, 14 * 4 + 13   ; 14 clusters, 4 digits/cluster, 13 spaces (=69)
     jmp fillspace
 
-fat16viewmode endp
+fat16view endp
 
 CLUSTER_PER_ROW = 18
 CLBYTES_PER_ROW = 27 ; that's 18 * 1.5 (12 bits/entry)
@@ -5504,7 +5842,7 @@ CLBYTES_PER_ROW = 27 ; that's 18 * 1.5 (12 bits/entry)
 ;--- to be fixed: currently the view is filled with 7 full lines,
 ;--- although there might be less valid clusters.   
 
-fat12viewmode proc
+fat12view proc
 
     mov ah, FAT_CHAIN
     call setchainmode
@@ -5613,18 +5951,17 @@ print12bits:
     cmp [scrn_xy], (VIEWROW+7) * 100h + 3  ;check if we reached bottom of view area
     ret
 
-fat12viewmode endp
+fat12view endp
 
 ;-------------------------------------------------------
 
 ;--- physical disk MBR view
+;--- si=sector buffer
 
 mbrview proc
 
-    mov [scrn_col], 01h
+;    mov [scrn_col], 01h
     xor cx, cx
-
-    call bufferinsi
 
 nextpart:
     mov [scrn_row], VIEWROW
@@ -5761,6 +6098,9 @@ donepart:
     mov dx, offset partA5
     cmp al, 0A5h
     je showpart
+    mov dx, offset partEE
+    cmp al, 0EEh
+    je showpart
     jmp dontshowpart
 
 showpart:
@@ -5828,68 +6168,41 @@ mbrcommon:
 
 mbrview endp
 
+;--- boot sector view
+;--- si=sector buffer
+
+bootsectview proc
 
     .data
 
 ;--- FAT BPB struct
 
 bsviewtab label word
-    dw BPB.bytes_sector
-    dw DStr('Bytes Per Sector')
-    dw 0502h
-    dw BPB.sectors_cluster
-    dw DStr('Sectors Per Cluster')
-    dw 0301h
-    dw BPB.reserved_sectors
-    dw DStr('Reserved Sectors')
-    dw 0502h
-    dw BPB.num_fats
-    dw DStr('Number Of Fats')
-    dw 0301h
-    dw BPB.root_entries
-    dw DStr('Maximum Root Entries')      ; FAT1x only
-    dw 0502h
-    dw BPB.media_byte
-    dw DStr('Media Descriptor')
-    dw 0301h
-    dw BPB.hidden_sectors
-    dw DStr('Partition Start')
-    dw 0A04h
+    VIEWENT <BPB.bytes_sector,    DStr('Bytes Per Sector'),    0502h>
+    VIEWENT <BPB.sectors_cluster, DStr('Sectors Per Cluster'), 0301h>
+    VIEWENT <BPB.reserved_sectors,DStr('Reserved Sectors'),    0502h>
+    VIEWENT <BPB.num_fats,        DStr('Number Of Fats'),      0301h>
+    VIEWENT <BPB.root_entries,    DStr('Maximum Root Entries'),0502h>  ; FAT1x only
+    VIEWENT <BPB.media_byte,      DStr('Media Descriptor'),    0301h>
+    VIEWENT <BPB.hidden_sectors,  DStr('Partition Start'),     0A04h>
 bs_psec label word
-    dw 0                                 ; sectors (FAT12 or FAT16/FAT32)
-    dw DStr('Sectors In Partition')
-    dw 0
+    VIEWENT <0,                   DStr('Sectors In Partition'),   0h>  ; sectors (FAT12 or FAT16/FAT32)
 bs_spf label word
-    dw 0
-    dw DStr('Sectors Per Fat')
-    dw 0
+    VIEWENT <0,                   DStr('Sectors Per Fat'),        0h>
 bs_hd label word
-    dw 0
-    dw DStr('Hard Disk Number')
-    dw 0301h
-    dw EBPB_FAT32.root_startcl
-    dw DStr('Root Start Cluster')        ; FAT32 only
-    dw 0A04h
-    dw EBPB_FAT32.fs_info_start
-    dw DStr('FSInfo Sector Number')      ; FAT32 only
-    dw 0502h
-    dw EBPB_FAT32.bs_copy_start
-    dw DStr('Backup B.S. Location')      ; FAT32 only
-    dw 0502h
-lbsviewtab equ ($ - offset bsviewtab) / ( 3 * sizeof word )
+    VIEWENT <0,                   DStr('Hard Disk Number'),    0301h>
+    VIEWENT <EBPB_FAT32.root_startcl,DStr('Root Start Cluster'),0A04h>   ; FAT32 only
+    VIEWENT <EBPB_FAT32.fs_info_start,DStr('FSInfo Sector Number'),0502h>; FAT32 only
+    VIEWENT <EBPB_FAT32.bs_copy_start,DStr('Backup B.S. Location'),0502h>; FAT32 only
+lbsviewtab equ ($ - offset bsviewtab) / sizeof VIEWENT
 
     .code
 
-;--- boot sector view
+;    mov [scrn_xy], VIEWROW * 100h + 1
 
-bsview proc
-    mov [scrn_xy], VIEWROW * 100h + 1
-
-    call bufferinsi
-
-    cmp [filesys], FS_NTFS
+    cmp [bFilesys], FS_NTFS
     jz bsntfsview
-    cmp [filesys], FS_EXFAT     ; don't test flags here, no jump wanted for FAT12/16/32!
+    cmp [bFilesys], FS_EXFAT     ; don't test flags here, no jump wanted for FAT12/16/32!
     jz bsexfatview
 
     mov di, offset bsviewtab
@@ -5926,7 +6239,7 @@ bsview proc
 nextitem:
     push cx
     call basicbs
-    add di,3*2
+    add di, sizeof VIEWENT
 
     mov cl, 9
     call fillspace
@@ -5962,9 +6275,9 @@ nextitem:
     ret
 
 basicbs:
-    mov bx, [di+0]
-    mov dx, [di+2]
-    mov cx, [di+4]
+    mov bx, [di].VIEWENT.wOfs
+    mov dx, [di].VIEWENT.wLbl
+    mov cx, [di].VIEWENT.wFmt
 
     mov word ptr [highlight.siz_], cx
     call printstring
@@ -6002,49 +6315,33 @@ npldn2:
 @@:
     ret
 
-bsview endp
+bootsectview endp
+
+bsntfsview proc
 
     .data
 
 ;--- NTFS BPB struct
 
 bsntfsviewtab label word
-    dw BPB.bytes_sector
-    dw DStr('Bytes Per Sector')
-    dw 0502h
-    dw BPB.sectors_cluster
-    dw DStr('Sectors Per Cluster')
-    dw 0301h
-    dw BPB.reserved_sectors
-    dw DStr('Reserved Sectors')
-    dw 0502h
-    dw BPB.media_byte
-    dw DStr('Media Descriptor')
-    dw 0301h
-    dw BPB.hidden_sectors
-    dw DStr('Partition Start')
-    dw 0A04h
-    dw 28h
-    dw DStr('Sectors In Partition')
-    dw 0A04h
-    dw 30h
-    dw DStr('$MFT Cluster')
-    dw 1408h
-    dw 38h
-    dw DStr('Backup $MFT Cluster')
-    dw 1408h
-lbsntfsviewtab equ ($ - offset bsntfsviewtab) / ( 3 * sizeof word )
+    VIEWENT <BPB.bytes_sector,    DStr('Bytes Per Sector'),    0502h>
+    VIEWENT <BPB.sectors_cluster, DStr('Sectors Per Cluster'), 0301h>
+    VIEWENT <BPB.reserved_sectors,DStr('Reserved Sectors'),    0502h>
+    VIEWENT <BPB.media_byte,      DStr('Media Descriptor'),    0301h>
+    VIEWENT <BPB.hidden_sectors,  DStr('Partition Start'),     0A04h>
+    VIEWENT <28h,                 DStr('Sectors In Partition'),0A04h>
+    VIEWENT <30h,                 DStr('$MFT Cluster'),        1408h>
+    VIEWENT <38h,                 DStr('Backup $MFT Cluster'), 1408h>
+lbsntfsviewtab equ ($ - offset bsntfsviewtab) / sizeof VIEWENT
 
     .code
 
-bsntfsview proc
     mov di, offset bsntfsviewtab
-    mov cl,lbsntfsviewtab
-    mov ch,0
+    mov cx,lbsntfsviewtab
 nextitem:
     push cx
     call basicbs
-    add di,3*2
+    add di, sizeof VIEWENT
 
     mov cl, 9
     call fillspace
@@ -6060,9 +6357,9 @@ nextitem:
     jnz nextitem
     ret
 basicbs:
-    mov bx, [di+0]
-    mov dx, [di+2]
-    mov cx, [di+4]
+    mov bx, [di].VIEWENT.wOfs
+    mov dx, [di].VIEWENT.wLbl
+    mov cx, [di].VIEWENT.wFmt
 
     mov word ptr [highlight.siz_], cx
     call printstring
@@ -6073,57 +6370,33 @@ basicbs:
     ret
 bsntfsview endp
 
+bsexfatview proc
+
     .data
 
 bsexfatviewtab label word
-    dw EXFAT.dqHidden
-    dw DStr('Start of Partition')
-    dw 1408h
-    dw EXFAT.dqSize
-    dw DStr('Sectors In Partition')
-    dw 1408h
-    dw EXFAT.dwFatOfs
-    dw DStr('Reserved Sectors')
-    dw 0A04h
-    dw EXFAT.dwFatSiz
-    dw DStr('Size of FAT')
-    dw 0A04h
-    dw EXFAT.dwClHpOfs
-    dw DStr('Start Data Region')
-    dw 0A04h
-    dw EXFAT.dwClCnt
-    dw DStr('Clusters')
-    dw 0A04h
-    dw EXFAT.dwRootCl
-    dw DStr('Start Root Dir')
-    dw 0A04h
-    dw EXFAT.wFSRev
-    dw DStr('FS Revision')
-    dw 0502h
-    dw EXFAT.wVolFlgs
-    dw DStr('Volume Flags')
-    dw 0502h
-    dw EXFAT.bBpSShift
-    dw DStr('BytesPerSector Shift')
-    dw 0301h
-    dw EXFAT.bSpCShift
-    dw DStr('SecPerCluster Shift')
-    dw 0301h
-    dw EXFAT.bNumFats
-    dw DStr('No of FATs')
-    dw 0301h
-lbsexfatviewtab equ ($ - offset bsexfatviewtab) / ( 3 * sizeof word )
+    VIEWENT <EXFAT.dqHidden,  DStr('Start of Partition'),   1408h>
+    VIEWENT <EXFAT.dqSize,    DStr('Sectors In Partition'), 1408h>
+    VIEWENT <EXFAT.dwFatOfs,  DStr('Reserved Sectors'),     0A04h>
+    VIEWENT <EXFAT.dwFatSiz,  DStr('Size of FAT'),          0A04h>
+    VIEWENT <EXFAT.dwClHpOfs, DStr('Start Data Region'),    0A04h>
+    VIEWENT <EXFAT.dwClCnt,   DStr('Clusters'),             0A04h>
+    VIEWENT <EXFAT.dwRootCl,  DStr('Start Root Dir'),       0A04h>
+    VIEWENT <EXFAT.wFSRev,    DStr('FS Revision'),          0502h>
+    VIEWENT <EXFAT.wVolFlgs,  DStr('Volume Flags'),         0502h>
+    VIEWENT <EXFAT.bBpSShift, DStr('BytesPerSector Shift'), 0301h>
+    VIEWENT <EXFAT.bSpCShift, DStr('SecPerCluster Shift'),  0301h>
+    VIEWENT <EXFAT.bNumFats,  DStr('No of FATs'),           0301h>
+lbsexfatviewtab equ ($ - offset bsexfatviewtab) / sizeof VIEWENT
 
     .code
 
-bsexfatview proc
     mov di, offset bsexfatviewtab
-    mov cl,lbsexfatviewtab
-    mov ch,0
+    mov cx, lbsexfatviewtab
 nextitem:
     push cx
     call basicbs
-    add di,3*2
+    add di, sizeof VIEWENT
 
     mov cl, 9
     call fillspace
@@ -6139,9 +6412,9 @@ nextitem:
     jnz nextitem
     ret
 basicbs:
-    mov bx, [di+0]
-    mov dx, [di+2]
-    mov cx, [di+4]
+    mov bx, [di].VIEWENT.wOfs
+    mov dx, [di].VIEWENT.wLbl
+    mov cx, [di].VIEWENT.wFmt
 
     mov word ptr [highlight.siz_], cx
     call printstring
@@ -6170,19 +6443,45 @@ printvalue_hl:
     push bx
     add bx, dx
     mov [highlight.ofs], bx
+if ?GPT
+	cmp word ptr highlight.siz_, 2610h  ; print a guid?
+	jnz @F
+	lea ax,[si+bx]
+	mov dx, offset sprintfbuffer
+	invoke guid2string, ax, dx
+	pop bx
+	jmp isstr
+@@:
+endif
     mov eax, [si+bx]
     cmp [highlight.siz_], 8
-    jnz @F
+    jnz noqword
     mov edx, [si+bx+4]
-    invoke i64toa, edx::eax, offset sprintfbuffer, 10
+	cmp highlight.scsiz, 8  ;output also 8 ( then it's a string )
+	jnz isnum
+	mov bx, offset sprintfbuffer
+	mov dword ptr [bx+0], eax
+	mov dword ptr [bx+4], edx
+	mov byte ptr  [bx+8],0
+	mov dx, bx
+	pop bx
+	jmp isstr
+isnum:
+	mov cx, 10
+	cmp highlight.scsiz, 16
+	jnz @F
+	mov cx, 16
+@@:
+    invoke i64toa, edx::eax, offset sprintfbuffer, cx
     pop bx
     mov dx, ax
     mov ax, offset sprintfbuffer+22
     sub ax, dx
     mov [highlight.scsiz], al
+isstr:
     call bshighlight
     jmp printstring
-@@:
+noqword:
     pop bx
     cmp [highlight.siz_], 4
     jae @F
@@ -6238,7 +6537,7 @@ if ?ALTKEYS
 prevcluster:
 nextcluster proc
 
-    test [filesys], FS_FATXX
+    test [bFilesys], FS_FATXX
     jz done
     test [bRegion], RG_DATA
     jz done
@@ -6478,7 +6777,7 @@ setBps endp
 ;---      [ioreq.rwfunc]
 ;---      [wBps]
 ;---      [dwDataend]
-;---      [cylinders], [heads], [sectors]
+;---      [wCylinders], [bHeads], [bSectors]
 
 setphysvars proc
 
@@ -6519,9 +6818,9 @@ endif
     mov ax,word ptr [si].DINFO1.cyls
     mov bl,byte ptr [si].DINFO1.heads
     mov cl,byte ptr [si].DINFO1.secs
-    mov [cylinders], ax
-    mov [heads], bl
-    mov [sectors], cl
+    mov [wCylinders], ax
+    mov [bHeads], bl
+    mov [bSectors], cl
     mov [ioreq.rwfunc], RWF_NEWINT13
     clc
     jmp done
@@ -6540,19 +6839,19 @@ use1308:
     cmp dl,1
     jc done
     inc dh
-    mov [heads], dh
-    mov [sectors], cl
-    and [sectors], 00111111b
+    mov [bHeads], dh
+    mov [bSectors], cl
+    and [bSectors], 00111111b
     and cl,3
     xchg cl,ch
-    mov [cylinders], cx
+    mov [wCylinders], cx
     mov ax, 512
     call setBps
-    movzx eax, [cylinders]              ; CHS -> LBA
+    movzx eax, [wCylinders]             ; CHS -> LBA
     movzx ebx, dh                       ; heads*cylinders
     mul ebx
     add eax, ebx                        ; + heads
-    mov bl, [sectors]
+    mov bl, [bSectors]
     mul ebx                             ; * sectors
     dec eax                             ; - 1
     mov [dwDataend], eax
@@ -6571,7 +6870,7 @@ setphysvars endp
 setvariables proc
     call setseeds2
 
-    mov [filesys], FS_UNDEFINED         ; reset FAT type
+    mov [bFilesys], FS_UNDEFINED        ; reset FAT type
 
     cmp [ioreq.drvtype], DT_CDROM
     je cdsetvars
@@ -6580,10 +6879,14 @@ setvariables proc
     cmp [ioreq.drvtype], DT_PHYSICAL
     jne logicalsetvars
 copypartitioninfo:
+if ?GPT
+    cmp [sectbuffer+PTABOFS].PTABENT.bType, 0EEh; "EFI" partition?
+    setz bTypeEE
+endif
     push ds                             ; sets variables p1-p4
     pop es                              ; for jumping to partitions
     mov di, offset partitions           ; on physical drives
-    mov si, offset sectbuffer + PTABOFS + 8
+    mov si, offset sectbuffer + PTABOFS + PTABENT.start
     mov cx, 4
 @@:
     movsd
@@ -6644,7 +6947,7 @@ assumefat:
     mov al, [si].BPB.num_fats                 ; number of fat tables
     mov [bFats], al
     mov ax, [si].BPB.root_entries             ; maximum number of root entries
-    mov [rootentries], ax
+    mov [wRootentries], ax
     shr ax, 4                                 ; 16 entries in one sector
     mov [wRootsectors], ax                    ; # of entries/16 = # of sectors
 
@@ -6677,13 +6980,13 @@ skipsub2:
     mov cl, [bSpCshift]
     shr eax, cl
 
-    mov [filesys], FS_FAT32
+    mov [bFilesys], FS_FAT32
     cmp eax, 65525
     jae goodnumcluster                  ; jump if not fat16 or less
-    mov [filesys], FS_FAT16
+    mov [bFilesys], FS_FAT16
     cmp eax, 4085
     jae goodnumcluster                  ; jump if not fat12
-    mov [filesys], FS_FAT12
+    mov [bFilesys], FS_FAT12
 goodnumcluster:
     add eax, 2
     mov [dwLastCluster], eax
@@ -6694,7 +6997,7 @@ goodnumcluster:
     add eax, [dwReserved]               ; spf * fats + reserved = root
     mov [dwRootSect], eax
 
-    cmp [filesys], FS_FAT32
+    cmp [bFilesys], FS_FAT32
     jne not_fat32
 
     push eax
@@ -6746,7 +7049,7 @@ donegetvars:
     ret
 
 isntfs:
-    mov [filesys], FS_NTFS
+    mov [bFilesys], FS_NTFS
     mov eax, [si+28h]
     dec eax
     mov [dwDataend], eax
@@ -6760,7 +7063,7 @@ isntfs:
     ret
 
 isexfat:
-    mov [filesys], FS_EXFAT
+    mov [bFilesys], FS_EXFAT
     mov eax, dword ptr [si].EXFAT.dqSize+0
 ife ?SN64
     dec eax
@@ -6948,7 +7251,7 @@ IsExfatDir endp
 
 IsDirectory proc
 
-    cmp [filesys], FS_EXFAT
+    cmp [bFilesys], FS_EXFAT
     jz IsExfatDir
 
     push cx
@@ -6965,28 +7268,28 @@ IsDirectory proc
 
 nextentry:
 
-;    cmp byte ptr [si+bx+12], 0         ; NT series *does* use this byte,
+;    cmp [si+bx].SFNENTRY.bRes, 0       ; NT series *does* use this byte,
 ;    jne notfound                       ; so it may not be 0 on drives that
 ;                                       ; have been messed with by NT
     mov cl, 10
 
-    cmp byte ptr [si+bx], 0             ; first byte zero?
+    cmp [si+bx].SFNENTRY.name_, 0       ; first byte zero?
     je allzero
 
-    test byte ptr [si+bx+DIR_ATTRIBUTES], 11000000b
+    test [si+bx].SFNENTRY.bAttr, 11000000b
     jnz notfound                        ; top two bits of attribute are
                                         ; reserved.  can't be used.
-    cmp byte ptr [si+bx+DIR_ATTRIBUTES], 0Fh
+    cmp [si+bx].SFNENTRY.bAttr, 0Fh
     je lfn                              ; if attribute is 0F, then it's lfn
 
 notlfn:
     inc cl
-    cmp byte ptr [si+0Dh+bx], 199               ; tenth of a second for
-    ja notfound                                 ; creation time (0-199)
+    cmp [si+bx].SFNENTRY.bCreMSec, 199  ; tenth of a second for
+    ja notfound                         ; creation time (0-199)
     
-    mov ax, word ptr [si+18h+bx]                ; test the date
-                                                ; to see if it exceeds any
-                                                ; hour/minute/etc boundaries
+    mov ax, [si+bx].SFNENTRY.wLUDate    ; test "last update" date
+                                        ; to see if it exceeds any
+                                        ; hour/minute/etc boundaries
     test al, 00011111b
     jz notfound
     shr ax, 5
@@ -6995,7 +7298,7 @@ notlfn:
     cmp al, 12
     ja notfound
 
-    mov ax, word ptr [si+10h+bx]                ; test the date
+    mov ax, [si+bx].SFNENTRY.wCreDate   ; test "creation" date
     test ax, ax
     jz dontcheckseconddate
     test al, 00011111b
@@ -7007,29 +7310,29 @@ notlfn:
     ja notfound
 dontcheckseconddate:
 
-    mov ax, word ptr [si+bx+DIR_CLUST_HIGH]
+    mov ax, [si+bx].SFNENTRY.wClHigh
     shl eax, 16
-    mov ax, word ptr [si+bx+DIR_CLUST_LOW]
+    mov ax, [si+bx].SFNENTRY.wClLow
 
     cmp eax, 0FFFFFF7h                          ; cluster can't be EOC and
     jae notfound                                ; the top nibble must = 0
-    cmp dword ptr [si+bx+DIR_LASTUPDTIME], 0    ; check both time/date (pointless?)
+    cmp dword ptr [si+bx].SFNENTRY.wLUTime, 0   ; check both time/date (pointless?)
     je notfound
 
-    test byte ptr [si+bx+DIR_ATTRIBUTES], DA_DIRECTORY  ; directory?
+    test [si+bx].SFNENTRY.bAttr, DA_DIRECTORY   ; directory?
     jz entrynotdirectory
-    test byte ptr [si+bx+DIR_ATTRIBUTES], DA_VOLUME     ; can't also be a label.
+    test [si+bx].SFNENTRY.bAttr, DA_VOLUME      ; can't also be a label.
     jnz notfound
-    cmp dword ptr [si+bx+DIR_FILESIZE], 0 ; "size" of directories "should" be 0
+    cmp [si+bx].SFNENTRY.dwSize, 0              ; "size" of directories "should" be 0
     jne notfound
 entrynotdirectory:
 
-    cmp byte ptr [si+bx], 20h           ; first character cannot be a space
+    cmp [si+bx].SFNENTRY.name_, 20h             ; first character cannot be a space
     je notfound
-    cmp byte ptr [si+bx], 0E5h          ; first character can be E5h (del'd)
+    cmp [si+bx].SFNENTRY.name_, 0E5h            ; first character can be E5h (del'd)
     je charok
 nextchar:
-    mov al, byte ptr [si+bx]
+    mov al, [si+bx].SFNENTRY.name_
     call extvalidfilechar
     jc notfound
 charok:
@@ -7040,12 +7343,12 @@ charok:
 
 lfn:
 
-    cmp word ptr [si+bx+DIR_CLUST_LOW], 0         ; low cluster word must = 0
-    jne notfound                                  ; for long file names
+    cmp [si+bx].SFNENTRY.wClLow, 0              ; low cluster word must = 0
+    jne notfound                                ; for long file names
 
     mov al, byte ptr [si+bx]
 
-;    cmp al, 0ffh                                  ; wtf?
+;    cmp al, 0ffh                               ; wtf?
 ;    je nextletter
     cmp al, 0                     ; first character can't be null
     je notfound
@@ -7230,7 +7533,7 @@ printentry proc
     mov dl, 8
     test eax, 0ffff0000h
     jnz @F
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jnz @F
     mov dl, 4
 @@:
@@ -7368,7 +7671,7 @@ printtopline proc
     sub cl, [scrn_col]
     call fillspace
     add [scrn_col], cl
-    mov cl, sizeof inreservedmsg - 1 ;"[boot/reserved]", "[fat-x]", "[root", "[data]"
+    mov cl, sizeof szReservedmsg - 1 ;"[boot/reserved]", "[fat-x]", "[root", "[data]"
     mov al, COL_DEFAULT
     call fillattr
 
@@ -7383,7 +7686,7 @@ printtopline proc
     cmp eax, edx
     jb inreserved
 
-    test [filesys], FS_FATXX
+    test [bFilesys], FS_FATXX
     je indata
 
     movzx cx, [bFats]
@@ -7405,8 +7708,8 @@ notinfat:                          ; not in reserved and not in fat
 
     mov [bRegion], RG_ROOT
 
-    mov dx, offset inrootmsg           ; "[root]
-    test [filesys], FS_FAT32           ; root in data region?
+    mov dx, offset szRootmsg           ; "[root]
+    test [bFilesys], FS_FAT32          ; root in data region?
     jnz dispclust
 
 continuecount:
@@ -7436,28 +7739,25 @@ done:
 
 inreserved:
     mov [bRegion], RG_RESERVED
-    mov dx, offset inreservedmsg
+    mov dx, offset szReservedmsg
     jmp continuecount
 
 infat:
     mov [bRegion], RG_FAT
-    mov dx, offset infatmsg           ; "[FAT-"
-    call printstring
-    mov dl, '1'
+    mov cx, 1
     mov eax, [dwFat1end]
     cmp [dwCurSector], eax
     jb @F
-    mov dl, '2'
+    inc cx
 @@:
-    call printchar
-    mov dl, ']'
-    call printchar
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, offset szFATmsg, cx  ; "[FAT-x]"
+    call printstring
 
-
-    test [filesys], FS_FATXX
+    test [bFilesys], FS_FATXX
     je abortdc
     mov cl, COLENDHEX - 15
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jnz @F
     mov cl, COLENDHEX - 11
 @@:
@@ -7474,26 +7774,38 @@ infat:
     mov [scrn_col], COLENDHEX         ; column where hex region ends
     jmp abortdc
 
-setmbrview:
-    mov [bRegion], VM_MBR
-    mov dx, offset inmbrmsg
+setphysview:
+    mov [bRegion], cl                 ; bits 0-3 of bRegion may contain "view"
     call printstring
     jmp abortdc
 
 inphysical:
     cmp [ioreq.bDrive], 80h           ; lower than 80h?
     jb indata                         ; not an hd - no mbr.
-    test eax, eax
-    jz setmbrview
-
+	mov dx, offset szMBRmsg
+	mov cl, VM_MBR
+	test eax, eax
+	jz setphysview
+if ?GPT
+	cmp [bTypeEE], 0
+	jz indata
+	mov dx, offset szGPTHdrmsg
+	mov cl, VM_GPTHDR
+	cmp eax, 1
+	jz setphysview
+	mov dx, offset szGPTEntrymsg
+	mov cl, VM_GPTENTRY
+	cmp eax, 33
+	jbe setphysview
+endif
 indata:
-    mov dx, offset indatamsg
+    mov dx, offset szDatamsg
 dispclust:
     call printstring
 ;    mov dl, SPACE
 ;    call printchar
 
-    test [filesys], FS_FATXX
+    test [bFilesys], FS_FATXX
     je abortdc
 
     or [bRegion], RG_DATA
@@ -7503,7 +7815,7 @@ dispclust:
     mov dl, 7                         ; cluster has max. 7 hex digits (8 for exfat!)
     test eax, 0ffff0000h
     jnz @F
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jnz @F
     mov dl, 4
 @@:
@@ -7717,7 +8029,7 @@ nextchar1:
     jnz nextchar1
     pop si
 
-    cmp [displaymode], DM_BINARY
+    cmp [bDisplaymode], DM_BINARY
     je displaybinval
 
     xor cx, cx
@@ -7819,7 +8131,7 @@ printaddresses:
     movzx eax, [sectofs]
     mov bx, 10h                         ; 16 bytes per line in hex mode
     mov cx, 32                          ; 32 vertical lines for editing
-    cmp [displaymode], DM_BINARY
+    cmp [bDisplaymode], DM_BINARY
     jne nextaddress
 
     mov dx, [spot]
@@ -7868,7 +8180,7 @@ showcursor proc
     mov bp, sp
 ;    @dprintfln "showcursor(%u)", word ptr [bp+16+2]
     mov ax, COL_EDIT or (COL_HIGHLIGHT shl 8)
-    cmp [editmode], EM_DEFAULT
+    cmp [bEditmode], EM_DEFAULT
     jz @F
     xchg al, ah
 @@:
@@ -8135,8 +8447,8 @@ printhelp endp
 ;--- modifies ecx, ebx, edx, eax
 
 getchs proc
-    movzx ecx, [heads]
-    movzx ebx, [sectors]
+    movzx ecx, [bHeads]
+    movzx ebx, [bSectors]
     imul ebx, ecx      ;heads * sectors = sectors per cylinder
 
     xor edx, edx
@@ -8150,7 +8462,7 @@ getchs proc
 
     mov eax, edx
     xor edx, edx
-    movzx ebx, [sectors]
+    movzx ebx, [bSectors]
     cmp bl, 0
     je @F
     div ebx
@@ -8166,8 +8478,8 @@ getchs endp
 ;--- to display CHS in topline.
 
 getchsx proc
-    movzx cx, [heads]
-    movzx bx, [sectors]
+    movzx cx, [bHeads]
+    movzx bx, [bSectors]
     cmp bl,0
     jz @F
     imul bx, cx      ;heads * sectors = sectors per cylinder
@@ -8178,7 +8490,7 @@ getchsx proc
     push ax
     mov ax, dx
     xor dx, dx
-    movzx cx, [sectors]
+    movzx cx, [bSectors]
     div cx
     mov bx, ax      ; gives heads in bx
     mov cx, dx
@@ -8862,7 +9174,7 @@ printtime proc
     jb @F
     mov cl, 199
 @@:
-    cmp dl, DIR_CREATEMSEC   ; fix! this code works for standard creation time only
+    cmp dl, SFNENTRY.bCreMSec ; DIR_CREATEMSEC   ; fix! this code works for standard creation time only
     mov dl, cl
     jnz nodec
     dec [highlight.ofs]      ; size is 2, and msecs are just 1 byte before hh:mm:ss time
@@ -8905,7 +9217,7 @@ spot2xy proc
     push ax
     mov ax, dx
 
-    cmp [displaymode], DM_BINARY
+    cmp [bDisplaymode], DM_BINARY
     je binaryspotcalc
     shr dx, 4                   ; for use with hex view
 ;    inc dl
@@ -9141,12 +9453,14 @@ checkabort:             ; sets equal flag if escape key was pressed
     pop ax
     ret
 
-;-------------------------------------------------------
-; sets viewmode to DL
+;---
+;--- set viewmode to DL.
+;--- if viewmode changes, set bUpdateView to true.
+;--- modifies ES, DI
 
-checksetview proc
-    cmp [viewmode], dl              ; check if the "view" mode
-    je no_viewmode_change           ; is already set.
+setviewmode proc
+    cmp [bViewmode], dl             ; if viewmode won't change
+    je exit                         ; do nothing
 if ?EXT
     mov cl, FUNCM_UNDELETE
     mov al, MS_INACTIVE
@@ -9155,12 +9469,12 @@ endif
     mov cl, LDFILEOPT_CHAIN
     mov al, MS_INACTIVE             ; remove "chain"
     call setmenuitem
-    cmp [viewmode], VM_DIRECTORY    ; is old view directory?
+    cmp [bViewmode], VM_DIRECTORY   ; is old view directory?
     jnz @F
-    call nodirview_ascii
+    call nodirview_ascii            ; restore ascii part to def. color
 @@:
-    mov [viewmode], dl              ; set new view
-clearviewarea::
+    mov [bViewmode], dl             ; set new view
+clearviewarea::                     ; <--- called by updatescreen, helpscreen
     les di, [vidaddr]
     mov cx, [vidcolsize]
     mov ax, VIEWROW                 ; start of "view" area
@@ -9180,9 +9494,9 @@ clearviewarea::
     dec dl
     jnz @B
     mov bUpdateView, 1
-no_viewmode_change:
+exit:
     ret
-checksetview endp
+setviewmode endp
 
 ;-------------------------------------------------------
 getnos:                               ; 'get number of sectors' from the
@@ -9660,7 +9974,6 @@ gethexdi endp
 
 ;-------------------------------------------------------
 ; OUT:  si -> offset to current sectofs buffer
-;       ax = offset within sectbuffer
 
 bufferinsi:
     mov si, offset sectbuffer

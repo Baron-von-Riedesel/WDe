@@ -1,9 +1,14 @@
 
 ;--- simple sprintf() implementation
 
+if ?SN64 or ?GPT
+?SUPPLL equ 1           ; 1=support 64-bit numbers in sprintf
+else
+?SUPPLL equ 0
+endif
+
 ?SPRBUFSIZE = 12
 
-;if ?SN64
 if 1  ; used by exFAT file size rendering
 
 ?SPRBUFSIZE = 24
@@ -162,19 +167,17 @@ chkdigit:
     mov [size_], dx
 
     cmp al, 'l'
-if ?SN64
     sete [longarg]
+if ?SUPPLL
     jne nol
     lodsb
     cmp al, 'l'
-    jne @F
+    jne nol
     inc [longarg]
-@@:
     inc si
 nol:
     dec si
 else
-    sete [longarg]
     je @F
     dec si
 @@:
@@ -218,7 +221,7 @@ handle_u:
 @@lprt262:
     mov eax, [bx]
     add bx, 4
-if ?SN64
+if ?SUPPLL
     dec [longarg]
     js is16
     jz @F

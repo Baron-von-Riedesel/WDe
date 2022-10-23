@@ -5,7 +5,7 @@
 ;--- Public Domain.
 
 	.386
-	.model flat
+	.model flat, c
 	option casemap:none
 
 BUFFSIZE equ 256  ;buffer size in kB
@@ -28,10 +28,10 @@ buffer	db BUFFSIZE * 1024 dup (?)
 
 	include printf.inc
 
-;--- wSize: # of entries
 ;--- remove all entries containing E5 at pos 0
+;--- dwItem: # of directory entries
 
-compress proc c uses esi edi pBuffer:ptr, dwItems:dword
+compress proc uses esi edi pBuffer:ptr, dwItems:dword
 	cld
 	mov esi, pBuffer
 	mov edi, pBuffer
@@ -62,10 +62,72 @@ done:
 	ret
 compress endp
 
+;--- open file
+;--- first try LFN function, then SFN
+
+openfile proc uses esi edi pszName:ptr
+	mov esi, pszName
+	mov cx, 0			; normal file
+	mov di, 0
+	mov dl, 1h			; fail if file not exists
+	mov dh, 0
+	mov bx, 2			; read+write
+	mov ax, 716Ch		; open file
+	int 21h
+	jnc @F
+	cmp ax, 7100h
+	stc
+	jnz @F
+	mov ax, 6C00h		; try SFN variant
+	int 21h
+@@:
+	ret
+openfile endp
+
+;--- set abs/rel file position
+
+setfilepos proc hFile:dword, dwPos:dword, bType:byte
+	mov ebx, hFile
+	mov dx, word ptr dwPos+0
+	mov cx, word ptr dwPos+2
+	mov al, bType
+	mov ah, 42h
+	int 21h
+	ret
+setfilepos endp
+
+getfilesize proc hFile:dword
+	invoke setfilepos, hFile, 0, 2	; set file pos to EOF
+	jc @F
+	push dx				; returns abs position (=size) in DX:AX
+	push ax
+	invoke setfilepos, hFile, 0, 0
+	pop eax
+@@:
+	ret
+getfilesize endp
+
+readfile proc hFile:dword, pBuffer:ptr, dwSize:dword
+	mov ebx, hFile
+	mov edx, pBuffer
+	mov ecx, dwSize
+	mov ah, 3Fh
+	int 21h
+	ret
+readfile endp
+
+writefile proc hFile:dword, pBuffer:ptr, dwSize:dword
+	mov ebx, hFile
+	mov edx, pBuffer
+	mov ecx, dwSize
+	mov ah, 40h
+	int 21h
+	ret
+writefile endp
+
 main proc c argc:dword, argv:ptr ptr 
 
 local	hFile:dword
-local	pszFile:dword
 local	dwSize:dword
 
 	mov hFile, -1
@@ -76,64 +138,28 @@ local	dwSize:dword
 	mov ebx,argv
 @@:
 	mov esi,[ebx+4]
-	mov pszFile, esi
 
-;--- to open file, try LFN function first
-
-	mov esi, pszFile
-	mov cx,0			; normal file
-	mov di,0
-	mov dl,1h			; fail if file not exists
-	mov dh,0
-	mov bx,2			; read+write
-	mov ax,716Ch		; open file
-	int 21h
-	jnc @F
-	cmp ax,7100h
-	jnz openerr
-	mov ax,6C00h		; try SFN variant
-	int 21h
+	invoke openfile, esi
 	jc openerr
-@@:
 	mov hFile, eax
 
-	mov ebx, eax
-	xor cx, cx
-	xor dx, dx
-	mov ax, 4202h		; position at EOF
-	int 21h
-	push dx				; returns abs position in DX:AX
-	push ax
-	pop eax
+	invoke getfilesize, eax
+	jc seekerr
 	mov dwSize, eax
 	test al, 11111b		; size must be a multiple of 32
 	jnz invalidfile
 	cmp eax, sizeof buffer
 	ja buffertoosmall
-	xor cx, cx
-	xor dx, dx
-	mov ax, 4200h		; restore position to abs 0
-	int 21h
 
-	mov edx, offset buffer
-	mov ecx, dwSize		; read file into buffer
-	mov ah, 3Fh
-	int 21h
+	invoke readfile, hFile, offset buffer, dwSize
 	jc readerr
-
+	mov eax, dwSize
 	shr eax, 5			; divide by 32
 	invoke compress, offset buffer, eax
 	jc exiterr
 
-	mov ebx, hFile
-	xor cx, cx			; position at abs 0
-	xor dx, dx
-	mov ax, 4200h
-	int 21h
-	mov edx, offset buffer	; (re)write file from buffer
-	mov ecx, dwSize
-	mov ah, 40h
-	int 21h
+	invoke setfilepos, hFile, 0, 0
+	invoke writefile, hFile, offset buffer, dwSize
 	jc writeerr
 	invoke printf, CStr("done",lf)
 	mov al,0
@@ -152,6 +178,9 @@ buffertoosmall:
 	jmp exiterr
 invalidfile:
 	invoke printf, CStr(<"file size not a multiple of 32",lf>)
+	jmp exiterr
+seekerr:
+	invoke printf, CStr(<"seek error [%X]",lf>), eax
 	jmp exiterr
 readerr:
 	invoke printf, CStr(<"read error [%X]",lf>), eax

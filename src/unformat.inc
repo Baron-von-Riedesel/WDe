@@ -72,7 +72,7 @@ wDirs      equ < word ptr [bp-18]> ; total dirs found
 ;--- For FAT32, start at 3 ( assuming root dir is at 2, size 1 cluster )
 
     mov eax, 2                        ; start at cluster 2
-    test [filesys], FS_FAT32
+    test [bFilesys], FS_FAT32
     jz @F
     inc eax                           ; for FAT32, start at cluster 3
 @@:
@@ -386,7 +386,7 @@ checkNextEntry:
                                         ; directory entries (dx)
     inc ebx                             ; increase sector #
 
-    test [filesys], FS_FAT32            ; FAT12/FAT16?
+    test [bFilesys], FS_FAT32           ; FAT12/FAT16?
     je maxEntryCheck
     dec ch                              ; spc processed < spc?
     jnz checkNextRootSect
@@ -396,7 +396,7 @@ checkNextEntry:
     @dprintfln "unformat: writeRootEntry FAT32 out of root entries"
     jmp wre_exit
 maxEntryCheck:
-    cmp dx, [rootentries]               ; reached maximum # of root entries?
+    cmp dx, [wRootentries]              ; reached maximum # of root entries?
     jb checkNextRootSect
       ;
       ; todo: out of entries error handling
@@ -406,12 +406,12 @@ maxEntryCheck:
 writeEntry:
     cmp al, LOST_DIRECTORY
     je writeLostDir
-    mov dword ptr [si], 'RIDW'          ; "WDIR"
+    mov dword ptr [si].SFNENTRY.name_[0], 'RIDW'; "WDIR"
     inc [rootdirs]
     mov ax, [rootdirs]
     jmp writtenDirType
 writeLostDir:
-    mov dword ptr [si], 'TSOL'          ; "LOST"
+    mov dword ptr [si].SFNENTRY.name_[0], 'TSOL'; "LOST"
     inc [lostdirs]
     mov ax, [lostdirs]
 writtenDirType:
@@ -420,12 +420,12 @@ writtenDirType:
 
     call rendernumdec                           ; decimal representation
     mov eax, dword ptr [valuebuffer+6]          ; of the lost/root dir count
-    mov dword ptr [si+04h], eax                 ; ("WDIR0001" etc)
+    mov dword ptr [si].SFNENTRY.name_[4], eax   ; ("WDIR0001" etc)
 
     mov eax, [dwCluster]
-    mov word ptr [si+DIR_CLUST_LOW], ax
+    mov [si].SFNENTRY.wClLow, ax
     shr eax, 16
-    mov word ptr [si+DIR_CLUST_HIGH], ax
+    mov [si].SFNENTRY.wClHigh, ax
     mov dword ptr [si+08h], 10202020h           ; extension+attribs
 
     call diskaccess_write                       ; write [ioreq.dwSector]
@@ -530,19 +530,20 @@ notLastSect:
     call diskaccess_read
 
 dontReRead:
-    cmp word ptr [sectbuffer], 202Eh            ; has "." entry?
+;--- starting with "." and ".." dir entries?
+    cmp word ptr [sectbuffer].SFNENTRY.name_, " ."
     jne unlinkeddirectory
-    cmp dword ptr [sectbuffer+DIRENTSIZE], 20202E2Eh    ; has ".." entry?
+    cmp dword ptr [sectbuffer+sizeof SFNENTRY].SFNENTRY.name_, "  .."
     jne unlinkeddirectory
 
-    mov ax, word ptr [sectbuffer+DIRENTSIZE+DIR_CLUST_HIGH]
+    mov ax, [sectbuffer+sizeof SFNENTRY].SFNENTRY.wClHigh
     shl eax, 16
-    mov ax, word ptr [sectbuffer+DIRENTSIZE+DIR_CLUST_LOW]
+    mov ax, [sectbuffer+sizeof SFNENTRY].SFNENTRY.wClLow
 
 ;--- v0.99: the clusternumber of the ".." is 0000000 for subdirs of root in FAT32!
 ;--- in that case only "regular" may be found - and nothing is recovered!
 
-    cmp [filesys], FS_FAT32
+    cmp [bFilesys], FS_FAT32
     jnz @F
     cmp eax, 0
     jz rootlinked
@@ -612,22 +613,22 @@ checkNextSector:
     mov si, offset sectbuffer   ; pointer to the entry being worked with
 
 processNextEntry:
-    cmp byte ptr [si], 00       ; no entries left?
+    cmp [si].SFNENTRY.name_, 00 ; no entries left?
     je validDir
     cmp word ptr [si], " ."     ; skip "." & ".." entries
     je entrydone
     cmp dword ptr [si], "  .."
     je entrydone
-    cmp byte ptr [si], 0E5h
+    cmp [si].SFNENTRY.name_, 0E5h
     je entrydone                ; skip deleted entries
-    cmp byte ptr [si+DIR_ATTRIBUTES], 0Fh
+    cmp [si].SFNENTRY.bAttr, 0Fh
     je entrydone                ; skip LFNs
 
 ;--- get the cluster number of the entry
 
-    mov ax, word ptr [si+DIR_CLUST_HIGH]
+    mov ax, [si].SFNENTRY.wClHigh
     shl eax, 16
-    mov ax, word ptr [si+DIR_CLUST_LOW]
+    mov ax, [si].SFNENTRY.wClLow
     ;
     ; error checking for cluster # missing here
     ;
@@ -663,7 +664,7 @@ validatecmd:
     pop eax
     jnz invalidDir              ; if not, skip.
 
-    test byte ptr [si+DIR_ATTRIBUTES], DA_DIRECTORY
+    test [si].SFNENTRY.bAttr, DA_DIRECTORY
     jz validate_done            ; jump if not a directory
 
     mov cx, [wDirs]
@@ -694,7 +695,7 @@ validate_done:
 recoverfilescmd:
 
     mov [dwCluster], eax        ; file start cluster#
-    mov ebx, [si+DIR_FILESIZE]
+    mov ebx, [si].SFNENTRY.dwSize
     mov [dwFilesize], ebx
 
     mov eax, [maxsize]

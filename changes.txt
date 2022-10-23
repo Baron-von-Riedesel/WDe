@@ -12,6 +12,7 @@ WDe V1.00 [__.__.2022]
     start the op.
   - if a directory is to be saved as a file chain, don't ask if file
     is to be truncated ( since file size is always 0 then ).
+  - support GPT partitioned disks.
 
 WDe V0.99 [20.06.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.

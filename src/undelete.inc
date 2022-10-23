@@ -21,11 +21,11 @@ undelete proc
     call spot2bufofs                      ; bx = spot + bufofs
     and bl, 11100000b                     ; bx = start directory entry
     add bx, offset sectbuffer
-    mov eax, dword ptr [bx+DIR_FILESIZE]
+    mov eax, [bx].SFNENTRY.dwSize
     mov [dwFilesize], eax
-    mov ax, word ptr [bx+DIR_CLUST_HIGH]  ; get start cluster (high 16-bits)
+    mov ax, [bx].SFNENTRY.wClHigh         ; get start cluster (high 16-bits)
     shl eax, 16
-    mov ax, word ptr [bx+DIR_CLUST_LOW]   ; get start cluster (low 16-bits)
+    mov ax, [bx].SFNENTRY.wClLow          ; get start cluster (low 16-bits)
 ;--- bounds check
     cmp eax, 2
     jb invclust                           ; not a valid cluster if it's below 2
@@ -75,9 +75,9 @@ unok1:
     pop ax
     jc undelete_err1
 
-    mov [bx+0], al
+    mov [bx].SFNENTRY.name_, al
     mov eax, [dwFilesize]               ; file may have been truncated
-    mov [bx+DIR_FILESIZE], eax
+    mov [bx].SFNENTRY.dwSize, eax
 
     call writecursect                   ; rewrite directory sector
 

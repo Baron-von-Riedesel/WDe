@@ -13,8 +13,11 @@ oemchars label byte
     db   0,  0,  0,  0,132,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0  ;e0-ef
     db   0,  0,  0,  0,  0,  0,148,  0,  0,  0,  0,  0,129,  0,  0,  0  ;f0-ff
 
-;--- accepted OEM chars in SFNs
-;--- currently German upper case umlauts (8E/99/9A) and "sz" (E1)
+;--- valid OEM chars in SFNs.
+;--- this table is used by WDe when it tries to detect a "directory" sector,
+;--- and,if ok, will activate the "directory view".
+;--- currently contains German upper case umlauts (8E/99/9A) and "sz" (E1) only.
+;--- actually, many chars > 128 are accepted as valid SFN chars.
 
 oembittab label word
 ;---------0---0---0---0

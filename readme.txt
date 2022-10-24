@@ -7,7 +7,8 @@
 
    WDe is currently capable of editing logical, physical and CD-Rom drives
   on MS-DOS V4.0+ or compatible.  It understands all FAT file systems, 
-  including exFAT. It should be able to edit drives up to 2 TB in size.
+  including exFAT. It should be able to edit drives up to 2 TB in size,
+  and is aware of both MBR and GPT partitioning schemes.
 
    Please be aware that a disk editor, if used inappropriately, might easily
   cause severe data losses. WDe is no exception in this regard, on the

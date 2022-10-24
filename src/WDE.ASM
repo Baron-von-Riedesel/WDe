@@ -375,6 +375,7 @@ PTABENT ends
 if ?GPT
 ;--- partition table header in a GPT
 ;--- located at LBA 1
+;--- size of GPT is dwNumPE * dwSizPE - 128*128=16 kB -> 32 sectors (512)
 
 GPTHDR struct
 sig        db 8 dup (?);+0 "EFI PART"
@@ -387,15 +388,15 @@ qwBckLBA   dq ?		;+32
 qwFirstLBA dq ?		;+40
 qwLastLBA  dq ?		;+48
 guid       db 16 dup (?);+56
-qwPELBA    dq ?		;+72 start Partition entries 
-dwNumPE    dd ?		;+80 # of partition entries
-dwSizPE    dd ?		;+84 size of partition entry (128)
+qwGPTLBA   dq ?		;+72 start GPT partition entries 
+dwNumPE    dd ?		;+80 # of partition entries ( usually 128)
+dwSizePE   dd ?		;+84 size of partition entry (128)
 dwCRCPE    dd ?		;+88
 ;res2       db 420 dup (?)
 GPTHDR ends
 
 ;--- partition table entry in a GPT
-;--- located at LBA 2-33
+;--- usually located at LBA 2-33 ( 128 entries = 16 kB )
 
 GPTENTRY struct
 guidType   db 16 dup (?)
@@ -823,6 +824,13 @@ dwRwfilesize    dd ? ; filesize of image file for DT_FILE
 dwDrivestart    dd ? ; used for sector restriction ( physical access only )
 if ?SN64
 dwDrivestartH   dd ?
+endif
+if ?GPT
+dwGPTSize       dd ?
+dwGPTStart      dd ?
+ if ?SN64
+dwGPTStartH     dd ?
+ endif
 endif
 highlight       HIGHLIGHT <>; area to highlight with viewmode
 
@@ -4634,7 +4642,7 @@ jumptogpthdr:
     mov ebx, 1
     jmp donejump
 jumptogpt:
-    mov ebx, 2
+    mov ebx, [dwGPTStart]
     jmp donejump
 endif
 
@@ -4750,11 +4758,16 @@ VIEWENT ends
 
 gpthdrviewtab label word
     VIEWENT <GPTHDR.sig,       DStr('Signature'),              0808h>
-    VIEWENT <GPTHDR.dwSizeHdr, DStr('Size GPT Header'),        0804h>
-    VIEWENT <GPTHDR.qwPELBA,   DStr('Start Part. Entries'),    1408h>
-    VIEWENT <GPTHDR.dwNumPE,   DStr('Partition Entries'),      0804h>
+    VIEWENT <GPTHDR.dwSizeHdr, DStr('Size GPT Header'),        0A04h>
+    VIEWENT <GPTHDR.dwCRC,     DStr('CRC'),                    0804h>
+    VIEWENT <GPTHDR.qwCurLBA,  DStr('Current LBA'),            1408h>
+    VIEWENT <GPTHDR.qwBckLBA,  DStr('Backup LBA'),             1408h>
     VIEWENT <GPTHDR.qwFirstLBA,DStr('First LBA'),              1408h>
     VIEWENT <GPTHDR.qwLastLBA, DStr('Last LBA'),               1408h>
+    VIEWENT <GPTHDR.qwGPTLBA,  DStr('Start GPT'),              1408h>
+    VIEWENT <GPTHDR.dwNumPE,   DStr('Entries GPT'),            0A04h>
+    VIEWENT <GPTHDR.dwSizePE,  DStr('Size GPT Entry'),         0A04h>
+;    VIEWENT <GPTHDR.dwCRCPE,   DStr('CRC ?'),                  0804h>
 lgpthdrviewtab equ ($ - offset gpthdrviewtab) / sizeof VIEWENT
 
     .code
@@ -6862,6 +6875,27 @@ done:
 
 setphysvars endp
 
+if ?GPT
+
+getGPTvars proc
+    mov [ioreq.dwSector], 1
+    call diskaccess_read
+    jc exit
+    mov si, offset sectbuffer
+    mov eax, dword ptr [si].GPTHDR.qwGPTLBA+0
+    mov [dwGPTStart], eax
+if ?SN64
+    mov eax, dword ptr [si].GPTHDR.qwGPTLBA+4
+    mov [dwGPTStartH], eax
+endif
+    mov eax, [si].GPTHDR.dwNumPE
+    mul [si].GPTHDR.dwSizePE
+    mov [dwGPTSize], eax
+    call readcursect
+exit:
+    ret
+getGPTvars endp
+endif
 ;--- disk change. obtain all info
 ;--- IN:   [ioreq.drvtype], [ioreq.bDrive] & [ioreq.rwfunc]
 ;--- sector 0 read in sectbuffer
@@ -6882,6 +6916,9 @@ copypartitioninfo:
 if ?GPT
     cmp [sectbuffer+PTABOFS].PTABENT.bType, 0EEh; "EFI" partition?
     setz bTypeEE
+    jnz @F
+    call getGPTvars
+@@:
 endif
     push ds                             ; sets variables p1-p4
     pop es                              ; for jumping to partitions
@@ -7793,11 +7830,18 @@ if ?GPT
 	mov cl, VM_GPTHDR
 	cmp eax, 1
 	jz setphysview
+
+	cmp eax, [dwGPTStart]
+	jb indata
+	mov ebx, [dwGPTSize]
+	shr ebx, 9
+	add ebx, [dwGPTStart]
 	mov dx, offset szGPTEntrymsg
 	mov cl, VM_GPTENTRY
-	cmp eax, 33
-	jbe setphysview
+	cmp eax, ebx
+	jb setphysview
 endif
+
 indata:
     mov dx, offset szDatamsg
 dispclust:

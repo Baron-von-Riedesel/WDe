@@ -29,6 +29,7 @@ WDe User Manual
   4.2.3     Menu "Goto"
   4.2.4     Menu "View"
   4.2.4.1   View "Directory"
+  4.2.4.2   View "GPT"
   4.2.5     Menu "Find"
   4.2.6     Menu "Functions"
   4.2.6.1   Item "Fill"
@@ -393,12 +394,22 @@ WDe User Manual
         directories when chosen. "Auto" view lets WDe decide what view
         seems best, anything else forces that selected view to be used.
 
+        Some views are only set internally: on FAT32 systems, the "File
+        System Info" view, on GPT-partitioned physical disks the "GPT
+        Header" and "GPT" view.
+
         4.2.4.1 - View "Directory"
 
           If your view is set to 'directory', hitting enter in any of the
           32 bytes belonging to a directory entry will cause WDe to jump
           to the first sector of the first cluster of that file or
           directory.
+
+        4.2.4.2 - View "GPT"
+
+          If this view is set, hitting enter in any of the 128 bytes
+          belonging to a GPT entry will cause WDe to jump to the first sector
+          of that partition.
 
       4.2.5 - Menu "Find"
 

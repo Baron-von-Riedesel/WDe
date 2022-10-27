@@ -55,6 +55,7 @@ endif
 ?EXTVIEW         EQU 0  ; 1=extended exFAT direntry view
 ?ALTKEYS         EQU 1  ; 1=handle Alt-Left/Right
 ?GPT             EQU 1  ; 1=support GPT
+?CRCGPT          EQU 1  ; 1=check if CRC in GPT is correct
 
 TRUE  equ 1
 FALSE equ 0
@@ -93,6 +94,7 @@ COL_EDIT         EQU 70h         ; just use black/white/grey
 COL_DEFAULT      EQU 0fh
 COL_INACTIVE     EQU 07h
 COL_HIGHLIGHT    EQU 0F0h
+COL_ERROR        EQU 0fh
 else
 ;COL_EDIT         EQU 0cah        ; light green on red
 COL_EDIT         EQU 0B0h        ; black on light cyan
@@ -101,6 +103,7 @@ COL_INACTIVE     EQU 17h         ; light grey on blue
 COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
 COL_GREENFG      EQU 1Ah         ; light green on blue
 COL_STATTEXT     EQU 17h         ; light grey on blue
+COL_REDFG        EQU 1Ch         ; light red on blue
 endif
 
 ; "bRW" variable
@@ -579,11 +582,11 @@ quitmsg         db 'Quit',0
 ynmsg           db ' [Y/n]? ',0
 
 unknownmsg      db 'Unknown',0
-szActive        db '(Active)',0
 
 part00          db 'Unused',0
 part050F        db 'Ext Fat',0
-part07          db 'NTFS',0
+part07          db 'NTFS, exFAT',0
+part82          db 'Linux Swap',0
 part83          db 'Linux',0
 partA5          db 'FreeBSD',0
 ;partA8          db 'OS-X',0
@@ -4712,39 +4715,93 @@ submenu_jumpto endp
 
 updateview proc
 
-	.const
+    .const
 vmvectors label word
-	dw offset dataview
-	dw offset mbrview
-	dw offset bootsectview
-	dw offset fat12view
-	dw offset fat16view
-	dw offset fat32view
-	dw offset dirview
-	dw offset fsinfoview
+    dw offset dataview
+    dw offset mbrview
+    dw offset bootsectview
+    dw offset fat12view
+    dw offset fat16view
+    dw offset fat32view
+    dw offset dirview
+    dw offset fsinfoview
 if ?GPT
-	dw offset gpthdrview
-	dw offset gptentryview
+    dw offset gpthdrview
+    dw offset gptentryview
 endif
 MAXVVECS equ ($ - offset vmvectors) / sizeof word
-	.code
+    .code
 
-	mov bUpdateView, 0
-	mov [scrn_xy], VIEWROW * 100h + 1
-	call bufferinsi
-	movzx bx,[bViewmode]
-	cmp bl, MAXVVECS
-	jnc dataview
-	shl bx, 1
-	jmp [bx][vmvectors]
+    mov bUpdateView, 0
+    mov [scrn_xy], VIEWROW * 100h + 1
+    call bufferinsi
+    movzx bx,[bViewmode]
+    cmp bl, MAXVVECS
+    jnc dataview
+    shl bx, 1
+    jmp [bx][vmvectors]
 dataview:
-	ret
+    ret
 
 updateview endp
 
 if ?GPT
 
-;--- GPT header view (LBA 1)
+ if ?CRCGPT
+
+;--- fill the lookup table needed for CRC32 calculation
+;--- it's currently filled whenever the GPTHDR crc value
+;--- is to be displayed, which is quite often, since its
+;--- called by updateview().
+
+FillLookupCRC proc stdcall uses di pTable:ptr
+
+    push ds
+    pop es
+    mov di, pTable
+    mov cx, 256
+    xor ebx, ebx
+nextitem:
+    push cx
+    mov cx, 8
+    mov eax, ebx
+nextbit:
+    shr eax, 1
+    jnc @F
+    xor eax, 0EDB88320h
+@@:
+    loop nextbit
+    stosd
+    pop cx
+    inc bx
+    loop nextitem
+    ret
+FillLookupCRC endp
+
+;--- calculate CRC32 over a memory region
+
+CalcCRC proc stdcall uses si di ebx pBuffer:ptr, wLength:word, pLookup:ptr
+    mov cx, wLength
+    mov si, pBuffer
+    movzx edi, pLookup
+    mov ebx, -1
+nextchar:
+    movzx eax,byte ptr [si]
+    xor eax, ebx
+    movzx eax, al
+    mov eax, [edi][eax*4]
+    shr ebx, 8
+    xor ebx, eax
+    inc si
+    loop nextchar
+    xor ebx, -1
+    mov eax, ebx
+    ret
+CalcCRC endp
+
+ endif
+
+;--- GPT header view (located at LBA 1 on GPT-partitioned disks)
 
 gpthdrview proc
 
@@ -4759,7 +4816,10 @@ VIEWENT ends
 gpthdrviewtab label word
     VIEWENT <GPTHDR.sig,       DStr('Signature'),              0808h>
     VIEWENT <GPTHDR.dwSizeHdr, DStr('Size GPT Header'),        0A04h>
-    VIEWENT <GPTHDR.dwCRC,     DStr('CRC'),                    0804h>
+    VIEWENT <GPTHDR.dwCRC,     DStr('CRC (disk)'),             0804h>
+if ?CRCGPT
+    VIEWENT <0,                DStr('CRC (calculated)'),       0>
+endif
     VIEWENT <GPTHDR.qwCurLBA,  DStr('Current LBA'),            1408h>
     VIEWENT <GPTHDR.qwBckLBA,  DStr('Backup LBA'),             1408h>
     VIEWENT <GPTHDR.qwFirstLBA,DStr('First LBA'),              1408h>
@@ -4767,7 +4827,7 @@ gpthdrviewtab label word
     VIEWENT <GPTHDR.qwGPTLBA,  DStr('Start GPT'),              1408h>
     VIEWENT <GPTHDR.dwNumPE,   DStr('Entries GPT'),            0A04h>
     VIEWENT <GPTHDR.dwSizePE,  DStr('Size GPT Entry'),         0A04h>
-;    VIEWENT <GPTHDR.dwCRCPE,   DStr('CRC ?'),                  0804h>
+    VIEWENT <GPTHDR.dwCRCPE,   DStr('CRC GPT Entries'),        0804h>
 lgpthdrviewtab equ ($ - offset gpthdrviewtab) / sizeof VIEWENT
 
     .code
@@ -4793,17 +4853,42 @@ nextitem:
     jnz nextitem
     ret
 basicbs:
-    mov bx, [di].VIEWENT.wOfs
     mov dx, [di].VIEWENT.wLbl
-    mov cx, [di].VIEWENT.wFmt
-
-    mov word ptr [highlight.siz_], cx
     call printstring
     call printcolclear
-    mov dx, bx
+    mov cx, [di].VIEWENT.wFmt
+    jcxz @F
+    mov word ptr [highlight.siz_], cx
+    mov dx, [di].VIEWENT.wOfs
     xor bx, bx
     call printvalue_hl
     ret
+@@:
+if ?CRCGPT
+    sub sp, 256*4
+    invoke FillLookupCRC, sp
+    xor ebx, ebx
+    xchg ebx, [si].GPTHDR.dwCRC
+    invoke CalcCRC, si, sizeof GPTHDR, sp
+    add sp, 256*4
+    mov [si].GPTHDR.dwCRC, ebx
+    invoke sprintf, addr sprintfbuffer, CStr("%08lX"), eax
+    mov cl, 8
+    cmp eax, ebx
+
+;--- the calculated value is displayed green/red.
+;--- better would be to display the CURRENT value those colors.
+
+    mov al, COL_GREENFG
+    jz @F
+    mov al, COL_REDFG
+@@:
+    call fillattr
+    mov dx, offset sprintfbuffer
+    call printstring
+endif
+    ret
+
 gpthdrview endp
 
 ;--- GPT entry view (LBA 2-33)
@@ -4836,73 +4921,73 @@ nextitem:
     call fillspace
 
     pop cx
-	cmp [scrn_col], 40
+    cmp [scrn_col], 40
     mov [scrn_col], 40
-	jb @F
+    jb @F
     call printcrlf
 @@:
     loop nextitem
 
-	mov cx, length GPTENTRY.PartName
-	add si, bx
-	lea si, [si].GPTENTRY.PartName
-	mov di, offset sprintfbuffer
-	push ds
-	pop es
+    mov cx, length GPTENTRY.PartName
+    add si, bx
+    lea si, [si].GPTENTRY.PartName
+    mov di, offset sprintfbuffer
+    push ds
+    pop es
 @@:
-	lodsw
-	stosb
-	and ax, ax
-	loopnz @B
-	jz @F
-	mov al, 0
-	stosb
+    lodsw
+    stosb
+    and ax, ax
+    loopnz @B
+    jz @F
+    mov al, 0
+    stosb
 @@:
-	dec di
-	sub di, offset sprintfbuffer
-	jz @F
-	mov cx, di
-	mov dx, CStr("Name: ")
-	call printstring
-	mov al, COL_DEFAULT
-	call fillattr
-	mov dx, offset sprintfbuffer
-	call printstring
+    dec di
+    sub di, offset sprintfbuffer
+    jz @F
+    mov cx, di
+    mov dx, CStr("Name: ")
+    call printstring
+    mov al, COL_DEFAULT
+    call fillattr
+    mov dx, offset sprintfbuffer
+    call printstring
 @@:
 cleareol:
-	mov cl, MAXCOL
-	sub cl, [scrn_col]
-	call fillspace
+    mov cl, MAXCOL
+    sub cl, [scrn_col]
+    call fillspace
     ret
 basicbs:
     mov dx, [di].VIEWENT.wLbl
     call printstring
-	mov dx, CStr(": ")
-	call printstring
-	call cleareol
+    mov dx, CStr(": ")
+    call printstring
+    call cleareol
     mov cx, [di].VIEWENT.wFmt
-	jcxz @F
+    jcxz @F
     mov word ptr [highlight.siz_], cx
     mov dx, [di].VIEWENT.wOfs
     call printvalue_hl
     ret
 @@:
-	mov eax, dword ptr [si+bx].GPTENTRY.qwLastLBA+0
-	mov edx, dword ptr [si+bx].GPTENTRY.qwLastLBA+4
-	sub eax, dword ptr [si+bx].GPTENTRY.qwFirstLBA+0
-	sbb edx, dword ptr [si+bx].GPTENTRY.qwFirstLBA+4
-	add eax, 1
-	adc edx, 0
-	shrd eax, edx, 11
-	shr edx, 11
-	invoke sprintf, addr sprintfbuffer, CStr("%llu MB"), edx::eax
-	mov cl, 24
-	mov al, COL_DEFAULT
-	call fillattr
-	mov dx, offset sprintfbuffer
-	call printstring
-	ret
-	
+    mov eax, dword ptr [si+bx].GPTENTRY.qwLastLBA+0
+    mov edx, dword ptr [si+bx].GPTENTRY.qwLastLBA+4
+    sub eax, dword ptr [si+bx].GPTENTRY.qwFirstLBA+0
+    sbb edx, dword ptr [si+bx].GPTENTRY.qwFirstLBA+4
+    add eax, 1
+    adc edx, 0
+    shrd eax, edx, 11
+    shr edx, 11
+    invoke sprintf, addr sprintfbuffer, CStr("%llu MB"), edx::eax
+    mov cl, 24
+    mov al, COL_DEFAULT
+    call fillattr
+    mov dx, offset sprintfbuffer
+    call printstring
+    ret
+
 gptentryview endp
 
 endif
@@ -5968,108 +6053,33 @@ fat12view endp
 
 ;-------------------------------------------------------
 
-;--- physical disk MBR view
-;--- si=sector buffer
-
-mbrview proc
-
-;    mov [scrn_col], 01h
-    xor cx, cx
-
-nextpart:
-    mov [scrn_row], VIEWROW
-
-    mov dx, offset szPartition
-    call printstring
-    mov dl, SPACE
-    call printchar
-    mov ax, sizeof PTABENT
-    mul cx
-    mov bx, PTABOFS
-    add bx, ax
-    mov dx, cx
-    add dl, '1'
-    call printchar
-    mov dl, ':'
-    call printchar
-
-    call mbrcommon
-
-    mov dx, offset mboot
-    call printstring
-
-    mov word ptr [highlight+2], 0201h
-    mov [highlight.ofs], bx
-    call bshighlight
-
-    mov al, [si+bx].PTABENT.bBoot
-    mov dl,2
-    call rendernumhex
-    call printstring
-
-    mov dl, SPACE
-    call printchar
-    cmp al, 80h
-    je partactive
-    jmp donepart
-
-partactive:
-    mov dx, offset szActive
-    call printstring
-donepart:
-
-    call mbrcommon
-
-;--- print partition start/end CHS
-
-    mov dx, offset startchs
-    call printchs
-
-    call mbrcommon
-
-    mov dx, offset mtype
-    call printstring
-
-    mov word ptr [highlight+2], 0201h
-    mov [highlight.ofs], bx
-
-    call bshighlight
-
-;    mov al, byte ptr [si+bx].PTABENT.bType
-    mov al, byte ptr [si+bx]   ; bx holds offset to PTABENT.bType
-    mov dl, 2
-    call rendernumhex
-    call printstring
-
-    mov dl, SPACE
-    call printchar
-
-    mov dx, offset part00
+printparttype proc
+    mov dx, offset part00		;"unused"
     cmp al, 00h
     je showpart
 
-    mov dx, offset part01
+    mov dx, offset part01		;"fat12"
     cmp al, 01h
     je showpart
 
-    mov dx, offset part04060E
-    cmp al, 04h
+    mov dx, offset part04060E	;"fat16"
+    cmp al, 04h	;fat16, < 32M
     je showpart
-    cmp al, 06h
+    cmp al, 06h	;fat16, >= 32M
     je showpart
-    cmp al, 0Eh
-    je showpart
-
-    mov dx, offset part0B0C
-    cmp al, 0Bh
-    je showpart
-    cmp al, 0Ch
+    cmp al, 0Eh	;fat16, lba
     je showpart
 
-    mov dx, offset part050F
-    cmp al, 05h
+    mov dx, offset part0B0C		;"fat32"
+    cmp al, 0Bh	;fat32, chs
     je showpart
-    cmp al, 0Fh
+    cmp al, 0Ch	;fat32, lba
+    je showpart
+
+    mov dx, offset part050F		;"ext fat"
+    cmp al, 05h	;chs
+    je showpart
+    cmp al, 0Fh	;lba
     je showpart
 
 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B are all hidden fat
@@ -6100,83 +6110,142 @@ donepart:
     cmp al, 9Bh
     je showpart
 
-    mov dx, offset part07
+    mov dx, offset part07		;"ntfs, exfat"
     cmp al, 07h
     je showpart
 
-    mov dx, offset part83
+    mov dx, offset part82		;"linux swap"
+    cmp al, 82h
+    je showpart
+
+    mov dx, offset part83		;"linux"
     cmp al, 83h
     je showpart
 
-    mov dx, offset partA5
+    mov dx, offset partA5		;"freebsd"
     cmp al, 0A5h
     je showpart
-    mov dx, offset partEE
+    mov dx, offset partEE		;"efi"
     cmp al, 0EEh
-    je showpart
-    jmp dontshowpart
-
+    jnz dontshowpart
 showpart:
     push dx
-    mov dl, '('
+    mov dl, ' '
     call printchar
     pop dx
     call printstring
-    mov dl, ')'
-    call printchar
-
 dontshowpart:
-
-    call mbrcommon
-
-    mov dx, offset endchs
-    call printchs
-    call mbrcommon
-
-    mov dx, offset startlba
-    call printstring
-
-;    mov dx, 4
-    xor dx, dx
-    mov [highlight.siz_], 4
-    call printvalue_hl
-
-    call mbrcommon
-
-    mov dx, offset psize
-    call printstring
-
-;    mov dx, 8
-    mov dx, 4
-    mov [highlight.siz_], 4
-    call printvalue_hl
-
-    inc cx
-
-    call mbrcommon
-    cmp cx, 4
-    jb nextpart
     ret
 
-;--- position to next line
-;--- CX=partition no
-mbrcommon:
-    mov al, 20
-    mul cl
-    inc al
+printparttype endp
 
-;--- clear the rest of this "quarter" line
-    push cx
-    push ax
-    mov cl, al
-    add cl, 20
-    sub cl, [scrn_col]
-    call fillspace
-    pop ax
-    pop cx
+;--- physical disk MBR view
+;--- si=sector buffer
 
-    mov [scrn_col], al
+mbrview proc
+
+    mov [scrn_row], VIEWROW
+    mov dx, CStr("P Type             Boot Start-CHS   End-CHS     Start-LBA  Size")
+	call printstring
     inc [scrn_row]
+	mov [scrn_col],1
+    mov cl, 78
+	mov al, '-'
+	call fillchar
+
+    xor cx, cx
+    mov bx, PTABOFS
+
+nextpart:
+	push cx
+    inc [scrn_row]
+	mov [scrn_col],1
+
+    mov dx, cx
+    add dl, '1'
+    call printchar
+
+    mov dl, SPACE
+    call printchar
+
+;--- print partition type (hex and name)
+
+    mov word ptr [highlight+2], 0201h
+	lea ax, [bx].PTABENT.bType
+    mov [highlight.ofs], ax
+    call bshighlight
+
+    mov al, [si+bx].PTABENT.bType
+    mov dl,2
+    call rendernumhex
+    call printstring
+    call printparttype
+
+	mov cl, 20
+	sub cl,[scrn_col]
+	call fillspace
+	mov [scrn_col], 20
+
+;--- print boot indicator
+
+    mov word ptr [highlight+2], 0201h
+    mov [highlight.ofs], bx
+    call bshighlight
+
+    mov al, [si+bx].PTABENT.bBoot
+    mov dl,2
+    call rendernumhex
+    call printstring
+
+	mov cl, 25
+	sub cl,[scrn_col]
+	call fillspace
+	mov [scrn_col], 25
+
+;--- print partition start/end CHS
+
+	push bx
+	lea bx, [bx].PTABENT.sCHS
+    call printchs
+	pop bx
+
+	mov cl, 37
+	sub cl,[scrn_col]
+	call fillspace
+	mov [scrn_col], 37
+
+	push bx
+	lea bx, [bx].PTABENT.eCHS
+    call printchs
+	pop bx
+
+	mov cl, 49
+	sub cl,[scrn_col]
+	call fillspace
+	mov [scrn_col], 49
+
+;--- print LBA start
+
+    mov dx, PTABENT.start
+    mov [highlight.siz_], 4
+    call printvalue_hl
+
+	mov cl, 60
+	sub cl,[scrn_col]
+	call fillspace
+	mov [scrn_col], 60
+
+;--- print LBA size
+
+    mov dx, PTABENT.size_
+    mov [highlight.siz_], 4
+    call printvalue_hl
+
+	add bx, sizeof PTABENT
+	pop cx
+    inc cx
+    cmp cx, 4
+    jb nextpart
     ret
 
 mbrview endp
@@ -6497,20 +6566,25 @@ isstr:
 noqword:
     pop bx
     cmp [highlight.siz_], 4
-    jae @F
+    jae printeaxvalue_hl
     movzx eax, ax
-@@:
     cmp [highlight.siz_], 2
-    jae @F
+    jae printeaxvalue_hl
     mov ah, 0
-@@:
 printeaxvalue_hl:
+	cmp word ptr [highlight.siz_], 0804h
+	jnz @F
+	mov dl, 8
+    call rendernumhex
+	jmp dohighlight
+@@:
     call rendernumdec
     push ax
     mov ax, offset valuebuffer+10  ;calculate string size
     sub ax, dx
     mov [highlight.scsiz], al
     pop ax
+dohighlight:
     call bshighlight
     jmp printstring
 
@@ -7189,15 +7263,12 @@ include FATFS.INC
 ;-------------------------------------------------------
 
 ;--- print CHS of a MBR entry
-;--- DX=string to display
 ;--- BX=offset PTABENT in MBR + 0/4 (bBoot/bType)
 ;--- SI=sector buffer start
 ;--- out: BX = BX + sizeof bBoot/bType + sizeof CHSENT
 
 printchs proc
 
-    call printstring
-    inc bx                   ; skip bBoot/bType
     mov [highlight.ofs], bx
 
     movzx eax, [si+bx].CHSENT.bCH
@@ -7221,7 +7292,6 @@ printchs proc
     movzx eax, [si+bx].CHSENT.bCL
     and al, 3Fh
     inc [highlight.ofs]
-    add bx, sizeof CHSENT
     jmp printeaxvalue_hl
 
 printchs endp

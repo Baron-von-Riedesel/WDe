@@ -99,7 +99,7 @@ WDe User Manual
     Alt+PgDown    - Forward 1 cluster
     Enter         - If in directory, jump to start cluster of entry
 
-    Keys in GPT of physical disks:
+    Keys in MBR/GPT of physical disks:
 
     Enter         - Jump to start LBA of entry
 
@@ -460,14 +460,16 @@ WDe User Manual
           "Below" will merely make all sectors below (greater than) the
           current sector innaccessible.
 
-          When "Above" is chosen, an option to set the drive type is also
-          provided; L(ogical) or P(hysical). L(ogical) will interpret the new
-          "Sector 0" as a bootsector and sets all variables accordingly;
-          P(hysical) treats the drive as a hard drive with a master boot record
-          - that's likely to be useful if one has to navigate thru extended
-          DOS partitions. If L(ogical) is selected and the bootsector contains
-          no data that can be interpreted as FAT, NTFS or exFAT, then the
-          result might be "unsatisfying".
+          When "Above" is chosen, an option to set the drive type will
+          be displayed: "L(ogical) or P(hysical) disk".
+
+          - L(ogical): will interpret the new "Sector 0" as a bootsector
+            and set all variables accordingly. If the bootsector contains
+            no data that WDE can interpret as FAT, NTFS or exFAT, then
+            the result might be "unsatisfying".
+
+          - P(hysical): treats the drive as a hard drive with a MBR; might
+            be useful if one has to navigate thru extended DOS partitions.
 
         4.2.6.3 - Item "UnFormat"
 

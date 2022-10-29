@@ -56,6 +56,7 @@ endif
 ?ALTKEYS         EQU 1  ; 1=handle Alt-Left/Right
 ?GPT             EQU 1  ; 1=support GPT
 ?CRCGPT          EQU 1  ; 1=check if CRC in GPT is correct
+?MBRENTER        equ 1  ; handle Enter while in MBR
 
 TRUE  equ 1
 FALSE equ 0
@@ -382,19 +383,19 @@ if ?GPT
 
 GPTHDR struct
 sig        db 8 dup (?);+0 "EFI PART"
-dwRev      dd ?		;+8 00 00 01 00
-dwSizeHdr  dd ?		;+12
-dwCRC      dd ?		;+16
-dwRes1     dd ?		;+20
-qwCurLBA   dq ?		;+24
-qwBckLBA   dq ?		;+32
-qwFirstLBA dq ?		;+40
-qwLastLBA  dq ?		;+48
+dwRev      dd ?     ;+8 00 00 01 00
+dwSizeHdr  dd ?     ;+12
+dwCRC      dd ?     ;+16
+dwRes1     dd ?     ;+20
+qwCurLBA   dq ?     ;+24
+qwBckLBA   dq ?     ;+32
+qwFirstLBA dq ?     ;+40
+qwLastLBA  dq ?     ;+48
 guid       db 16 dup (?);+56
-qwGPTLBA   dq ?		;+72 start GPT partition entries 
-dwNumPE    dd ?		;+80 # of partition entries ( usually 128)
-dwSizePE   dd ?		;+84 size of partition entry (128)
-dwCRCPE    dd ?		;+88
+qwGPTLBA   dq ?     ;+72 start GPT partition entries 
+dwNumPE    dd ?     ;+80 # of partition entries ( usually 128)
+dwSizePE   dd ?     ;+84 size of partition entry (128)
+dwCRCPE    dd ?     ;+88
 ;res2       db 420 dup (?)
 GPTHDR ends
 
@@ -407,7 +408,7 @@ guidInst   db 16 dup (?)
 qwFirstLBA dq ?
 qwLastLBA  dq ?
 qwFlags    dq ?
-PartName   dw 36 dup (?)	;UTF-16 name
+PartName   dw 36 dup (?)    ;UTF-16 name
 GPTENTRY ends
 
 ;--- partition types:
@@ -555,7 +556,8 @@ MENULVL ends
 SECITEM struct  ; item on "sector stack", size must be 8
 dwSector dd ?
 wSpot    dw ?
-         dw ?
+bFlags   db ?   ; bit 0: 1=item valid
+         db ?
 SECITEM ends
 
 HIGHLIGHT struct
@@ -607,7 +609,7 @@ MS_&name_ equ ?MIDX
 else
 MS_&text equ ?MIDX
 endif
-	db '&text&',0
+    db '&text&',0
 ?MIDX = ?MIDX + 1
 endm
 
@@ -942,7 +944,7 @@ if ?PM
 endif
 
 if ?VDD
-    include wdent.inc	; to access WDEVDD on NT platforms.
+    include wdent.inc   ; to access WDEVDD on NT platforms.
 else
 @int13 equ <int 13h>
 @int21 equ <int 21h>
@@ -982,24 +984,24 @@ Start proc
 
     mov dx, @data
     mov ds, dx
-	pushf
-	pushf
-	pop ax
-	or ah,70h		; a 80386 will have bit 15 cleared
-	push ax			; if bits 12-14 are 0, it is a 80286
-	popf			; or a bad emulation
-	pushf
-	pop ax
-	popf
-	and ah,0f0h
-	js @F			; bit 15 set? then its a 8086/80186
-	jnz is386
+    pushf
+    pushf
+    pop ax
+    or ah,70h       ; a 80386 will have bit 15 cleared
+    push ax         ; if bits 12-14 are 0, it is a 80286
+    popf            ; or a bad emulation
+    pushf
+    pop ax
+    popf
+    and ah,0f0h
+    js @F           ; bit 15 set? then its a 8086/80186
+    jnz is386
 @@:
-	mov dx, offset cpuerror
-	mov ah, 9
-	int 21h
-	mov ax,4C01h
-	int 21h
+    mov dx, offset cpuerror
+    mov ah, 9
+    int 21h
+    mov ax,4C01h
+    int 21h
 
 ;--- setup small memory model
 
@@ -1850,6 +1852,7 @@ select_disk proc
     jc done
     call trydevice
     jc @B
+    call clearsecstack          ; changing drive invalidates sector stack
     call setvariables
 done:
     ret
@@ -1892,9 +1895,9 @@ if ?ALTKEYS
 endif
     db "Enter         - If in directory, jump to start cluster of entry",0
     db 0
-    db "Keys in GPT of physical disks:",0
+    db "Keys in MBR/GPT of physical disks:",0
     db 0
-    db "Enter         - Jump to start LBA of entry",0
+    db "Enter         - Jump to start LBA of current PT entry",0
     db 0    
     db "On exFAT disks, a file may have no associated FAT chain; in such",0
     db "cases the file is stored contiguous and Ctrl+Left/Right won't work.",0
@@ -1985,6 +1988,9 @@ mountdrive::                            ; <--- mount [dwCurSector] as boot secto
     mov dl, DT_LOGICAL
 donesetpl:
     mov [ioreq.drvtype], dl
+
+;--- the sector stack items will become invalid, since their sector numbers are invalid now.
+
     mov eax, [dwCurSector]              ; set the current sector as the
     add [dwDrivestart], eax             ; first sector; this is added to
     sub [dwDataend], eax                ; [dwCurSector] for r/w, so adjust the
@@ -2480,6 +2486,17 @@ ctlenter_fat:
 
 handle_ctlenter endp
 
+;--- if "restrict" is used, all items on the sector stack become invalid
+
+clearsecstack proc
+    movzx bx, [secstk_top]
+    dec bl
+    and bl, 7
+    shl bx, 3
+    mov [bx][secstk].dwSector, 0
+    ret
+clearsecstack endp
+
 ;--- push/pop items on/from sector stack
 
 popsecstack proc
@@ -2488,10 +2505,10 @@ popsecstack proc
     dec bl
     and bl, 7
     shl bx, 3
-    xor eax, eax
-    xchg eax, [bx][secstk].dwSector
-    cmp eax, 0
+    test [bx][secstk].bFlags, 1
     jz done
+    mov [bx][secstk].bFlags, 0
+    mov eax, [bx][secstk].dwSector
     dec [secstk_top]
     mov [ioreq.dwSector], eax
     call readsect
@@ -2503,6 +2520,8 @@ done:
     ret
 popsecstack endp
 
+;--- push sector# eax onto sector stack
+
 pushsecstack proc
     push bx
     push ax
@@ -2512,6 +2531,7 @@ pushsecstack proc
     mov [bx][secstk].dwSector, eax
     mov ax, [spot]
     mov [bx][secstk].wSpot, ax
+    mov [bx][secstk].bFlags, 1
     inc [secstk_top]
     pop ax
     pop bx
@@ -2669,6 +2689,10 @@ if ?GPT
     cmp [bViewmode], VM_GPTENTRY        ; in GPT?
     je do_gptentry
 endif
+if ?MBRENTER
+    cmp [bViewmode], VM_MBR             ; in MBR?
+    je do_mbrentry
+endif
     test [bFilesys], FS_FATXX           ; FAT disk?
     je done
 
@@ -2762,20 +2786,40 @@ isprim:
     cmp al, EXFPTC_UPCASET
     jz @B
     ret
+if ?MBRENTER
+do_mbrentry:
+    call bufferinsi
+    cmp word ptr [si+1FEh], 0AA55h  ; don't jump if no signature
+    jnz done
+    mov ax, [spot]
+    sub ax, PTABOFS     ; cursor in a partition entry?
+    jb done
+    cmp ax, 4*sizeof PTABENT
+    ja done
+    and al, 0F0h
+    mov bx, PTABOFS
+    add bx, ax
+    mov al, [si+bx].PTABENT.bType
+    cmp al, 0
+    jz done
+    mov eax, [si+bx].PTABENT.start
+    add eax, [dwCurSector]
+    jmp stacksetsector
+endif
 if ?GPT
 do_gptentry:
     call bufferinsi
     mov bx, [spot]
     and bl, 80h
  ife ?SN64
-	cmp dword ptr [si+bx].GPTENTRY.qwFirstLBA+4, 0  ; ignore if LBA is not 32-bit
-	jnz done
+    cmp dword ptr [si+bx].GPTENTRY.qwFirstLBA+4, 0  ; ignore if LBA is not 32-bit
+    jnz done
  endif
-	mov eax, dword ptr [si+bx].GPTENTRY.qwFirstLBA+0
+    mov eax, dword ptr [si+bx].GPTENTRY.qwFirstLBA+0
  if ?SN64
-	mov edx, dword ptr [si+bx].GPTENTRY.qwFirstLBA+4
+    mov edx, dword ptr [si+bx].GPTENTRY.qwFirstLBA+4
  endif
-	jmp stacksetsector
+    jmp stacksetsector
 endif
 
 handle_enter endp
@@ -4254,11 +4298,11 @@ submenu_fileoptions proc
 ;--- for FAT drives, refresh menu item "chain"
 
 ;    mov [bChainmode], NO_CHAIN      ; reset chain flag
-	push cx
-	mov ah, NO_CHAIN
-	call setchainmode
-	pop cx
-	mov [bUpdateView], 1
+    push cx
+    mov ah, NO_CHAIN
+    call setchainmode
+    pop cx
+    mov [bUpdateView], 1
 
 ;--- set menu "input, boot sector, fat1, ..."
 
@@ -4545,25 +4589,25 @@ if ?GPT
 
 guid2string proc c pGuid:ptr BYTE, pszStr:ptr byte
 
-	mov bx, pGuid
-	add bx, 16
-	mov cx, 8
-	xor ax, ax
+    mov bx, pGuid
+    add bx, 16
+    mov cx, 8
+    xor ax, ax
 @@:
-	dec bx
-	mov al, [bx]
-	push ax
-	loop @B
-	mov cl, 4
+    dec bx
+    mov al, [bx]
+    push ax
+    loop @B
+    mov cl, 4
 @@:
-	sub bx, 2
-	push word ptr [bx]
-	loop @B
-	push CStr("{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}")
-	push pszStr
-	call sprintf
-	add sp, 14*2
-	ret
+    sub bx, 2
+    push word ptr [bx]
+    loop @B
+    push CStr("{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}")
+    push pszStr
+    call sprintf
+    add sp, 14*2
+    ret
 
 guid2string endp
 
@@ -5085,7 +5129,7 @@ foundfirst:
     mov [bIdx], al
 nextentry:
     call dispentry
-	jc entriesdone
+    jc entriesdone
     mov al, [si+bx].LFNENTRY.bIdx
     and al, 0C0h
     cmp al, 40h      ; last entry?
@@ -5123,9 +5167,9 @@ entriesdone:
     mov dx, CStr('(deleted)')
     cmp byte ptr [si+bx], 0E5h
     jz wronglfn
-	mov dx, offset sprintfbuffer
+    mov dx, offset sprintfbuffer
     cmp [bIdx], -2   ; wrong checksum?
-	jz wronglfn
+    jz wronglfn
     cmp [bIdx], -1   ; chain correct?
     jnz done
     mov dx, CStr("(invalid)")
@@ -5203,31 +5247,31 @@ if 1
 ;--- the checksum byte calculation needs the SFN,
 ;--- so it's done here only if the SFN is in the same sector
 
-	mov sprintfbuffer, 0
-	movzx ax, [si+bx].LFNENTRY.bIdx
-	and al, 3Fh
-	shl ax, 5
-	add ax, bx
-	cmp ax, 512
-	jnc nochksum
-	mov di, ax
-	add di, si
-	mov cx, sizeof SFNENTRY.name_ ;11
-	mov ah, 0
+    mov sprintfbuffer, 0
+    movzx ax, [si+bx].LFNENTRY.bIdx
+    and al, 3Fh
+    shl ax, 5
+    add ax, bx
+    cmp ax, 512
+    jnc nochksum
+    mov di, ax
+    add di, si
+    mov cx, sizeof SFNENTRY.name_ ;11
+    mov ah, 0
 @@:
-	mov al, [di]
-	ror ah, 1
-	add ah, al
-	inc di
-	loop @B
-	movzx cx, [si+bx].LFNENTRY.bChkSum
-	cmp ah, cl
-	jz nochksum
-	movzx ax, ah
-	mov dx, offset sprintfbuffer
-	invoke sprintf, dx, CStr("(chksum incorrect, %X/%X)"), ax, cx
-	mov [bIdx],-2
-	stc
+    mov al, [di]
+    ror ah, 1
+    add ah, al
+    inc di
+    loop @B
+    movzx cx, [si+bx].LFNENTRY.bChkSum
+    cmp ah, cl
+    jz nochksum
+    movzx ax, ah
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, CStr("(chksum incorrect, %X/%X)"), ax, cx
+    mov [bIdx],-2
+    stc
 nochksum:
 endif
     ret
@@ -6054,32 +6098,32 @@ fat12view endp
 ;-------------------------------------------------------
 
 printparttype proc
-    mov dx, offset part00		;"unused"
+    mov dx, offset part00       ;"unused"
     cmp al, 00h
     je showpart
 
-    mov dx, offset part01		;"fat12"
+    mov dx, offset part01       ;"fat12"
     cmp al, 01h
     je showpart
 
-    mov dx, offset part04060E	;"fat16"
-    cmp al, 04h	;fat16, < 32M
+    mov dx, offset part04060E   ;"fat16"
+    cmp al, 04h ;fat16, < 32M
     je showpart
-    cmp al, 06h	;fat16, >= 32M
+    cmp al, 06h ;fat16, >= 32M
     je showpart
-    cmp al, 0Eh	;fat16, lba
-    je showpart
-
-    mov dx, offset part0B0C		;"fat32"
-    cmp al, 0Bh	;fat32, chs
-    je showpart
-    cmp al, 0Ch	;fat32, lba
+    cmp al, 0Eh ;fat16, lba
     je showpart
 
-    mov dx, offset part050F		;"ext fat"
-    cmp al, 05h	;chs
+    mov dx, offset part0B0C     ;"fat32"
+    cmp al, 0Bh ;fat32, chs
     je showpart
-    cmp al, 0Fh	;lba
+    cmp al, 0Ch ;fat32, lba
+    je showpart
+
+    mov dx, offset part050F     ;"ext fat"
+    cmp al, 05h ;chs
+    je showpart
+    cmp al, 0Fh ;lba
     je showpart
 
 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B are all hidden fat
@@ -6110,22 +6154,22 @@ printparttype proc
     cmp al, 9Bh
     je showpart
 
-    mov dx, offset part07		;"ntfs, exfat"
+    mov dx, offset part07       ;"ntfs, exfat"
     cmp al, 07h
     je showpart
 
-    mov dx, offset part82		;"linux swap"
+    mov dx, offset part82       ;"linux swap"
     cmp al, 82h
     je showpart
 
-    mov dx, offset part83		;"linux"
+    mov dx, offset part83       ;"linux"
     cmp al, 83h
     je showpart
 
-    mov dx, offset partA5		;"freebsd"
+    mov dx, offset partA5       ;"freebsd"
     cmp al, 0A5h
     je showpart
-    mov dx, offset partEE		;"efi"
+    mov dx, offset partEE       ;"efi"
     cmp al, 0EEh
     jnz dontshowpart
 showpart:
@@ -6144,111 +6188,182 @@ printparttype endp
 
 mbrview proc
 
+    .const
+
+MBRVIEW struct
+wFmt    dw ?
+wProc   dw ?
+bPos    db ?
+MBRVIEW ends
+
+mbrviewtab label MBRVIEW
+    MBRVIEW <0201h, offset printtype,  3>
+    MBRVIEW <0201h, offset printbi,   20>
+    MBRVIEW <0A04h, offset printschs, 25>
+    MBRVIEW <0A04h, offset printechs, 37>
+    MBRVIEW <0A04h, offset printslba, 49>
+    MBRVIEW <0A04h, offset printsize, 60>
+if 1
+    MBRVIEW <0A04h, offset printMB,   71>
+endif
+endview label byte
+
+    .code
+
     mov [scrn_row], VIEWROW
+if 1
+    mov dx, CStr("P Type             Boot Start-CHS   End-CHS     Start-LBA  Size       MB")
+else
     mov dx, CStr("P Type             Boot Start-CHS   End-CHS     Start-LBA  Size")
-	call printstring
+endif
+    call printstring
     inc [scrn_row]
-	mov [scrn_col],1
+    mov [scrn_col], 1
     mov cl, 78
-	mov al, '-'
-	call fillchar
+    mov al, '-'
+    call fillchar
 
     xor cx, cx
     mov bx, PTABOFS
 
 nextpart:
-	push cx
+    push cx
     inc [scrn_row]
-	mov [scrn_col],1
+    mov [scrn_col], 1
 
     mov dx, cx
     add dl, '1'
     call printchar
 
-    mov dl, SPACE
-    call printchar
+    mov di, offset mbrviewtab
+@@:
+    mov cl, [di].MBRVIEW.bPos
+    push cx
+    sub cl,[scrn_col]
+    call fillspace
+    pop cx
+    mov [scrn_col], cl
+    mov ax, [di].MBRVIEW.wFmt
+    mov word ptr [highlight.siz_], ax
+    call [di].MBRVIEW.wProc
+    add di, sizeof MBRVIEW
+    cmp di, offset endview
+    jnz @B
+    mov cl, MAXCOL
+    sub cl, [scrn_col]
+    call fillspace
+    add bx, sizeof PTABENT
+    pop cx
+    inc cx
+    cmp cx, 4
+    jnz nextpart
+    ret
 
 ;--- print partition type (hex and name)
 
-    mov word ptr [highlight+2], 0201h
-	lea ax, [bx].PTABENT.bType
+printtype:
+    lea ax, [bx].PTABENT.bType
     mov [highlight.ofs], ax
     call bshighlight
 
     mov al, [si+bx].PTABENT.bType
-    mov dl,2
+    mov dl, 2
     call rendernumhex
     call printstring
-    call printparttype
 
-	mov cl, 20
-	sub cl,[scrn_col]
-	call fillspace
-	mov [scrn_col], 20
+    call printparttype
+    retn
 
 ;--- print boot indicator
 
-    mov word ptr [highlight+2], 0201h
+printbi:
     mov [highlight.ofs], bx
     call bshighlight
 
     mov al, [si+bx].PTABENT.bBoot
-    mov dl,2
+    mov dl, 2
     call rendernumhex
     call printstring
+    retn
 
-	mov cl, 25
-	sub cl,[scrn_col]
-	call fillspace
-	mov [scrn_col], 25
+;--- print start CHS
 
-;--- print partition start/end CHS
-
-	push bx
-	lea bx, [bx].PTABENT.sCHS
+printschs:
+    push bx
+    lea bx, [bx].PTABENT.sCHS
     call printchs
-	pop bx
+    pop bx
+    retn
 
-	mov cl, 37
-	sub cl,[scrn_col]
-	call fillspace
-	mov [scrn_col], 37
+;--- print end CHS
 
-	push bx
-	lea bx, [bx].PTABENT.eCHS
+printechs:
+    push bx
+    lea bx, [bx].PTABENT.eCHS
     call printchs
-	pop bx
+    pop bx
+    retn
 
-	mov cl, 49
-	sub cl,[scrn_col]
-	call fillspace
-	mov [scrn_col], 49
+;--- print start LBA
 
-;--- print LBA start
-
+printslba:
     mov dx, PTABENT.start
-    mov [highlight.siz_], 4
     call printvalue_hl
+    retn
 
-	mov cl, 60
-	sub cl,[scrn_col]
-	call fillspace
-	mov [scrn_col], 60
+;--- print size LBA
 
-;--- print LBA size
-
+printsize:
     mov dx, PTABENT.size_
-    mov [highlight.siz_], 4
     call printvalue_hl
+    retn
 
-	add bx, sizeof PTABENT
-	pop cx
-    inc cx
-    cmp cx, 4
-    jb nextpart
-    ret
+;--- print size LBA in MB
+
+if 1
+printMB:
+    mov eax, [si+bx].PTABENT.size_
+    shr eax, 11         ; div 512 
+    adc eax, 0          ; round
+    call rendernumdec
+    call printstring
+    retn
+endif
 
 mbrview endp
+
+;--- print CHS of a partition table entry in MBR
+;--- SI=sector buffer
+;--- BX=offset to CHS (start/end) in partition entry
+
+printchs proc
+
+    mov [highlight.ofs], bx
+
+    movzx eax, [si+bx].CHSENT.bCH
+    mov ah, [si+bx].CHSENT.bCL
+    shr ah, 6
+    inc [highlight.ofs]
+    mov [highlight.siz_], 2
+    call printeaxvalue_hl
+
+    mov dl, '/'
+    call printchar
+
+    movzx eax, [si+bx].CHSENT.bDH
+    dec [highlight.ofs]
+    mov [highlight.siz_], 1
+    call printeaxvalue_hl
+
+    mov dl, '/'
+    call printchar
+
+    movzx eax, [si+bx].CHSENT.bCL
+    and al, 3Fh
+    inc [highlight.ofs]
+    jmp printeaxvalue_hl
+
+printchs endp
 
 ;--- boot sector view
 ;--- si=sector buffer
@@ -6526,33 +6641,33 @@ printvalue_hl:
     add bx, dx
     mov [highlight.ofs], bx
 if ?GPT
-	cmp word ptr highlight.siz_, 2610h  ; print a guid?
-	jnz @F
-	lea ax,[si+bx]
-	mov dx, offset sprintfbuffer
-	invoke guid2string, ax, dx
-	pop bx
-	jmp isstr
+    cmp word ptr highlight.siz_, 2610h  ; print a guid?
+    jnz @F
+    lea ax,[si+bx]
+    mov dx, offset sprintfbuffer
+    invoke guid2string, ax, dx
+    pop bx
+    jmp isstr
 @@:
 endif
     mov eax, [si+bx]
     cmp [highlight.siz_], 8
     jnz noqword
     mov edx, [si+bx+4]
-	cmp highlight.scsiz, 8  ;output also 8 ( then it's a string )
-	jnz isnum
-	mov bx, offset sprintfbuffer
-	mov dword ptr [bx+0], eax
-	mov dword ptr [bx+4], edx
-	mov byte ptr  [bx+8],0
-	mov dx, bx
-	pop bx
-	jmp isstr
+    cmp highlight.scsiz, 8  ;output also 8 ( then it's a string )
+    jnz isnum
+    mov bx, offset sprintfbuffer
+    mov dword ptr [bx+0], eax
+    mov dword ptr [bx+4], edx
+    mov byte ptr  [bx+8],0
+    mov dx, bx
+    pop bx
+    jmp isstr
 isnum:
-	mov cx, 10
-	cmp highlight.scsiz, 16
-	jnz @F
-	mov cx, 16
+    mov cx, 10
+    cmp highlight.scsiz, 16
+    jnz @F
+    mov cx, 16
 @@:
     invoke i64toa, edx::eax, offset sprintfbuffer, cx
     pop bx
@@ -6572,11 +6687,11 @@ noqword:
     jae printeaxvalue_hl
     mov ah, 0
 printeaxvalue_hl:
-	cmp word ptr [highlight.siz_], 0804h
-	jnz @F
-	mov dl, 8
+    cmp word ptr [highlight.siz_], 0804h
+    jnz @F
+    mov dl, 8
     call rendernumhex
-	jmp dohighlight
+    jmp dohighlight
 @@:
     call rendernumdec
     push ax
@@ -6969,7 +7084,9 @@ endif
 exit:
     ret
 getGPTvars endp
+
 endif
+
 ;--- disk change. obtain all info
 ;--- IN:   [ioreq.drvtype], [ioreq.bDrive] & [ioreq.rwfunc]
 ;--- sector 0 read in sectbuffer
@@ -7261,40 +7378,6 @@ setvariables endp
 ;*******************************************************
 include FATFS.INC
 ;-------------------------------------------------------
-
-;--- print CHS of a MBR entry
-;--- BX=offset PTABENT in MBR + 0/4 (bBoot/bType)
-;--- SI=sector buffer start
-;--- out: BX = BX + sizeof bBoot/bType + sizeof CHSENT
-
-printchs proc
-
-    mov [highlight.ofs], bx
-
-    movzx eax, [si+bx].CHSENT.bCH
-    mov ah, [si+bx].CHSENT.bCL
-    shr ah, 6
-    inc [highlight.ofs]
-    mov [highlight.siz_], 2
-    call printeaxvalue_hl
-
-    mov dl, '/'
-    call printchar
-
-    movzx eax, [si+bx].CHSENT.bDH
-    dec [highlight.ofs]
-    mov [highlight.siz_], 1
-    call printeaxvalue_hl
-
-    mov dl, '/'
-    call printchar
-
-    movzx eax, [si+bx].CHSENT.bCL
-    and al, 3Fh
-    inc [highlight.ofs]
-    jmp printeaxvalue_hl
-
-printchs endp
 
 ;--- check if it's an exfat directory
 ;--- this check is currently not really fool-proved
@@ -7889,27 +7972,27 @@ setphysview:
 inphysical:
     cmp [ioreq.bDrive], 80h           ; lower than 80h?
     jb indata                         ; not an hd - no mbr.
-	mov dx, offset szMBRmsg
-	mov cl, VM_MBR
-	test eax, eax
-	jz setphysview
+    mov dx, offset szMBRmsg
+    mov cl, VM_MBR
+    test eax, eax
+    jz setphysview
 if ?GPT
-	cmp [bTypeEE], 0
-	jz indata
-	mov dx, offset szGPTHdrmsg
-	mov cl, VM_GPTHDR
-	cmp eax, 1
-	jz setphysview
+    cmp [bTypeEE], 0
+    jz indata
+    mov dx, offset szGPTHdrmsg
+    mov cl, VM_GPTHDR
+    cmp eax, 1
+    jz setphysview
 
-	cmp eax, [dwGPTStart]
-	jb indata
-	mov ebx, [dwGPTSize]
-	shr ebx, 9
-	add ebx, [dwGPTStart]
-	mov dx, offset szGPTEntrymsg
-	mov cl, VM_GPTENTRY
-	cmp eax, ebx
-	jb setphysview
+    cmp eax, [dwGPTStart]
+    jb indata
+    mov ebx, [dwGPTSize]
+    shr ebx, 9
+    add ebx, [dwGPTStart]
+    mov dx, offset szGPTEntrymsg
+    mov cl, VM_GPTENTRY
+    cmp eax, ebx
+    jb setphysview
 endif
 
 indata:
@@ -9038,8 +9121,8 @@ validfilechar:
     je validchar
     cmp al, BACK_SLASH
     je invalidchar
-	and al, al
-	js checkoem
+    and al, al
+    js checkoem
     cmp al, 'a'                   ; no lower case letters
     jae invalidchar
 validchar:
@@ -9050,15 +9133,14 @@ invalidchar:
     ret
 checkoem:
 ;--- check special chars
-	int 3
-	push bx
-	mov bl, al
-	and bl, 7Fh
-	mov bh, 0
-	bt [oembittab],bx
-	pop bx
-	jnc invalidchar
-	jmp validchar
+    push bx
+    mov bl, al
+    and bl, 7Fh
+    mov bh, 0
+    bt [oembittab],bx
+    pop bx
+    jnc invalidchar
+    jmp validchar
 validpathchar endp
 
 if ?LFN

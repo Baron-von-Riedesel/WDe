@@ -18,6 +18,8 @@ WDe V1.00 [__.__.2022]
     entry jumps to that partition.
   - fixed: changing drive or using "restrict" must invalidate items on
     sector stack.
+  - fixed: save/restore root directory for FAT32 did save/restore just
+    the first cluster ( was a "known bug" ).
 
 WDe V0.99 [20.06.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.

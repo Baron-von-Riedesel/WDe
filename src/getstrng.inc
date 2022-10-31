@@ -193,7 +193,7 @@ handle_tab:
     pop [scrn_xy]
 if 1
     mov cl, MAXCOL
-    sub cl, [scrn_col]
+    sub cl, [scrn_xy.col]
     mov al, SPACE
     call fillchar
 endif

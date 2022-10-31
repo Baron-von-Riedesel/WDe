@@ -96,7 +96,7 @@ entryisok:
 
 unffatok:
     mov eax, [dwRootSect]             ; jump to the root directory
-    mov [ioreq.dwSector], eax
+    mov [ioreq.sectno], eax
     call diskaccess_read
     jc abortUnformat
     mov dx, CStr('Root Not Blank')
@@ -217,9 +217,9 @@ finishedUnformat:
     mov edx, [dwFat1end]
 
 f1tof2loop:
-    mov [ioreq.dwSector], eax
+    mov [ioreq.sectno], eax
     call diskaccess_read
-    mov [ioreq.dwSector], edx
+    mov [ioreq.sectno], edx
     call diskaccess_write
     inc eax
     inc edx
@@ -369,7 +369,7 @@ writeRootEntry proc
     xor dx, dx                          ; zero the checked root entry count
 
 checkNextRootSect:
-    mov [ioreq.dwSector], ebx           ; error checking needed
+    mov [ioreq.sectno], ebx             ; error checking needed
     call diskaccess_read
     @dprintfln "unformat: writeRootEntry, root sector %lu read", ebx
     mov cl, 512 / DIRENTSIZE            ; 16 entries per sector
@@ -428,9 +428,9 @@ writtenDirType:
     mov [si].SFNENTRY.wClHigh, ax
     mov dword ptr [si+08h], 10202020h           ; extension+attribs
 
-    call diskaccess_write                       ; write [ioreq.dwSector]
+    call diskaccess_write                       ; write [ioreq.sectno]
 
-    @dprintfln "writeRootEntry: exit, root dir (sec %lu) entry written: >%s<", [ioreq.dwSector], si
+    @dprintfln "writeRootEntry: exit, root dir (sec %lu) entry written: >%s<", [ioreq.sectno], si
 wre_exit:
     pop cx
     pop bx
@@ -470,10 +470,10 @@ nextCluster:
 
 nextSectorOfCluster:
 
-    cmp eax, [dwDataend]
+    cmp eax, [lastSector]
     ja doneFindDirs
 
-    mov [ioreq.dwSector], eax
+    mov [ioreq.sectno], eax
     call diskaccess_read                ; need error checking b4 & after
 
     mov si, offset sectbuffer
@@ -492,7 +492,7 @@ verifySectorNull:                       ; if the first sector of the cluster
 
 directory_found:
 
-    mov eax, [ioreq.dwSector]
+    mov eax, [ioreq.sectno]
     inc eax                             ; increase sector # in cluster
     dec cl                              ; if there are sectors left, loop
     jnz nextSectorOfCluster
@@ -523,10 +523,10 @@ notLastSect:
 
     call cluster2sector
 
-    cmp [ioreq.dwSector], eax           ; if it's already the current sector
+    cmp [ioreq.sectno], eax             ; if it's already the current sector
     je dontReRead                       ; don't re-read it.
 
-    mov [ioreq.dwSector], eax           ; read first sector of cluster
+    mov [ioreq.sectno], eax             ; read first sector of cluster
     call diskaccess_read
 
 dontReRead:
@@ -604,7 +604,7 @@ cmdvecs label word
             
 checkNextSector:
 
-    mov [ioreq.dwSector], edi
+    mov [ioreq.sectno], edi
     call diskaccess_read        ; read the data into sectbuffer
     ;
     ; jc doneValidation

@@ -189,8 +189,8 @@ isfat1x:
     pop [ioreq.pBuffer]
 nextsector:
     push [dwFatSector]
-    pop [ioreq.dwSector]
-;    @dprintfln "putfatentry: writing FAT, sector=%lu", [ioreq.dwSector]
+    pop [ioreq.sectno]
+;    @dprintfln "putfatentry: writing FAT, sector=%lu", [ioreq.sectno]
     call diskaccess_write
 
     cmp bx, 511          ; FAT12?
@@ -198,7 +198,7 @@ nextsector:
 
     inc [dwFatSector]
     push [dwFatSector]
-    pop [ioreq.dwSector]
+    pop [ioreq.sectno]
     mov [ioreq.bRW], RW_READ
     call diskaccess
 
@@ -330,7 +330,7 @@ fat12pad proc
 @@:
     inc eax
 nopred:                                 ; we don't want to read the next
-    cmp eax, [dwDataend]                ; sector if it's past the drive end
+    cmp eax, [lastSector]               ; sector if it's past the drive end
     jae @F
     inc eax
     call readfatcache                   ; read next sector into fatcache
@@ -360,7 +360,7 @@ readfatcache::
     @dprintfln "readfatcache: pFatCache allocated: %X", ax
     pop ax
 @@:
-    mov [ioreq.dwSector], eax
+    mov [ioreq.sectno], eax
     push [ioreq.pBuffer]
     push [pFatCache]
     pop [ioreq.pBuffer]
@@ -378,7 +378,7 @@ fat12pad endp
 ;        3. in FAT, to display entry# in top line
 ;        4. in FAT, from getcurrententry
 ;
-;               IN:   [dwCurSector]  current sector within a fat
+;               IN:   [currSector]  current sector within a fat
 ;                     [spot]    byte offset inside current sector
 ;               OUT:  eax       entry number. That is actually
 ;                               the cluster.
@@ -386,7 +386,7 @@ fat12pad endp
 getentrynumber proc
     movzx ebx, [spot]
 getentrynumberX::              ; <--- if just the entry# of the sector start interests
-    mov eax, [dwCurSector]
+    mov eax, [currSector]
     sub eax, [dwReserved]
 
     mov [fromfat], FF_FAT1
@@ -431,7 +431,7 @@ getentrynumber endp
 ; go2entry jumps to an entry in the fat
 ;
 ;               IN:   eax       cluster number
-;               OUT:  [ioreq.dwSector]  corresponding sector within a fat
+;               OUT:  [ioreq.sectno]  corresponding sector within a fat
 ;                     [spot]    byte offset within the sector
 ;
 ;-----------------------------------------------------------------
@@ -466,7 +466,7 @@ loopfindsect:
 donesub:
 
     add ecx, [dwReserved]
-    mov [ioreq.dwSector], ecx
+    mov [ioreq.sectno], ecx
 
     xor dl, dl
     jmp movecursor

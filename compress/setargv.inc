@@ -11,18 +11,24 @@
 
 _setargv proc
 
+ifndef ?PUREFLAT            ; don't change seg regs ( LOADPE used )
     mov ah, 51h
     int 21h
     mov es, ebx
+endif
 
     mov ebp, esp
     sub esp, 256            ; just make enough room for argc/argv
 
     xor edi, edi            ; init argc
     xor edx, edx            ; init size of mem block
+ifdef ?PUREFLAT
+    lea esi, [ebx+81h]
+else
     mov esi, 81H
     push es
     pop ds
+endif
     jmp scanarg
 
 ;--- EDI = argc
@@ -103,11 +109,17 @@ _argv equ <ebp-8>
     add edi, ebp            ; edi -> behind vector table (strings)
     xor eax, eax
     lea ebx, [edi-4]
+ifdef ?PUREFLAT
+    mov [ebx], eax          ; terminating 0000 _argv[x]
+else
     mov ss:[ebx], eax       ; terminating 0000 _argv[x]
+endif
     sub ebx, 4
     jecxz noargs
+ifndef ?PUREFLAT
     push ss
     pop es
+endif
 
 ;--- copy the arguments from PSP onto the stack
 
@@ -115,7 +127,11 @@ _argv equ <ebp-8>
 @@:
     pop ecx                 ; size
     pop esi                 ; address
+ifdef ?PUREFLAT
+    mov [ebx], edi          ; store _argv[x]
+else
     mov ss:[ebx], edi       ; store _argv[x]
+endif
     sub ebx, 4
     rep movsb
     stosb                   ; AL still 0
@@ -123,10 +139,12 @@ _argv equ <ebp-8>
     jnz @B
 
 noargs:
+ifndef ?PUREFLAT
     push ss
     pop ds
     push ss
     pop es
+endif
 if ?DUMMYFN
     mov [ebx], eax          ; store 0 as dummy filename
     inc dword ptr [_argc]

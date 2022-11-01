@@ -812,12 +812,12 @@ wSectOfs        dw ? ; because [spot] goes from 0-511, if we have sectors
                      ; 512-byte piece we're working with
 ;maxleft         db ?
 bHL             db ? ; keeps track of whether we're editing high or low nibble
+bFilesys        db ? ; file system (FAT-xx, exFAT, NTFS)
 
     align dword
-bFilesys        db ? ; file system (FAT-xx, exFAT, NTFS)
 fromfat         db ? ; FAT: fat to use for getfatentry/putfatentry
-bSpC            db ? ; FAT: sectors per cluster
 bFats           db ? ; FAT: number of fats
+wSpC            dw ? ; FAT: sectors per cluster ( word for exFAT )
 dwSpF           dd ? ; FAT: sectors per fat
 dwFat1end       dd ? ; FAT: end of first fat
 dwReserved      dd ? ; FAT: reserved sectors (start of fat)
@@ -859,6 +859,7 @@ seed4           dw ?
 
 backupbs        dw ? ; FAT: backup boot sector location (FAT32)
 fsinfo          dw ? ; FAT: fsinfo sector (FAT32)
+wSpCcnt         dw ? ; FAT: helper var for "restore chain" (sectors per cluster counter)
 wBps            dw ? ; current bytes per sector ( both physical/logical )
 rwhandle        dw ? ; file handle if device is DT_FILE
 wFilehandle     dw ? ; file handle for file ops
@@ -866,7 +867,6 @@ wCylinders      dw ? ; disk geometry for int 13h, ah=02/03
 
 hdnumber        db ? ; hard drive number partition belongs to
 bSpCshift       db ? ; FAT: sectors per cluster for doing bitshifts
-spcc            db ? ; FAT: sectors per cluster counter
 bRegion         db ? ; what part of the disk we're in
 bViewmode       db ? ; see VM_xxx
 bDisplaymode    db ? ; hex or binary
@@ -884,7 +884,7 @@ bSectors        db ?            ; sectors/track returned by int 13h (08/48)
 handling        db ?            ; inside diskaccess(): how to handle errors
 menustackidx    db ?            ; index for menustack
 secstk_top      db ?            ; index for secstk
-bHexString      db ?            ; stringbuffer filled with hex value
+bHexString      db ?            ; 0/1=stringbuffer filled with string/hex value
 if ?SAFEMODE
 bSafe           db ?            ; "safe" mode cmdline option set?
 endif
@@ -894,7 +894,7 @@ endif
 bTabSw          db ?            ; for switch disk <-> filename
 bSkipFat        db ?            ; exFAT: set if file has no associated fat chain
 ;unlockdrv       db ?            ; unlock this drive if != 0
-bSecSh          db ?            ; shift factor for wBps
+bSecSh          db ?            ; shift factor for current wBps
 bIdx            db ?            ; curr index if lfns are displayed in dirview
 bDark           db ?            ; 1=screen foreground color not bright
 bShift          db ?            ; kbd shift status
@@ -2595,7 +2595,7 @@ preindata:
     cmp [bShift], 0
     jz setcluster
     call cluster2sector                 ; if shift has been pressed
-    movzx ecx, [bSpC]                   ; go to last sector of previous cluster
+    movzx ecx, [wSpC]                   ; go to last sector of previous cluster
     dec ecx
     add eax, ecx
     jmp setsector
@@ -2994,7 +2994,7 @@ scanforcluster proc
     call cluster2sector
 scanxxx::
     mov [ioreq.sectno], eax
-    mov cl, [bSpC]
+    mov cx, [wSpC]
 nextsector:
     push cx
     call diskaccess_read
@@ -3004,8 +3004,7 @@ nextsector:
     cmp eax, -1
     jz dirdone
     inc [ioreq.sectno]
-    dec cl
-    jnz nextsector
+    loop nextsector
     pop eax
     call getfatentry
     @dprintfln "scanforcluster(%u): called getfatentry, eax=%lX", level, eax
@@ -4007,7 +4006,7 @@ startchainsaving:
     jc done
 
 chainsaveloop:
-    movzx ebx, [bSpC]                     ; writefile will write one cluster at a time
+    movzx ebx, [wSpC]                     ; writefile will write one cluster at a time
     mov [dwValue], ebx
     add ebp, ebx
     mov di, offset mydisp                 ; function address to call inside writefile
@@ -4147,8 +4146,8 @@ nextcluster:                              ; <--- next cluster
     cmp eax, [lastSector]
     ja clusterr
     mov [ioreq.sectno], eax
-    mov al, [bSpC]
-    mov [spcc], al
+    mov ax, [wSpC]
+    mov [wSpCcnt], ax
 
     call checktime
     jc nextsector
@@ -4189,7 +4188,7 @@ iswholesector:
     cmp ax, cx                ; EOF reached?
     jne donerestchain
 
-    dec [spcc]
+    dec [wSpCcnt]
     jz @F
     inc [ioreq.sectno]
     jmp nextsector
@@ -5601,7 +5600,7 @@ dispcluster:
     call printhex_hl
     mov dx, CStr(", size: ")
     call printstring
-    mov [highlight.siz_], 8
+    mov word ptr [highlight.siz_], 1408h
     mov dx, EXFDIRP.dqSize
     call printvalue_hl
     pop [scrn_xy]
@@ -7215,6 +7214,8 @@ logicalsetvars:
     mov eax, [si+3]
     cmp eax, "SFTN"
     jz isntfs
+    cmp word ptr [si+11], 0               ; bytes per sector must be 0 for exFAT
+    jnz assumefat
     cmp eax, "AFXE"
     jnz assumefat
     mov eax, [si+7]
@@ -7222,14 +7223,14 @@ logicalsetvars:
     jz isexfat
 assumefat:
 
-    cmp [ioreq.rwfunc], RWF_FILE              ; image file?
+    cmp [ioreq.rwfunc], RWF_FILE          ; image file?
     jnz @F
-    mov ax, [si].BPB.bytes_sector             ; then use sector size from boot sector ( if it's a real
-    call setBps                               ; physical/logical drive, we already got it )
+    mov ax, [si].BPB.bytes_sector         ; then use sector size from boot sector ( if it's a real
+    call setBps                           ; physical/logical drive, we already got it )
     jc secsizeerror
 @@:
-    mov al, [si].BPB.sectors_cluster          ; sectors per cluster
-    mov [bSpC], al
+    movzx ax, [si].BPB.sectors_cluster    ; sectors per cluster
+    mov [wSpC], ax
 
     mov dl, 0FFh
 @@:
@@ -7303,8 +7304,8 @@ goodnumcluster:
     mov [backupbs], ax
     mov ax, [si].EBPB_FAT32.fs_info_start ; filesystem info sector
     mov [fsinfo], ax
-    movzx ax, [bSpC]
-    mov [wRootsectors], ax
+    mov ax, [wSpC]
+    mov [wRootsectors], ax                ; wRootsectors isn't reliable for FAT32
     mov eax, [si].EBPB_FAT32.root_startcl
     mov [dwRootCluster], eax
 
@@ -7328,7 +7329,7 @@ isfat32:
 
     cmp eax, [dwRootSect]
     jne datastartiscorrect
-    mov bl, [bSpC]
+    mov bx, [wSpC]
     add eax, ebx
 datastartiscorrect:
     mov [dwDataStart], eax
@@ -7338,7 +7339,7 @@ datastartiscorrect:
     mov [dwFat1end], eax                ; calculate end of fat 1 area
 
     movzx eax, [wBps]                   ; calculate bytes per cluster
-    mov bl, [bSpC]
+    mov bx, [wSpC]
     mul ebx
     mov [dwBpC], eax
 donegetvars:
@@ -7349,8 +7350,8 @@ isntfs:
     mov eax, [si+28h]
     dec eax
     mov [lastSector], eax
-    mov al, [si].BPB.sectors_cluster
-    mov [bSpC], al
+    movzx ax, [si].BPB.sectors_cluster
+    mov [wSpC], ax
     mov ecx, [si][30h]   ; it's actually a qword
     movzx eax,al
     mul ecx
@@ -7363,13 +7364,17 @@ isexfat:
     mov eax, dword ptr [si].EXFAT.dqSize+0
 ife ?SN64
     dec eax
+    cmp dword ptr [si].EXFAT.dqSize+4, 0
+    jz @F
+    or eax, -1
+@@:
 else
     mov edx, dword ptr [si].EXFAT.dqSize+4
     sub eax, 1
     sbb edx, 0
-    mov [lastSectorH], edx
+    mov [lastSector.h], edx
 endif
-    mov [lastSector], eax
+    mov [lastSector.l], eax
     mov eax, [si].EXFAT.dwFatOfs
     mov [dwReserved], eax
     mov eax, [si].EXFAT.dwFatSiz
@@ -7394,13 +7399,13 @@ endif
     call setBps
     jc secsizeerror
 
-    mov al, 1
+    mov ax, 1
     mov cl, [si].EXFAT.bSpCShift 
     mov [bSpCshift], cl
-    shl al, cl
-    mov [bSpC], al
+    shl ax, cl
+    mov [wSpC], ax
     movzx edx, [wBps]
-    movzx eax, al
+    movzx eax, ax
     push eax
     mul edx
     mov [dwBpC], eax
@@ -7410,7 +7415,7 @@ endif
     mul edx
     add eax, [dwDataStart]
     mov [dwRootSect], eax
-    movzx ax, [bSpC]
+    mov ax, [wSpC]
     mov [wRootsectors], ax        ; [wRootsectors] just one cluster!
     ret
 secsizeerror:
@@ -8057,12 +8062,18 @@ if ?GPT
     cmp eax, [startGPT]
     jb indata
     mov ebx, [dwGPTSize]
-    shr ebx, 9
+    shr ebx, 9                        ; fix: sectorsize=512
+	push ebx
     add ebx, [startGPT]
     mov dx, offset szGPTEntrymsg
     mov cl, VM_GPTENTRY
     cmp eax, ebx
+	pop ebx
     jb setphysview
+	mov esi, [bckGPTHdr]
+	sub esi, ebx
+	cmp eax, esi
+	jae setphysview
 endif
 
 indata:

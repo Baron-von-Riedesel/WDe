@@ -20,7 +20,7 @@ cluster2sector proc
     sub eax, 2
     jc errem2
 
-    movzx ebx, [bSpC]
+    movzx ebx, [wSpC]
     mul ebx
     jc errem2
 

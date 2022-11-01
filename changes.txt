@@ -12,7 +12,7 @@ WDe V1.00 [__.__.2022]
     start the op.
   - if a directory is to be saved as a file chain, don't ask if file
     is to be truncated ( since file size is always 0 then ).
-  - added support of GPT-partitioned disks.
+  - added support for GPT-partitioned disks.
   - MBR view changed to a more readable table format.
   - in MBR, pressing Enter while cursor is positioned within a partition
     entry jumps to that partition.
@@ -20,6 +20,7 @@ WDe V1.00 [__.__.2022]
     sector stack.
   - fixed: save/restore root directory for FAT32 did save/restore just
     the first cluster ( was a "known bug" ).
+  - fixed: internal var "sectors/cluster" was 8 bits only, too small for exFAT.
 
 WDe V0.99 [20.06.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.

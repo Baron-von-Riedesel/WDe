@@ -365,7 +365,7 @@ writeRootEntry proc
 ;--- scan root directory for an empty entry
 
     mov ebx, [dwRootSect]
-    mov ch, [bSpC]                      ; start at the first root sector
+    mov ch, byte ptr [wSpC]             ; start at the first root sector ( hibyte(wSpC) is 0 if not exfat )
     xor dx, dx                          ; zero the checked root entry count
 
 checkNextRootSect:
@@ -466,7 +466,7 @@ nextCluster:
 
     call cluster2sector                 ; read first sector in cluster
 
-    mov cl, [bSpC]
+    mov cl, byte ptr [wSpC]
 
 nextSectorOfCluster:
 
@@ -479,7 +479,7 @@ nextSectorOfCluster:
     mov si, offset sectbuffer
     call IsDirectory
     jnc directory_found
-    cmp cl, [bSpC]                      ; if the first sector in a cluster
+    cmp cl, byte ptr [wSpC]             ; if the first sector in a cluster
     je nextCluster                      ; is not a directory...scan next
                                         ; cluster
     mov bx, [wBps]
@@ -600,7 +600,7 @@ cmdvecs label word
     mov eax, [dwCluster]        ; cluster number for this directory
     call cluster2sector         ; get matching sector number
     mov edi, eax
-    mov dh, [bSpC]              ; number of sectors per cluster
+    mov dh, byte ptr [wSpC]     ; number of sectors per cluster
             
 checkNextSector:
 

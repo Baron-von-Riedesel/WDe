@@ -555,6 +555,8 @@ drvtype    db ? ; physical/fat/cdrom/file
 pBuffer    dw ?
 IOREQ ends
 
+MENULVLSHIFT equ 2 ; since size is 4
+
 MENULVL struct  ; item for menu stack, size must be 4
 bMenuStart db ?
 bMenuSize  db ?
@@ -562,14 +564,14 @@ bSpaces    db ?
            db ?
 MENULVL ends
 
-NUMSTKITEMS equ 8
+NUMSECSTKITEMS equ 8
 if ?SN64
-STKSHIFT equ 4
+SECSTKSHIFT equ 4
 else
-STKSHIFT equ 3
+SECSTKSHIFT equ 3
 endif
 
-STKITEM struct  ; item on "sector stack", size must be 8 (or 16)
+SECSTKITEM struct  ; item on "sector stack", size must be 8 (or 16)
 dwSector SECNO <>
 wSpot    dw ?
 bFlags   db ?   ; bit 0: 1=item valid
@@ -577,7 +579,7 @@ bFlags   db ?   ; bit 0: 1=item valid
 if ?SN64
          dd ?
 endif
-STKITEM ends
+SECSTKITEM ends
 
 HIGHLIGHT struct
 ofs   dw ?    ; offset of var
@@ -919,7 +921,7 @@ rembytes        dw ?            ; remaining bytes when dealing with
 
     align dword
 menustack       MENULVL 4 dup (<?>)  ; menu stack
-secstk          STKITEM NUMSTKITEMS dup (<>)  ; sector stack
+secstk          SECSTKITEM NUMSECSTKITEMS dup (<>)  ; sector stack
 if ?LFN
 filenamebuffer  db 256 dup (?)
 else
@@ -1451,7 +1453,7 @@ checkmenukey proc
     sub cl, F1_KEY              ; convert F1-F8 to 0-7
     jb @F
     movzx bx, [menustackidx]
-    shl bx, 2
+    shl bx, MENULVLSHIFT
     add bx, offset menustack
     cmp cl, [bx].MENULVL.bMenuSize
     jb found
@@ -1471,13 +1473,13 @@ checkmenukey endp
 ;--- push a new level onto the menu stack
 ;--- there's room for 4 levels ( all are used )
 ;--- example: 0=initialcmds, 1=funccmds, 2=fillcmds, 3=incdeccmds
-;--- in: DL=start, DH=size menu
+;--- in: DL=start, DH=size menu, CL=spaces between items
 
 pushmenustack proc
     inc [menustackidx]
 initmenustack::
     movzx bx, [menustackidx]
-    shl bx, 2
+    shl bx, MENULVLSHIFT
     add bx, offset menustack
     mov [bx].MENULVL.bMenuStart, dl
     mov [bx].MENULVL.bMenuSize, dh
@@ -1503,14 +1505,13 @@ setmenuitem proc
     jz done
     mov [bx+startmenudefs], al
     movzx bx, [menustackidx]
-    shl bx, 2
+    shl bx, MENULVLSHIFT
     add bx, offset menustack
     mov ah, [bx].MENULVL.bMenuStart
-    cmp ah, cl
-    jnc @F
+    cmp cl, ah                   ; item below current menu start?
+    jb done
     add ah, [bx].MENULVL.bMenuSize
-    cmp cl, ah
-@@:
+    cmp cl, ah                   ; item below current menu end?
     adc [bUpdateMenu], 0
 done:
     pop bx
@@ -2530,8 +2531,8 @@ handle_ctlenter endp
 clearsecstack proc
     movzx bx, [secstk_top]
     dec bl
-    and bl, NUMSTKITEMS-1	; items must be a power of 2
-    shl bx, STKSHIFT
+    and bl, NUMSECSTKITEMS-1	; items must be a power of 2
+    shl bx, SECSTKSHIFT
     mov [bx][secstk].bFlags, 0
     ret
 clearsecstack endp
@@ -2542,8 +2543,8 @@ popsecstack proc
     push bx
     movzx bx, [secstk_top]
     dec bl
-    and bl, NUMSTKITEMS-1
-    shl bx, STKSHIFT
+    and bl, NUMSECSTKITEMS-1
+    shl bx, SECSTKSHIFT
     test [bx][secstk].bFlags, 1
     jz done
     mov [bx][secstk].bFlags, 0
@@ -2564,8 +2565,8 @@ popsecstack endp
 pushsecstack proc
     push bx
     movzx bx, [secstk_top]
-    and bl, NUMSTKITEMS-1
-    shl bx, STKSHIFT
+    and bl, NUMSECSTKITEMS-1
+    shl bx, SECSTKSHIFT
     mov [bx][secstk].dwSector, eax
     push [spot]
     pop [bx][secstk].wSpot
@@ -5626,8 +5627,12 @@ dirview proc
     mov ah, NO_CHAIN
     cmp byte ptr [si+bx], 0      ; dir entry empty?
     jz @F
-    cmp [si+bx].SFNENTRY.bAttr, 0Fh  ; LFN entry?
+    cmp byte ptr [si+bx], 0E5h   ; v1.0: entry deleted? ( don't allow chain save/restore then )
     jz @F
+;    cmp [si+bx].SFNENTRY.bAttr, 0Fh  ; LFN entry?
+;    jz @F
+    test [si+bx].SFNENTRY.bAttr, DA_VOLUME ; disk label or LFN entry?
+    jnz @F
     mov ah, FILE_CHAIN
 @@:
     call setchainmode
@@ -6255,6 +6260,7 @@ bPos    db ?
 MBRVIEW ends
 
 mbrviewtab label MBRVIEW
+    MBRVIEW <0100h, offset printpart,  1>
     MBRVIEW <0201h, offset printtype,  3>
     MBRVIEW <0201h, offset printbi,   20>
     MBRVIEW <0A04h, offset printschs, 25>
@@ -6277,7 +6283,7 @@ endif
     call printstring
     inc [scrn_xy.row]
     mov [scrn_xy.col], 1
-    mov cl, 78
+    mov cl, MAXCOL-1
     mov al, '-'
     call fillchar
 
@@ -6287,27 +6293,25 @@ endif
 nextpart:
     push cx
     inc [scrn_xy.row]
-    mov [scrn_xy.col], 1
+    mov [scrn_xy.col], 3
+    mov ax, COL_DEFAULT shl 8 or SPACE
+    mov cl, 71-3
+    call fillcell
 
-    mov dx, cx
-    add dl, '1'
-    call printchar
+    pop cx
+    push cx
 
     mov di, offset mbrviewtab
 @@:
-    mov cl, [di].MBRVIEW.bPos
-    push cx
-    sub cl,[scrn_xy.col]
-    call fillspace
-    pop cx
-    mov [scrn_xy.col], cl
+    mov al, [di].MBRVIEW.bPos
+    mov [scrn_xy.col], al
     mov ax, [di].MBRVIEW.wFmt
     mov word ptr [highlight.siz_], ax
     call [di].MBRVIEW.wProc
     add di, sizeof MBRVIEW
     cmp di, offset endview
     jnz @B
-    mov cl, MAXCOL
+    mov cl, MAXCOL-1
     sub cl, [scrn_xy.col]
     call fillspace
     add bx, sizeof PTABENT
@@ -6316,6 +6320,12 @@ nextpart:
     cmp cx, 4
     jnz nextpart
     ret
+
+printpart:
+    mov dx, cx
+    add dl, '1'
+    call printchar
+	ret
 
 ;--- print partition type (hex and name)
 

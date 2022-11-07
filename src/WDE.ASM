@@ -447,7 +447,7 @@ EBPB struct
     BPB <>
 phys_drive      db ?    ;+0x19 (???)
                 db ?
-ext_boot_sig    db ?    ;=0x29
+ext_boot_sig    db ?    ;+0x1b 28h/29h
 volume_id       dd ?
 volume_label    db 11 dup (?)
 fs_type         db 8 dup (?)
@@ -464,7 +464,7 @@ bs_copy_start   dw ?
     db 12 dup (?)
 phys_drive      db ?    ;+0x35
                 db ?
-ext_boot_sig    db ?    ;+0x37
+ext_boot_sig    db ?    ;+0x37  28h/29h
 volume_id       dd ?
 volume_label    db 11 dup (?)   ;if boot_sig is != 0x28
 fs_type         db 8 dup (?)    ;"FAT32   "
@@ -533,11 +533,11 @@ CDREQ ends
 
 SECNO struct
 union
-b32	dd ?	; used to access FAT logical drives
+b32 dd ?    ; used to access FAT logical drives
 struct
-l	dd ?
+l   dd ?
 if ?SN64
-h	dd ?
+h   dd ?
 endif
 ends
 ends
@@ -606,9 +606,13 @@ ynmsg           db ' [Y/n]? ',0
 
 unknownmsg      db 'Unknown',0
 
+partstrgs label byte
 part00          db 'Unused',0
+part01          db 'Fat12',0
+part04060E      db 'Fat16',0
 part050F        db 'Ext Fat',0
 part07          db 'NTFS, exFAT',0
+part0B0C        db 'Fat32',0
 part82          db 'Linux Swap',0
 part83          db 'Linux',0
 partA5          db 'FreeBSD',0
@@ -617,7 +621,7 @@ partA5          db 'FreeBSD',0
 ;partA9          db 'NetBSD',0
 ;partEB          db 'BeOS',0
 partEE          db 'EFI',0
-
+partEF          db 'ESP',0
 parthid         db 'Hid Fat',0 ;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B
 
 ;--- define menu strings and identifiers (MS_xxx).
@@ -681,11 +685,8 @@ szPartition label byte
     @mstring 12Bit
     @mstring 16Bit
     @mstring 32Bit
-part01 label byte
     @mstring Fat12
-part04060E label byte
     @mstring Fat16
-part0B0C label byte
     @mstring Fat32
     @mstring Inverse
     @mstring Next
@@ -732,6 +733,7 @@ filewriteerr    db 'Error Writing File',0
 filecreateerr   db 'Error Creating File',0
 
 szInvalidRange  db 'Invalid Sector Range',0
+szInvalidSect   db 'Sector %lu > last sector (%lu)',0
 
 szSectorRErr    db 'Error Reading Sector %lu',0
 szSectorRErr2   db ' - Abort/Zero-Fill [A/Z]? ',0
@@ -2531,7 +2533,7 @@ handle_ctlenter endp
 clearsecstack proc
     movzx bx, [secstk_top]
     dec bl
-    and bl, NUMSECSTKITEMS-1	; items must be a power of 2
+    and bl, NUMSECSTKITEMS-1    ; items must be a power of 2
     shl bx, SECSTKSHIFT
     mov [bx][secstk].bFlags, 0
     ret
@@ -3342,11 +3344,15 @@ detectview proc
     jne setdataview
     cmp [currSector], 0
     je setbsview
+
+	cmp [bFilesys], FS_FAT32
+	jnz setdataview
+
     movzx eax, [backupbs]
     cmp [currSector], eax
     je setbsview
     movzx edx, [fsinfo]
-    cmp [currSector], edx            ; in the fsinfo sector?
+    cmp [currSector], edx             ; in the fsinfo sector?
     je setfsview                      ; then set fsinfo view
     add edx, eax                      ; checks if we're in the backup
     cmp [currSector], edx               ; fsinfo sector...but it assumes
@@ -4497,6 +4503,9 @@ filesizeok:
 ;    mov eax, [dwFilesize]
     xor edx, edx
     div ebx
+    cmp edx, 1
+    cmc
+    adc eax, 0
     mov ebx, [lastSector]
     sub ebx, [currSector]
     inc ebx
@@ -4783,11 +4792,12 @@ jumptofat2:
     mov ebx, [dwFat1end]
     jmp donejump
 jumptoroot::
+	int 3
     mov ebx, [dwRootSect]
 
 donejump:
     cmp [lastSector], ebx
-    jb @F
+    jb invalsect
     mov [ioreq.sectno], ebx
     call readsect
     jc @F
@@ -4795,6 +4805,14 @@ donejump:
 @@:
 done:
     ret
+
+;--- sector# > lastSector, shouldn't happen if all checks work as expected...
+
+invalsect:
+    mov dx, offset sprintfbuffer
+    invoke sprintf, dx, offset szInvalidSect, ebx, [lastSector]
+    jmp nuprinterror
+
 ;-------------------------------------------------------
 jumptosector:
     mov eax, [lastSector]
@@ -6160,86 +6178,60 @@ fat12view endp
 
 ;-------------------------------------------------------
 
-printparttype proc
-    mov dx, offset part00       ;"unused"
-    cmp al, 00h
-    je showpart
+    .const
 
-    mov dx, offset part01       ;"fat12"
-    cmp al, 01h
-    je showpart
+ptypes label byte
+    db 0, 1, 4, 6, 0Eh, 0Bh, 0Ch, 05h, 0Fh
+    db 16h, 1Bh, 1Ch, 1Eh, 8Dh, 90h, 91h, 92h, 97h, 98h, 9Ah, 9Bh
+    db 07, 82h, 83h, 0A5h, 0EEh, 0EFh
+NUMPTYPES equ $ - offset ptypes
 
-    mov dx, offset part04060E   ;"fat16"
-    cmp al, 04h ;fat16, < 32M
-    je showpart
-    cmp al, 06h ;fat16, >= 32M
-    je showpart
-    cmp al, 0Eh ;fat16, lba
-    je showpart
+pstrofs label byte
+    db offset part00     - offset partstrgs
+    db offset part01     - offset partstrgs
+    db offset part04060E - offset partstrgs
+    db offset part04060E - offset partstrgs
+    db offset part04060E - offset partstrgs
+    db offset part0B0C   - offset partstrgs
+    db offset part0B0C   - offset partstrgs
+    db offset part050F   - offset partstrgs
+    db offset part050F   - offset partstrgs
 
-    mov dx, offset part0B0C     ;"fat32"
-    cmp al, 0Bh ;fat32, chs
-    je showpart
-    cmp al, 0Ch ;fat32, lba
-    je showpart
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
+    db offset parthid    - offset partstrgs
 
-    mov dx, offset part050F     ;"ext fat"
-    cmp al, 05h ;chs
-    je showpart
-    cmp al, 0Fh ;lba
-    je showpart
+    db offset part07     - offset partstrgs
+    db offset part82     - offset partstrgs
+    db offset part83     - offset partstrgs
+    db offset partA5     - offset partstrgs
+    db offset partEE     - offset partstrgs
+    db offset partEF     - offset partstrgs
 
-;16,1B,1C,1E,8D,90,91,92,97,98,9A,9B are all hidden fat
+    .code
 
-    mov dx, offset parthid
-    cmp al, 16h
-    je showpart
-    cmp al, 1Bh
-    je showpart
-    cmp al, 1Ch
-    je showpart
-    cmp al, 1Eh
-    je showpart
-    cmp al, 8Dh
-    je showpart
-    cmp al, 90h
-    je showpart
-    cmp al, 91h
-    je showpart
-    cmp al, 92h
-    je showpart
-    cmp al, 97h
-    je showpart
-    cmp al, 98h
-    je showpart
-    cmp al, 9Ah
-    je showpart
-    cmp al, 9Bh
-    je showpart
+printparttype proc uses di
 
-    mov dx, offset part07       ;"ntfs, exfat"
-    cmp al, 07h
-    je showpart
-
-    mov dx, offset part82       ;"linux swap"
-    cmp al, 82h
-    je showpart
-
-    mov dx, offset part83       ;"linux"
-    cmp al, 83h
-    je showpart
-
-    mov dx, offset partA5       ;"freebsd"
-    cmp al, 0A5h
-    je showpart
-    mov dx, offset partEE       ;"efi"
-    cmp al, 0EEh
+    mov di, offset ptypes
+    mov cx, NUMPTYPES
+    push ds
+    pop es
+    repnz scasb
     jnz dontshowpart
-showpart:
-    push dx
+    add di, NUMPTYPES-1
     mov dl, ' '
     call printchar
-    pop dx
+    movzx dx, byte ptr [di]
+    add dx, offset partstrgs
     call printstring
 dontshowpart:
     ret
@@ -6311,7 +6303,7 @@ nextpart:
     add di, sizeof MBRVIEW
     cmp di, offset endview
     jnz @B
-    mov cl, MAXCOL-1
+    mov cl, MAXCOL
     sub cl, [scrn_xy.col]
     call fillspace
     add bx, sizeof PTABENT
@@ -6321,11 +6313,13 @@ nextpart:
     jnz nextpart
     ret
 
+;--- print partition#
+
 printpart:
     mov dx, cx
     add dl, '1'
     call printchar
-	ret
+    ret
 
 ;--- print partition type (hex and name)
 
@@ -6443,23 +6437,26 @@ bootsectview proc
 ;--- FAT BPB struct
 
 bsviewtab label word
-    VIEWENT <BPB.bytes_sector,    DStr('Bytes Per Sector'),    0502h>
-    VIEWENT <BPB.sectors_cluster, DStr('Sectors Per Cluster'), 0301h>
+    VIEWENT <BPB.bytes_sector,    DStr('Bytes per Sector'),    0502h>
+    VIEWENT <BPB.sectors_cluster, DStr('Sectors per Cluster'), 0301h>
     VIEWENT <BPB.reserved_sectors,DStr('Reserved Sectors'),    0502h>
-    VIEWENT <BPB.num_fats,        DStr('Number Of Fats'),      0301h>
+    VIEWENT <BPB.num_fats,        DStr('FATs'),                0301h>
     VIEWENT <BPB.root_entries,    DStr('Maximum Root Entries'),0502h>  ; FAT1x only
     VIEWENT <BPB.media_byte,      DStr('Media Descriptor'),    0301h>
+bs_spf label word
+    VIEWENT <0,                   DStr('Sectors per Fat'),        0h>
+bs_st label VIEWENT
+    VIEWENT <BPB.sectors_track,   DStr('Sectors per Track'),   0502h>
+    VIEWENT <BPB.no_of_tracks,    DStr('Tracks'),              0502h>
     VIEWENT <BPB.hidden_sectors,  DStr('Partition Start'),     0A04h>
 bs_psec label word
-    VIEWENT <0,                   DStr('Sectors In Partition'),   0h>  ; sectors (FAT12 or FAT16/FAT32)
-bs_spf label word
-    VIEWENT <0,                   DStr('Sectors Per Fat'),        0h>
+    VIEWENT <0,                   DStr('Sectors in Partition'),   0h>  ; sectors (FAT12 or FAT16/FAT32)
 bs_hd label word
     VIEWENT <0,                   DStr('Hard Disk Number'),    0301h>
+lbsviewtab equ ($ - offset bsviewtab) / sizeof VIEWENT
     VIEWENT <EBPB_FAT32.root_startcl,DStr('Root Start Cluster'),0A04h>   ; FAT32 only
     VIEWENT <EBPB_FAT32.fs_info_start,DStr('FSInfo Sector Number'),0502h>; FAT32 only
     VIEWENT <EBPB_FAT32.bs_copy_start,DStr('Backup B.S. Location'),0502h>; FAT32 only
-lbsviewtab equ ($ - offset bsviewtab) / sizeof VIEWENT
 
     .code
 
@@ -6483,9 +6480,11 @@ lbsviewtab equ ($ - offset bsviewtab) / sizeof VIEWENT
     mov word ptr [bs_psec+0], bx
     mov word ptr [bs_psec+4], dx
 
-;--- check if it's FAT32. This will cause to print 3 additional fields
+;--- check if it's FAT32. This will cause to print 3 FAT32 specific fields.
+;--- since there's not enough space, fields sectors/track and tracks# are suppressed then.
 
-    mov cl,lbsviewtab-3
+    mov ch, 2
+    mov cl, lbsviewtab
     mov bx, BPB.sec_per_fat1x
     mov dx, 0502h
     mov ax, EBPB.phys_drive
@@ -6495,16 +6494,20 @@ lbsviewtab equ ($ - offset bsviewtab) / sizeof VIEWENT
     mov bx, EBPB_FAT32.sec_per_fat32
     mov dx, 0A04h
     mov ax, EBPB_FAT32.phys_drive
+    mov ch, 0
 @@:
+    mov byte ptr [bs_st.wFmt], ch
+    mov byte ptr [bs_st.wFmt+sizeof VIEWENT], ch
     mov word ptr [bs_spf+0], bx
     mov word ptr [bs_spf+4], dx
     mov word ptr [bs_hd+0], ax
 
-    mov ch,0
+    mov ch, 0
 nextitem:
+    cmp byte ptr [di].VIEWENT.wFmt, 0
+    jz skipitem
     push cx
     call basicbs
-    add di, sizeof VIEWENT
 
     mov cl, 9
     call fillspace
@@ -6516,6 +6519,8 @@ nextitem:
     call printcrlf
 @@:
     inc ch
+skipitem:
+    add di, sizeof VIEWENT
     dec cl
     jnz nextitem
 
@@ -7275,36 +7280,53 @@ assumefat:
     jz @F
     mov [lastSector], eax
 @@:
-    sub eax, [dwSpF]
-    cmp [bFats], 2
-    jb skipsub2
-    sub eax, [dwSpF]
-skipsub2:
+
+;--- calculate size of data region ( lastsector - ( reserved + fatsectors + rootsectors[fat12/16] )
+
+    push eax
+    mov eax, [dwSpF]
+    movzx ecx, [bFats]
+    mul ecx
+    mov ebx, eax    ; ebx=size of fats
+    pop eax
+    movzx ecx, [wRootsectors]
     sub eax, [dwReserved]
-
-    movzx ebx, [wRootsectors]
     sub eax, ebx
-    mov cl, [bSpCshift]
-    shr eax, cl
+    sub eax, ecx
 
-    mov [bFilesys], FS_FAT32
+
+    mov cl, [bSpCshift]
+    shr eax, cl     ; eax=clusters
+
+;--- check boot signature of EBPB. if 28h/29h, it's no FAT32
+
+    mov ch, [si].EBPB.ext_boot_sig
+    and ch, 0FEh
+    cmp ch, 28h
+    jz nofat32
+
+;--- set FAT file system depending on cluster#
+
+    mov ch, FS_FAT32
     cmp eax, 65525
-    jae goodnumcluster                  ; jump if not fat16 or less
-    mov [bFilesys], FS_FAT16
+    jae @F
+nofat32:
+    mov ch, FS_FAT16
     cmp eax, 4085
-    jae goodnumcluster                  ; jump if not fat12
-    mov [bFilesys], FS_FAT12
-goodnumcluster:
+    jae @F
+    mov ch, FS_FAT12
+@@:
     add eax, 2
     mov [dwLastCluster], eax
+    mov [bFilesys], ch
 
-    mov eax, [dwSpF]
-    movzx ebx, [bFats]
-    mul ebx
-    add eax, [dwReserved]               ; spf * fats + reserved = root
+;--- set start of root ( reserved + size fats )
+
+    mov eax, ebx
+    add eax, [dwReserved]
     mov [dwRootSect], eax
 
-    cmp [bFilesys], FS_FAT32
+    cmp ch, FS_FAT32
     jne not_fat32
 
     push eax
@@ -7319,12 +7341,12 @@ goodnumcluster:
     mov eax, [si].EBPB_FAT32.root_startcl
     mov [dwRootCluster], eax
 
-    sub eax, 2
-    jc wrongrootc
+    sub eax, 2                          ; root start cluster valid?
+    jc @F
     mov cl, [bSpCshift]
     shl eax, cl
     add [dwRootSect], eax
-wrongrootc:
+@@:
     pop eax
     jmp isfat32
 
@@ -7706,7 +7728,7 @@ printcolclear endp
 
 ;--- read file to restore sectors/cluster/FAT/root/... (but not "restore chain")
 ;--- IN: eax = start sector
-;---    [dwValue] = # of sectors to write
+;---    [dwValue] = # of sectors to write to disk
 ;---    [dwFilesize] = size of file to read
 ;--- OUT: sectors written to disk from file
 
@@ -7714,6 +7736,7 @@ readfile proc
 ;    mov dx, offset restoremsg
 ;    call printbottom
 
+;--- check if sector limits are ok
     mov edx, eax
     add edx, [dwValue]
     jc invalidperror
@@ -7721,16 +7744,20 @@ readfile proc
     cmp edx, [lastSector]
     ja invalidperror
 
+;--- check filesize: must be large enough to cover the sectors;
+;--- the last sector may be covered partially only.
     push eax
     mov eax, [dwValue]
-    movzx edx, [wBps]
-    mul edx
-    cmp [dwFilesize], eax
+    movzx ecx, [wBps]
+    mul ecx
+    mov edx, eax
     pop eax
-
+    sub edx, [dwFilesize]         ; ok if file size >= sector*bps
+    jbe @F
+    cmp edx, ecx                  ; last sector covered partially?
     mov dx, offset filetoosmall
-    jb nuprinterror
-
+    jnb nuprinterror
+@@:
     mov [handling], QUERY_SKIP           ; inside readfile
 
 ;    push [currSector]
@@ -7757,6 +7784,27 @@ error:
 
 noreaderror:
 
+	cmp ax, cx
+	jz @F
+	pusha
+	mov cx, ax
+	call allocmem
+	mov di, ax
+	push ds
+	pop es
+	mov si, dx
+	push cx
+	rep movsb
+	push ax
+	call diskaccess_read
+	pop ax
+	pop cx
+	mov si, ax
+	mov di, dx
+	rep movsb
+	call freemem
+	popa
+@@:
     call diskaccess_write
     jc donefileread
 
@@ -8073,17 +8121,17 @@ if ?GPT
     jb indata
     mov ebx, [dwGPTSize]
     shr ebx, 9                        ; fix: sectorsize=512
-	push ebx
+    push ebx
     add ebx, [startGPT]
     mov dx, offset szGPTEntrymsg
     mov cl, VM_GPTENTRY
     cmp eax, ebx
-	pop ebx
+    pop ebx
     jb setphysview
-	mov esi, [bckGPTHdr]
-	sub esi, ebx
-	cmp eax, esi
-	jae setphysview
+    mov esi, [bckGPTHdr]
+    sub esi, ebx
+    cmp eax, esi
+    jae setphysview
 endif
 
 indata:
@@ -8675,9 +8723,8 @@ vinit endp
 clearscreen proc
 
     mov [scrn_xy], 0
-    mov al, SPACE
     mov cl, MAXCOL+1
-    call fillchar
+    call fillspace
 
     les di, [vidaddr]
     add di, [vidcolsize]

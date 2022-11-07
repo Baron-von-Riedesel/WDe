@@ -21,6 +21,9 @@ WDe V1.00 [03.11.2022]
   - fixed: save/restore root directory for FAT32 did save/restore just
     the first cluster ( was a "known bug" ).
   - fixed: internal var "sectors/cluster" was 8 bits only, too small for exFAT.
+  - fixed: distinction FAT16/FAT32 wasn't foolproof. 
+  - fixed: restoring a sector range from file did ignore trailing bytes
+    behind the last full sector.
 
 WDe V0.99 [20.06.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.

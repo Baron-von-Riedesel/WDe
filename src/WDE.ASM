@@ -4493,6 +4493,7 @@ restsecrange:                 ; restore sector range
     call srcommon             ; calls findfile
     mov eax, [dwFilesize]
     movzx ebx, [wBps]
+if 0
     cmp eax, ebx
     jae filesizeok
 toosmallerr:
@@ -4500,12 +4501,14 @@ toosmallerr:
     call printerror
     ret
 filesizeok:  
+endif
 ;    mov eax, [dwFilesize]
     xor edx, edx
     div ebx
     cmp edx, 1
     cmc
     adc eax, 0
+    jz nosr
     mov ebx, [lastSector]
     sub ebx, [currSector]
     inc ebx
@@ -4517,10 +4520,10 @@ mvok:                                     ; of partition sectors remaining
     mov dx, offset sprintfbuffer
     invoke sprintf, dx, offset szNoOfSectors, eax
     call getdecvalue
-    jc @F
+    jc nosr
     mov eax, [currSector]
     jmp endrestsectors
-@@:
+nosr:
     ret
 
 submenu_fileoptions endp

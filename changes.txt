@@ -1,6 +1,6 @@
-WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com)
+WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com), Japheth.
 
-WDe V1.00 [03.11.2022]
+WDe V1.00 [08.11.2022]
   - rearranged startup code so there's no writing to the screen before
     main() has been reached; makes debuggers happy.
   - added timer.inc ( used by debug version )
@@ -23,7 +23,8 @@ WDe V1.00 [03.11.2022]
   - fixed: internal var "sectors/cluster" was 8 bits only, too small for exFAT.
   - fixed: distinction FAT16/FAT32 wasn't foolproof. 
   - fixed: restoring a sector range from file did ignore trailing bytes
-    behind the last full sector.
+    behind the last full sector. Also, if file size was < sector size, the
+    restore was rejected ( error "File too small" ).
 
 WDe V0.99 [20.06.2022]
   - fixed: menu line restore after i/o error didn't work in v0.50.

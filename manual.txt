@@ -232,7 +232,8 @@ WDe User Manual
        ramdisks won't have a physical drive associated with them at all - or
        a physical disk may have been moved to another computer, residing as
        quite another disk# there.
-
+        If the current disk is an image file, Ctrl-Enter will never switch
+       to a physical disk, just the current disk start address will be reset.
 
 
   3.0 - Drive Support:

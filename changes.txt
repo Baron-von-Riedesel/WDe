@@ -1,5 +1,12 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com), Japheth.
 
+WDe V1.1 [__.__.____]
+  - fixed: mounting logical drives from image files didn't adjust the
+    "last sector", thus cluster numbers beyond logical disk size weren't
+    rejected.
+  - fixed: if current device was an image file, hitting Ctrl-Enter while
+    in sector 0 of a logical drive did switch to a real physical disk.
+
 WDe V1.00 [08.11.2022]
   - rearranged startup code so there's no writing to the screen before
     main() has been reached; makes debuggers happy.

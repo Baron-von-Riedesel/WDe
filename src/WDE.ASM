@@ -589,7 +589,7 @@ HIGHLIGHT ends
 
     .const
 
-introtext       db 'WDe V1.0',0
+introtext       db 'WDe V1.1',0
 copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
 viderror        db "No EGA/VGA detected",13,10,'$'
 cpuerror        db "No 80386+ CPU",13,10,'$'
@@ -1683,7 +1683,7 @@ endif
     mov [ioreq.bDrive], al
     cmp bh, DT_LOGICAL
     jz trylogical
-    call setphysvars              ; if ok, [ioreq.rwfuncs] and [wBps] are adjusted
+    call setphysvars              ; if ok, [ioreq.rwfuncs], [wBps] and [lastSector] are adjusted
     jnc tryread
     jmp driveinvalid
 trylogical:
@@ -2508,6 +2508,19 @@ done:
 ;--- won't work for ramdisks - also, the HD number in 
 ;--- the boot sector is generally a rather unreliable info.
 log2phys:
+if 1
+;--- v1.1: if current disk is an image file, just reset [qwDiskStart];
+;--- trydevice() cannot be called because [filenamebuffer] might have changed.
+    cmp [ioreq.rwfunc], RWF_FILE; image file?
+    jnz @F
+    mov [ioreq.drvtype], DT_FILE
+    xor eax, eax
+    mov dword ptr [qwDiskStart], eax
+    mov [ioreq.sectno], eax
+    call readsect
+    jmp log2phys_file
+@@:
+endif
     mov al, [hdnumber]
     and al, al
     jz @F
@@ -2515,6 +2528,7 @@ log2phys:
     call trydevice
 ;    jnc drive_ok
     jc @F
+log2phys_file:
     call setvariables           ; set all obtainable parameter variables
 @@:
     ret
@@ -4795,7 +4809,6 @@ jumptofat2:
     mov ebx, [dwFat1end]
     jmp donejump
 jumptoroot::
-	int 3
     mov ebx, [dwRootSect]
 
 donejump:
@@ -7279,10 +7292,20 @@ assumefat:
     mov eax, [si].BPB.sectors_fat1632
 @@:
     dec eax
+if 0 ; v1.1 code replaced
     cmp [ioreq.rwfunc], RWF_FILE              ; don't set lastSector if image file
     jz @F
     mov [lastSector], eax
 @@:
+else
+    cmp [ioreq.rwfunc], RWF_FILE
+    jnz @F
+    cmp eax, [lastSector]                     ; image file size large enough to cover last sector?
+    ja  nolsset                               ; if no, don't adjust lastSector
+@@:
+    mov [lastSector], eax
+nolsset:
+endif
 
 ;--- calculate size of data region ( lastsector - ( reserved + fatsectors + rootsectors[fat12/16] )
 

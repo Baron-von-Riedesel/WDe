@@ -57,6 +57,7 @@ endif
 ?GPT             EQU 1  ; 1=support GPT
 ?CRCGPT          EQU 1  ; 1=check if CRC in GPT is correct
 ?MBRENTER        equ 1  ; handle Enter while in MBR
+?SETFILEDATETIME equ 1  ; 1=set file's date & time when saving a file chain
 
 TRUE  equ 1
 FALSE equ 0
@@ -839,6 +840,9 @@ dwCluster       dd ? ; FAT: used to store cluster# in "restore chain"
 dwBpC           dd ? ; FAT: bytes per cluster
 dwCurrCluster   dd ? ; FAT: curr cluster while saving/restoring File/FAT chain
 dwNumCluster    dd ? ; FAT: clusters to be saved in exFAT savechain/restorechain variant
+if ?SETFILEDATETIME
+dwFileDateTime  dd ?
+endif
 dwValue         dd ? ; variable for getting no of sectors
 dwMaxvalue      dd ? ; stores max. value if reading numbers
 dwFilesize      dd ? ; size of current image file, or current file chain to save
@@ -3946,7 +3950,11 @@ savechain proc
     mov eax, [si+bx].SFNENTRY.dwSize        ; filesize
     mov [dwFilesize], eax
     test [si+bx].SFNENTRY.bAttr, DA_DIRECTORY
-    setnz bIsDirectory
+    setnz [bIsDirectory]
+if ?SETFILEDATETIME
+    mov eax, dword ptr [si+bx].SFNENTRY.wLUTime
+    mov [dwFileDateTime], eax
+endif
     mov ax, [si+bx].SFNENTRY.wClHigh        ; high cluster word
     shl eax, 16
     mov ax, [si+bx].SFNENTRY.wClLow         ; low cluster word
@@ -4069,7 +4077,7 @@ donechainsave:
 
 ;--- if file chain is for a directory, file size is 0
 ;--- in this case, don't ask if file is to be truncated.
-    cmp bIsDirectory, 1
+    cmp [bIsDirectory], 1
     je notruncate
 
     mov ax, 4201h                       ; then seek from current file position
@@ -4087,16 +4095,24 @@ donechainsave:
     mov dx, offset truncatemsg          ; ask user if file is to be truncated
     call printbottom
     call getyn
-    jnc notruncate
-    mov ax, 4200h                       ; seek from start of file
     mov bx, [wFilehandle]
+    jnc @F
     mov dx, word ptr [dwFilesize+0]
     mov cx, word ptr [dwFilesize+2]
+    mov ax, 4200h                       ; seek from start of file
     int 21h
     xor cx, cx                          ; write to file, 0 bytes (truncate)
     mov ah, 40h
-    mov bx, [wFilehandle]
+;    mov bx, [wFilehandle]
     int 21h
+@@:
+if ?SETFILEDATETIME
+    mov cx, word ptr [dwFileDateTime+0] ; set file's date & time
+    mov dx, word ptr [dwFileDateTime+2]
+;    mov bx, [wFilehandle]
+    mov ax, 5701h                       ; set file date/time
+    int 21h
+endif
 notruncate:
     call closefile
 

@@ -58,6 +58,7 @@ endif
 ?CRCGPT          EQU 1  ; 1=check if CRC in GPT is correct
 ?MBRENTER        equ 1  ; handle Enter while in MBR
 ?SETFILEDATETIME equ 1  ; 1=set file's date & time when saving a file chain
+?NOPTION         EQU 1  ; 1=support cmdline option -n
 
 TRUE  equ 1
 FALSE equ 0
@@ -869,6 +870,9 @@ backupbs        dw ? ; FAT: backup boot sector location (FAT32)
 fsinfo          dw ? ; FAT: fsinfo sector (FAT32)
 wSpCcnt         dw ? ; FAT: helper var for "restore chain" (sectors per cluster counter)
 wBps            dw ? ; current bytes per sector ( both physical/logical )
+if ?NOPTION
+wOptBps         dw ? ; bytes per sector set by cmdline option -n ( for image files only )
+endif
 rwhandle        dw ? ; file handle if device is DT_FILE
 wFilehandle     dw ? ; file handle for file ops
 wCylinders      dw ? ; disk geometry for int 13h, ah=02/03
@@ -1121,7 +1125,9 @@ isfn:
     mov bh, DT_FILE
     jmp has_drive
 handleoptions:
+    push cx
     call options
+    pop cx
     dec cx
     jmp nextarg
 maybedrive:
@@ -1342,6 +1348,11 @@ skipkey:
 
 main endp
 
+;--- handle cmdline options
+;--- in: AH=option
+;---     DS:SI
+;--- BX must be preserved.
+
 options proc
     mov al, ah
     and al, al
@@ -1373,9 +1384,56 @@ undef:
     ret
 @@:
 endif
+if ?NOPTION
+    cmp al, 'n'
+    jnz @F
+	call getdecnumber
+	jc error
+	mov [wOptBps], ax
+	call setBps	; check if value is ok
+	jc error
+	ret
+@@:
+endif
 error:
     jmp printhelp
 options endp
+
+if ?NOPTION
+
+;--- atoi()
+;--- in: DS:SI=string to convert
+;--- out: NC, AX=number
+
+getdecnumber proc
+	xor dx,dx
+nextchar:
+	lodsb
+	cmp al,0
+	jz done
+	cmp al,'0'
+	jb error
+	cmp al,'9'
+	ja error
+	sub al,'0'
+	cbw
+	xchg ax, dx
+	shl ax, 1
+	mov cx, ax
+	shl ax, 2
+	add ax, cx
+	add ax, dx
+	xchg ax, dx
+	jnc nextchar
+error:
+	stc
+	ret
+done:
+	xchg ax, dx
+	ret
+getdecnumber endp
+
+endif
 
 ;--- handle control keys
 ;--- these are supposed to work in all menus
@@ -1768,8 +1826,16 @@ isfilename:
     call nuprinterror           ; print error without screen update
     jmp driveerror
 @@:
+if ?NOPTION
+	mov ax, [wOptBps]
+	and ax, ax
+	jz @F
+	call setBps
+@@:
+endif
     mov eax, [dwFilesize]       ; file must be 1+ sectors in size
-    cmp eax, 512
+    movzx ecx, [wBps]
+    cmp eax, ecx
     jnc @F
     mov dx, offset filetoosmall ; "File too small"
     call nuprinterror
@@ -1893,8 +1959,8 @@ quickhelptext label byte
     db "Escape        - Back out of a menu (Quit also)",0
     db "Arrow Keys    - Change offset within data",0
     db "Home/End      - Move cursor to start/end of data",0
-    db "PageUp        - Back 1 sector",0
-    db "PageDown      - Forward 1 sector",0
+    db "PageUp        - Back 1 sector or 512 bytes",0
+    db "PageDown      - Forward 1 sector or 512 bytes",0
     db "Ctrl+PageUp   - Back 100 sectors",0
     db "Ctrl+PageDown - Forward 100 sectors",0
     db "Tab           - Switch to/from ascii editing",0
@@ -4412,7 +4478,7 @@ srchain:                           ; save/restore chain to/from file
     cmp [bChainmode], NO_CHAIN
     je @F
     mov di, offset getcurrententry ; for FAT save/restore: routine to get starting cluster 
-srchain2:
+srchain2:                          ; <- entry save/restore root entry
     cmp [srflag], SR_RESTORE
     je restorechain
     jmp savechain
@@ -7055,6 +7121,8 @@ unlock endp
 endif
 
 ;--- set wBps and bSecSh variables
+;--- in: AX=size
+;--- modifies CX
 
 setBps proc
     cmp ax, 1
@@ -8802,6 +8870,7 @@ endif
 if ?MOUNT
     db "     -m[n]: mount disk or partition <n=[1|2|3|4]> as logical drive",13,10
 endif
+    db "     -n<size>: set sector size (must be a power of 2)",13,10
     db '$'
 
     .code

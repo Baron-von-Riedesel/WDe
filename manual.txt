@@ -119,8 +119,8 @@ WDe User Manual
     prompt; a full file/path name can then be entered. As default, WDe will
     interpret this file as a physical disk. Option -m ( or the "restrict"
     function - see below for details ) may be used to make WDe interpret
-    (parts of) the file as logical drive.
-
+    (parts of) the file as logical drive. With option -n one may set a
+    sector size other than 512 ( the default ).
 
 
   2.0 - Basics

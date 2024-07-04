@@ -7,6 +7,7 @@ WDe V1.1 [__.__.____]
   - fixed: if current device was an image file, hitting Ctrl-Enter while
     in sector 0 of a logical drive did switch to a real physical disk.
   - save file chain: last update date & time now copied.
+  - cmdline option -n added.
 
 WDe V1.00 [08.11.2022]
   - rearranged startup code so there's no writing to the screen before

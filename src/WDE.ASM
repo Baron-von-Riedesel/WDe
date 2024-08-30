@@ -107,6 +107,8 @@ COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
 COL_GREENFG      EQU 1Ah         ; light green on blue
 COL_STATTEXT     EQU 17h         ; light grey on blue
 COL_REDFG        EQU 1Ch         ; light red on blue
+COL_YELLOWFG     EQU 1Eh         ; light yellow on blue (directory names in ASCII section)
+COL_WHITEFG      EQU 1Fh         ; light white on blue (file names in ASCII section)
 endif
 
 ; "bRW" variable
@@ -592,7 +594,7 @@ HIGHLIGHT ends
     .const
 
 introtext       db 'WDe V1.1',0
-copyright       db 'Copyright(C) 2005 Ben Cadieux, 2022 japheth',0
+copyright       db 'Copyright(C) 2005 Ben Cadieux, 2024 japheth',0
 viderror        db "No EGA/VGA detected",13,10,'$'
 cpuerror        db "No 80386+ CPU",13,10,'$'
 
@@ -3498,15 +3500,18 @@ nextentry:
     cmp byte ptr [si], 0
     jz done
     push di
+    mov ah, 0
     mov al, COL_STATTEXT        ; light grey
     cmp byte ptr [si], 0E5h
     jz @F
+    mov ah, 1
     cmp byte ptr [si+0Bh], 0Fh  ; LFN?
     jz @F
-    mov al, 1Eh                 ; bright yellow
+    mov ah, 0
+    mov al, COL_YELLOWFG        ; bright yellow
     test byte ptr [si+0Bh], 10h
     jnz @F
-    mov al, 1Fh                 ; white
+    mov al, COL_WHITEFG         ; bright white
 @@:
     mov dl, 11
 nextchar1:
@@ -3522,6 +3527,8 @@ nextchar2:
     dec dl
     jnz nextchar2
     pop di
+
+
     add di, [vidcolsize]
     push di
     mov dl, 16
@@ -3531,6 +3538,33 @@ nextchar3:
     dec dl
     jnz nextchar3
     pop di
+
+if 1
+    cmp ah, 0
+    jz nolfn
+    pusha
+    sub di, [vidcolsize]
+    mov si, offset lfntab
+nextofs:
+    lodsw
+    movzx bx, al
+    movzx cx, ah
+    shl bx, 1
+nextlfnchar:
+    cmp bl, 10h*2
+    jnz @F
+    add di, [vidcolsize]
+    sub di, 16*2
+@@:
+    mov byte ptr es:[di+bx+1], COL_GREENFG
+    add bx, 2*2
+    loop nextlfnchar
+    cmp si, offset lfntab + 3*2
+    jnz nextofs
+    popa
+nolfn:
+endif
+
     add di, [vidcolsize]
     add si, DIRENTSIZE
     loop nextentry
@@ -4804,8 +4838,8 @@ endif
 
     @mstart ldjumpmenu
     @mitem MS_Sector,      jumptosector
-    @mitem MS_Boot_Sector, jumptobootsector
     @mitem MS_Cluster,     jumptocluster
+    @mitem MS_Boot_Sector, jumptobootsector
     @mitem MS_Fat1,        jumptofat1
     @mitem MS_Fat2,        jumptofat2
     @mitem MS_Root,        jumptoroot
@@ -6911,7 +6945,7 @@ prevcluster:
 nextcluster proc
 
     test [bFilesys], FS_FATXX
-    jz done
+    jz notfat
     test [bRegion], RG_DATA
     jz done
     mov bx, ax
@@ -6928,6 +6962,29 @@ nextcluster proc
     jmp setcluster
 done:
     ret
+
+;--- v1.1: if not FAT and sector size > 512, go to next/prev sector
+
+notfat:
+	cmp [wBps], 512
+	jbe done
+	cmp ah, ALTPGUP_KEY
+	jnz incr_sector
+;--- decr_sector won't set pos to sector offset 0,
+;--- so we have
+	mov eax, [currSector]
+	cmp eax, 0
+	jnz @F
+	mov eax, [lastSector]
+	inc eax
+@@:
+	dec eax
+	mov [ioreq.sectno], eax
+	call readsect
+	jc @F
+	jmp checkcursorbounds
+@@:
+	ret
 
 nextcluster endp
 endif
@@ -6947,7 +7004,7 @@ checkcursorbounds:
     mov dx, [wSectOfs]
     mov ax, [wBps]                        ; if (wSectOfs <= bps), then
     cmp ax, dx                            ; we've not paged down completely
-    jbe dorns
+    jbe incr_sector
     sub ax, dx
     dec ax
     cmp [spot], ax
@@ -6955,7 +7012,7 @@ checkcursorbounds:
     call movecursor
 @@:
     ret
-dorns:
+incr_sector:
     mov eax, [currSector]
     inc eax
 donextsect:
@@ -6976,6 +7033,7 @@ donextsect:
 prevsect:
     cmp [wSectOfs], 0
     jnz @F
+decr_sector:
     mov eax, [currSector]
     dec eax
     jmp dolastsect

@@ -20,6 +20,16 @@ sym db text,0
 	exitm <offset sym>
 endm
 
+ifdef FMTPE
+	option dotname
+.hdr$1 segment use16
+%	incbin <?STUB>
+.hdr$1 ends
+.drectve segment info
+	db "-fixed:no"
+.drectve ends
+endif
+
 	.data?
 
 buffer	db BUFFSIZE * 1024 dup (?)

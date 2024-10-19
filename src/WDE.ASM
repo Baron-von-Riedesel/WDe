@@ -59,6 +59,7 @@ endif
 ?MBRENTER        equ 1  ; handle Enter while in MBR
 ?SETFILEDATETIME equ 1  ; 1=set file's date & time when saving a file chain
 ?NOPTION         EQU 1  ; 1=support cmdline option -n
+?POSDIR          EQU 1  ; 1=support directory pos
 
 TRUE  equ 1
 FALSE equ 0
@@ -750,6 +751,9 @@ szDriveinvalid  db 'Drive invalid',0
 invalclustmsg   db 'Cluster %lX invalid',0
 endofchainmsg   db 'End of cluster chain reached',0
 secsizetoobig   db 'Sector size exceeds 4K',0
+if ?POSDIR
+szDirNotFound   db 'Directory not found',0
+endif
 errormsg        db ' - Press Any Key',0
 
 szMBRmsg        db '[MBR]',0
@@ -767,7 +771,8 @@ szHex           db 'Hex: ',0
 szSector        db 'Sector: ',0
 szCluster       db 'Cluster: ',0
 szDrive         db 'Drive: ',0
-szFile          db 'File: ',0
+szFilePrmt      db 'File: ',0
+szPathPrmt      db 'Path: ',0
 szString        db 'String: ',0
 szNoOfSectors   db 'Number of Sectors (1-%lu): ',0
 
@@ -889,7 +894,7 @@ bStaticview     db ? ; 1=force viewmode, 0=autodetect viewmode
 
 fillflag        db ?,?          ; see FL_ equates
 srflag          db ?            ; "file ops" save/restore menu flag
-driveflag       db ?            ; directs setdrive to ask for Filename(1) or Drive(0)
+bDriveflags     db ?            ; directs setdrive to ask for Filename(1) or Drive(0)
 commandflag     db ?            ; used by unformat
 bChainmode      db ?            ; type of chain to save/restore (FAT/FILE)
 
@@ -1217,6 +1222,15 @@ mlog:
 nomount:
 endif
 
+if ?POSDIR
+    test [bDriveflags], DF_DIR     ; a directory path given as cmdline argument?
+    jz @F
+    test [bFilesys], FS_FAT12 or FS_FAT16 or FS_FAT32
+    jz @F
+    call PosDir
+@@:    
+endif
+
     mov dx, initialmenu + linitialmenu shl 8
     mov cl, 3
     call initmenustack
@@ -1225,6 +1239,228 @@ endif
     ret
 
 init_wde endp
+
+if ?POSDIR
+
+;--- search for directory DI in current sector
+
+scanfordir proc
+    @dprintfln "scanfordir: sector=%lu", [ioreq.sectno]
+    mov si, offset sectbuffer
+    mov cl, 512 / DIRENTSIZE
+nextentry:
+    cmp [si].SFNENTRY.name_, 0
+    jz skipdir
+    cmp [si].SFNENTRY.name_, 0E5h
+    jz skipentry
+    test [si].SFNENTRY.bAttr, DA_DIRECTORY
+    jz skipentry
+if 0
+    cmp dword ptr [si].SFNENTRY.name_, "   ."
+    jz skipentry
+    cmp dword ptr [si].SFNENTRY.name_, "  .."
+    jz skipentry
+endif
+    pusha
+    mov cx, sizeof SFNENTRY.name_
+    repz cmpsb
+    popa
+    jz found
+skipentry:
+    add si, sizeof SFNENTRY
+    dec cl
+    jnz nextentry
+    xor ax, ax
+    ret
+skipdir:
+    or ax, -1
+    clc
+    ret
+found:
+    @dprintfln "scanfordir: found directory at %lX", [ioreq.sectno]
+    push [si].SFNENTRY.wClHigh
+    push [si].SFNENTRY.wClLow
+    pop eax
+    push bx
+    call setcluster
+    pop bx
+    stc
+    ret
+scanfordir endp
+
+;--- if a directory path was given as cmdline argument and filesys is FAT,
+;--- jump to directory in filenamebuffer
+
+PosDir proc
+    call jumptoroot
+    mov bx, offset filenamebuffer
+    sub sp, 256              ; alloca(256) for temp path
+    push ds
+    pop es
+    mov di, sp               ; copy path given in cmdline to temp buffer on stack
+
+    cmp byte ptr [bx+1],':'
+    jnz @F
+    add bx, 2
+@@:
+    cmp byte ptr [bx],'\'    ; absolute path given?
+    jz abs_path
+    mov si, bx
+@@:
+    lodsb
+    stosb
+    and al,al
+    jnz @B
+
+    mov si, offset filenamebuffer  ; get current directory in filenamebuffer
+
+;--- LFN function 7160h will need a drive letter!
+
+    mov al, [ioreq.bDrive]
+    mov dl, al
+    add al, 'A'
+    mov ah, ':'
+    mov [si], ax
+    add si, 2
+    mov byte ptr [si],'\'
+    inc si
+    inc dl
+    call getcurrdir
+    jc nocurrdir
+    mov di, si
+    mov al,0
+    cmp [si],al                    ; current directory is root?
+    jz @F
+    mov cx,-1
+    repnz scasb
+    mov byte ptr [di-1],'\'        ; concat rel. path saved onto stack to current dir
+@@:
+    mov si, sp
+@@:
+    lodsb
+    stosb
+    and al,al
+    jnz @B
+nocurrdir:
+abs_path:
+    mov di, sp          ; translate LFN path to SFN path
+;    mov si, bx
+    mov si, offset filenamebuffer
+@@:
+    lodsb
+    stosb
+    and al,al
+    jnz @B
+    mov si, sp
+;    mov di, bx
+    mov di, offset filenamebuffer
+    mov bx, di
+    call getshortname   ; int 21h, ax=7160h will add drive letter & colon
+    cmp byte ptr [bx+1],':'
+    jnz @F
+    add bx,2
+@@:
+    add sp, 256
+
+dirfound:               ;<----
+    cmp byte ptr [bx],'\'
+    jnz @F
+    inc bx
+@@:
+    cmp byte ptr [bx],0
+    jz found
+    cmp word ptr [bx],"."
+    jz found
+    cmp word ptr [bx],"\."
+    jz found
+;--- copy dir to 8.3 struct
+_BSS segment dword public 'BSS'
+dirsearch db sizeof SFNENTRY.name_ dup (?)
+_BSS ends
+    push ds
+    pop es
+    mov di, offset dirsearch
+    push di
+    mov cx, sizeof SFNENTRY.name_
+    mov al,' '
+    push cx
+    rep stosb
+    pop cx
+    pop di
+    push di
+nextchar:
+    mov al, [bx]
+    cmp al, 0
+    jz copydone
+    cmp al, '\'
+    jz copydone
+ife ?LFN
+    cmp al, 'a'
+    jb @F
+    sub al, 'a'-'A'
+@@:
+endif
+    stosb
+    inc bx
+    loop nextchar
+copydone:
+    pop di
+
+scannextdircluster:
+    call IsRoot1216
+    jc scannextsector
+    mov cx, [wSpC]
+scannextsector:
+;--- read directory sector
+    call readsect
+    jc notfound
+    push cx
+    call scanfordir
+    pop cx
+    jc dirfound
+    cmp ax,-1
+    jz notfound
+    inc [ioreq.sectno]
+    loop scannextsector
+
+;--- to be fixed: don't call sector2cluster if in root dir of FAT12/16
+if 1
+    call IsRoot1216
+    jc notfound
+endif
+    
+    mov eax, [ioreq.sectno]
+    movzx ecx, [wSpC]
+    sub eax, ecx
+    call sector2cluster      ; may fail ( carry set ) - root dir of FAT12/16
+    call getfatentry         ; get next cluster# in eax
+    @dprintfln "PosDir: called getfatentry, eax=%lX", eax
+    jc @F
+    cmp eax, 2
+    jb @F
+    cmp eax, 0ffffff8h
+    jnb @F
+    call cluster2sector
+    mov [ioreq.sectno], eax
+    jmp scannextdircluster
+@@:
+notfound:
+    mov dx, offset szDirNotFound
+    call nuprinterror
+found:
+    ret
+
+IsRoot1216:
+    test [bFilesys], FS_FAT12 or FS_FAT16
+    jz @F
+    mov eax, [ioreq.sectno]
+    call sector2cluster         ; returns C if in root dir
+    mov cx, [wRootsectors]
+@@:
+    retn
+PosDir endp
+
+endif
 
 ;--- main program
 
@@ -1715,9 +1951,9 @@ freemem proc
 freemem endp
 
 ;--- try a new device
-;--- "usually" called after setdrive()
+;--- called after setdrive() if no disk/path was given in cmdline
 ;--- AL = drive number
-;--- BH = PHYS/FAT/CDROM/FILE
+;--- BH = DT_PHYSICAL/DT_LOGICAL(=FAT)/DT_CDROM/DT_FILE
 
 trydevice proc
     mov dx, offset readingdrive
@@ -1822,6 +2058,14 @@ iscdrom:
     jmp tryread
 
 isfilename:
+if ?POSDIR
+    call getfileattr
+    test cl, DA_DIRECTORY       ; directory?
+    jz @F
+    call checkpath
+    jmp trylogical
+@@:
+endif
     call findfileX
     jnc @F
     mov dx, offset filenotfound
@@ -1851,15 +2095,39 @@ endif
     mov [ioreq.rwfunc], RWF_FILE
     mov [dapacket.sectors], 1   ; used by file access!
     jmp tryread
-
 trydevice endp
+
+;--- v1.1: if a directory has been entered
+
+DF_FN  equ 1
+
+if ?POSDIR
+
+DF_DIR equ 2
+
+checkpath proc
+    mov ah,19h
+    int 21h
+    cmp filenamebuffer+1,':'
+    jnz @F
+    mov al, [filenamebuffer]
+    or al,20h
+    sub al,'a'
+@@:
+    mov [ioreq.bDrive], al
+    mov [ioreq.drvtype], DT_LOGICAL
+    or [bDriveflags], DF_DIR
+    ret
+checkpath endp
+
+endif
 
 ;--- enter a disk/drive/image filename
 ;--- exit: C if ESC pressed or a blank filename was entered
 ;---       NC, then drive in AL, drvtype in BH
 
 setdrive proc
-    cmp [driveflag], 0          ; drive or filename to enter?
+    test [bDriveflags], DF_FN   ; drive or filename to enter?
     jne fnreq
     mov dx, offset szDrive      ; prompt
     call printbottom            ; print on the bottom of the screen
@@ -1919,12 +2187,16 @@ abort:
     stc
     ret
 handle_tabkey:
-    xor [driveflag], 1
+    xor [bDriveflags], DF_FN
     jmp setdrive
 fnreq:
     mov [bTabSw], 0
     mov ax, tabsw
+if ?POSDIR
+    call getpath
+else
     call getfilename
+endif
     cmp [bTabSw], 1             ; exit with TAB?
     je handle_tabkey
     jcxz abort                  ; no chars entered, or ESC pressed
@@ -1938,7 +2210,7 @@ tabsw:
     ret
 setdrive endp
 
-;--- menuitem "disk"
+;--- menuitem "Change Disk"
 
 select_disk proc
 @@:
@@ -8913,20 +9185,20 @@ clearscreen endp
 
 helptext label byte
     db 13,10
-    db "usage: wde [ option ] [ disk | filename ]",13,10
-    db "   where <disk> may be:",13,10
-    db "     logical drive: a letter followed by a colon ( C:|D:|... )",13,10
-    db "     hard disk:     a digit ( 0|1|... )",13,10
-    db "     floppy disk:   a digit followed by a 'f' ( 0f|1f|... )",13,10
-    db "   while <filename> may be the name of an image file.",13,10
-    db "   if no disk or filename is given, the user will be prompted for one.",13,10
-    db "   <option> may be:",13,10
+    db "usage: wde [ options ] [{disk | path}]",13,10
+    db "   disk:",13,10
+    db "     logical drive - a letter followed by a colon ( C:|D:|... )",13,10
+    db "     hard disk     - a digit ( 0|1|... )",13,10
+    db "     floppy disk   - a digit followed by a 'f' ( 0f|1f|... )",13,10
+    db "   path:",13,10
+    db "     name of an image file or a directory",13,10
+    db "   options:",13,10
     db "     -?: display this help text and exit",13,10
 if ?SAFEMODE
     db "     -s: safe mode; no write access to disk/image",13,10
 endif
 if ?MOUNT
-    db "     -m[n]: mount disk or partition <n=[1|2|3|4]> as logical drive",13,10
+    db "     -m[n]: mount disk or partition (n={1|2|3|4}) as logical drive",13,10
 endif
     db "     -n<size>: set sector size (must be a power of 2)",13,10
     db '$'
@@ -9473,20 +9745,29 @@ done:
 validfirstfilechar endp
 endif
 
-;--- get a filename entered in menu row
+;--- getpath: get a path ( filename/directory )
+;--- getfilename: get a filename
+;---   entered in menu row.
 ;--- IN:  AX: tabproc
-;--- OUT: CX=length of filename
+;--- OUT: CX=length of path
 ;---      AH=last key scan code (check for TAB)
 ;---      [filenamebuffer]
 ;---      ax/di/dx/cx modified
 
+if ?POSDIR
+getpath:
+    mov dx, offset szPathPrmt
+    jmp get_fn_or_path
+endif
+
 getfilename proc
-    mov dx, offset szFile
+    mov dx, offset szFilePrmt
+get_fn_or_path::
     call printbottom
     mov di, offset filenamebuffer
 if ?LFN
     call darkclr
-    invoke getstring, di, sizeof filenamebuffer, 0, 80 - sizeof szFile, ax
+    invoke getstring, di, sizeof filenamebuffer, 0, 80 - sizeof szFilePrmt, ax
     mov cx, ax
 else
     xor cx, cx
@@ -10036,6 +10317,82 @@ clearbottom:
     pop cx
     ret
 
+if ?POSDIR
+;--- get file attribute in CX
+;--- IN: filenamebuffer = filename
+
+getfileattr proc
+    xor cx, cx
+    mov dx, offset filenamebuffer
+if ?LFN
+    mov bl, 0        ; action: 00=get file attributes
+    mov ax, 7143h
+    stc
+    int 21h
+    jc error
+    cmp ax, 7100h
+    jz error
+    clc
+    ret
+error:
+endif
+    mov ax, 4300h
+    int 21h
+    ret
+getfileattr endp
+
+;--- get current directory
+;--- IN: SI -> buffer
+;---     DL = drive (00=current)
+
+getcurrdir proc
+if ?LFN
+    mov ax, 7147h
+    stc
+    int 21h
+    jc error
+    cmp ax, 7100h
+    jz error
+    clc
+    ret
+error:
+endif
+    mov ah, 47h
+    int 21h
+    ret
+getcurrdir endp
+
+;--- IN: SI=path LFN
+;---     DI=short name
+
+getshortname proc
+if ?LFN
+    mov cx,1
+    mov ax,7160h
+    stc
+    int 21h
+    jc error
+    cmp ax, 7100h
+    jz error
+    ret
+error:
+endif
+nextchar:
+    lodsb
+    cmp al,'a'
+    jb @F
+    cmp al,'z'
+    ja @F
+    sub al, 'a' - 'A'
+@@:
+    stosb
+    and al,al
+    jnz nextchar
+    ret
+getshortname endp
+
+endif
+
 ;--- find file
 ;--- IN: filenamebuffer = filename
 ;--- OUT: carry flag set if no file found
@@ -10185,7 +10542,7 @@ writefile endp
 ;---      NC ok, file handle in AX
 
 openfilero:
-    mov bl, 0
+    mov bl, 0    ; BL, bit 0-2: access mode, 4-7: sharing modes
 openfile proc
     mov dx, 1    ; DL, bit 0: 1=open if file exists
 
@@ -10219,7 +10576,7 @@ endif
     ret
 openfile endp
 
-;---
+;--- createfile: called by savechain(), savedata(), dumpiso()
 ;--- out: C if error
 
 createfile proc

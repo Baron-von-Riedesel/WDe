@@ -115,12 +115,18 @@ WDe User Manual
     a physical disk was selected and the system has floppies installed, the
     user will additionally be asked to select between hard disks and floppies.
 
-     The TAB key may be pressed to change the "Drive:" prompt to a "File:"
-    prompt; a full file/path name can then be entered. As default, WDe will
-    interpret this file as a physical disk. Option -m ( or the "restrict"
-    function - see below for details ) may be used to make WDe interpret
-    (parts of) the file as logical drive. With option -n one may set a
-    sector size other than 512 ( the default ).
+     The TAB key may be pressed to change the prompt from "Drive:" to "Path:".
+    Now either the name of a file or a directory can be entered:
+     - if a file name has been entered, this file is interpreted as a physical
+    disk as default. Option -m ( or the "restrict" function - see below for
+    details ) may be used to make WDe interpret (parts of) the file as logical
+    drive. 
+     - if a directory name has been entered - and the associated drive is of
+    type FAT - WDe will show the (first) sector of that directory.
+
+     With option -n one may set a sector size other than 512 ( the default );
+    may be useful to explore CD image files ( which usually have file extension
+    .ISO ).
 
 
   2.0 - Basics

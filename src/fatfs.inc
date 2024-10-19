@@ -44,8 +44,10 @@ cluster2sector endp
 ; sector2cluster converts a sector number to its matching cluster number.
 ;
 ;               IN:   eax       sector number
-;               OUT:  eax       corresponding cluster number
+;               OUT:
+;                 NC: eax       corresponding cluster number
 ;                     ecx       corrupted
+;                  C: error
 ;
 ;-------------------------------------------------------
 sector2cluster proc

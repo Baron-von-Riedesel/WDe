@@ -1,6 +1,6 @@
 WDe Copyright(C)2005 Ben Cadieux (ben.cadieux@gmail.com), Japheth.
 
-WDe V1.1 [19.10.2024]
+WDe V1.1 [20.10.2024]
   - fixed: mounting logical drives from image files didn't adjust the
     "last sector", thus cluster numbers beyond logical disk size weren't
     rejected.

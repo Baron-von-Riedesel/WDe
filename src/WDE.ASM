@@ -752,7 +752,7 @@ invalclustmsg   db 'Cluster %lX invalid',0
 endofchainmsg   db 'End of cluster chain reached',0
 secsizetoobig   db 'Sector size exceeds 4K',0
 if ?POSDIR
-szDirNotFound   db 'Directory not found',0
+szDirNotFound   db "Directory '%s' not found",0
 endif
 errormsg        db ' - Press Any Key',0
 
@@ -1187,7 +1187,7 @@ enter_disk:
 if ?MOUNT
     mov [bMount], 0             ; reset any mount option
 endif
-    call setdrive
+    call setdrive               ; enter drive/path
     jnc disk_entered
     call quit
     jmp enter_disk
@@ -1373,10 +1373,13 @@ dirfound:               ;<----
     jz found
     cmp word ptr [bx],"\."
     jz found
+
 ;--- copy dir to 8.3 struct
 _BSS segment dword public 'BSS'
 dirsearch db sizeof SFNENTRY.name_ dup (?)
+dirsearchend db ?
 _BSS ends
+
     push ds
     pop es
     mov di, offset dirsearch
@@ -1388,6 +1391,7 @@ _BSS ends
     pop cx
     pop di
     push di
+    mov ah,0
 nextchar:
     mov al, [bx]
     cmp al, 0
@@ -1400,7 +1404,15 @@ ife ?LFN
     sub al, 'a'-'A'
 @@:
 endif
+	cmp ax,'.'
+    jnz @F
+    mov di, offset dirsearch + 8
+    mov cl, 3
+    mov ah, 1
+    jmp skipchar
+@@:
     stosb
+skipchar:
     inc bx
     loop nextchar
 copydone:
@@ -1445,7 +1457,9 @@ endif
     jmp scannextdircluster
 @@:
 notfound:
-    mov dx, offset szDirNotFound
+    mov dx, offset sprintfbuffer
+    mov dirsearchend, 0
+    invoke sprintf, dx, offset szDirNotFound, offset dirsearch
     call nuprinterror
 found:
     ret
@@ -2059,6 +2073,7 @@ iscdrom:
 
 isfilename:
 if ?POSDIR
+    and [bDriveflags], not DF_DIR
     call getfileattr
     test cl, DA_DIRECTORY       ; directory?
     jz @F
@@ -2097,13 +2112,14 @@ endif
     jmp tryread
 trydevice endp
 
-;--- v1.1: if a directory has been entered
-
 DF_FN  equ 1
 
 if ?POSDIR
 
 DF_DIR equ 2
+
+;--- v1.1: checkpath: called by trydevice if a directory has been entered
+;--- [ioreq.drvtype] will be changed from DT_FILE to DT_LOGICAL
 
 checkpath proc
     mov ah,19h
@@ -2122,7 +2138,7 @@ checkpath endp
 
 endif
 
-;--- enter a disk/drive/image filename
+;--- enter a disk/drive/path (image filename or directory)
 ;--- exit: C if ESC pressed or a blank filename was entered
 ;---       NC, then drive in AL, drvtype in BH
 
@@ -2214,12 +2230,20 @@ setdrive endp
 
 select_disk proc
 @@:
-    call setdrive
+    call setdrive               ; enter drive/path
     jc done
     call trydevice
     jc @B
     call clearsecstack          ; changing drive invalidates sector stack
     call setvariables
+if ?POSDIR
+    test [bDriveflags], DF_DIR     ; a directory path given as cmdline argument?
+    jz @F
+    test [bFilesys], FS_FAT12 or FS_FAT16 or FS_FAT32
+    jz @F
+    call PosDir
+@@:    
+endif
 done:
     ret
 select_disk endp
@@ -10298,6 +10322,8 @@ getnos:                               ; 'get number of sectors' from the
     ret
 
 ;-------------------------------------------------------
+;--- print string DX at bottom line
+
 printbottom:
     mov [scrn_xy], (BOTTOMROW shl 8) + 1
 ;    mov [lastbottomtext], dx

@@ -42,7 +42,13 @@ buffer	db BUFFSIZE * 1024 dup (?)
 ;--- dwItem: # of directory entries
 
 compress proc uses esi edi pBuffer:ptr, dwItems:dword
+
+local dwEOD:dword   ; "end of directory" ( first dir entry starting with a 00 ) found?
+local dwInAcc:dword 
+
 	cld
+	mov dwEOD, -1
+	mov dwInAcc, 0
 	mov esi, pBuffer
 	mov edi, pBuffer
 	mov ecx, dwItems
@@ -51,11 +57,29 @@ nextentry:
 	mov al, [esi]
 	cmp al, 0E5h
 	jz skipentry
+	cmp al, 00
+	jnz realentry
+	cmp dwEOD, -1
+	jnz @F
+	mov eax, esi    ; remember the first 00 entry
+	sub eax, pBuffer
+	mov dwEOD, eax
+	jmp @F
+realentry:
+	cmp dwEOD, -1
+	jz @F
+	inc dwInAcc     ; count real entries behind first 00 entry
+@@:
 	push ecx
 	mov ecx, 32/4
 	rep movsd
 	pop ecx
 	loop nextentry
+	cmp dwInAcc, 0     ; inaccessible entries in file?
+	jz done           ; jump if no
+	pushad
+	invoke printf, CStr("%u inaccessible entries found after 00 entry at pos 0x%X)",lf), dwInAcc, dwEOD
+	popad
 	jmp done
 skipentry:
 	inc edx
@@ -187,7 +211,7 @@ buffertoosmall:
 	invoke printf, CStr(<"file size (%u kB) exceeds buffer size (%u kB)",lf>), eax, BUFFSIZE
 	jmp exiterr
 invalidfile:
-	invoke printf, CStr(<"file size not a multiple of 32",lf>)
+	invoke printf, CStr(<"file size not a multiple of 32 (size of a directory entry)",lf>)
 	jmp exiterr
 seekerr:
 	invoke printf, CStr(<"seek error [%X]",lf>), eax

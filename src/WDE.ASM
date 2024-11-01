@@ -63,6 +63,7 @@ endif
 
 TRUE  equ 1
 FALSE equ 0
+MAXPATH equ 260
 
 BOTTOMROW        equ 42 ; last row (menu, messages)
 MAXCOL           equ 79 ; last col
@@ -108,6 +109,7 @@ COL_HIGHLIGHT    EQU 30h         ; black on dark cyan
 COL_GREENFG      EQU 1Ah         ; light green on blue
 COL_STATTEXT     EQU 17h         ; light grey on blue
 COL_REDFG        EQU 1Ch         ; light red on blue
+COL_MAGENTAFG    EQU 1Dh         ; light magenta on blue
 COL_YELLOWFG     EQU 1Eh         ; light yellow on blue (directory names in ASCII section)
 COL_WHITEFG      EQU 1Fh         ; light white on blue (file names in ASCII section)
 endif
@@ -940,7 +942,7 @@ rembytes        dw ?            ; remaining bytes when dealing with
 menustack       MENULVL 4 dup (<?>)  ; menu stack
 secstk          SECSTKITEM NUMSECSTKITEMS dup (<>)  ; sector stack
 if ?LFN
-filenamebuffer  db 256 dup (?)
+filenamebuffer  db MAXPATH dup (?)
 else
 filenamebuffer  db 72 dup (?)   ; size must be at least 69, 72 used for alignment
 endif
@@ -954,6 +956,10 @@ drivepacket     DISKIO <?>      ; used by int 25h/26h and int 21h/ax=7305h
 dapacket        DAP <?>         ; used by int 13h ah=42h/43h (extended read/write)
 valuebuffer     db 11 dup (?)
                 db ?            ; ensure there is at least 1 byte between valuebuffer and sectbuffer
+if ?POSDIR
+dirsearch       db sizeof SFNENTRY.name_ dup (?)
+                db ?            ; NUL byte needed if dirsearch is used for sprintf()
+endif
 
 BUFFSHIFT equ 12                ; sectbuffer must be a factor of 2
 
@@ -1294,7 +1300,7 @@ scanfordir endp
 PosDir proc
     call jumptoroot
     mov bx, offset filenamebuffer
-    sub sp, 256              ; alloca(256) for temp path
+    sub sp, MAXPATH          ; alloca(MAXPATH) for temp path
     push ds
     pop es
     mov di, sp               ; copy path given in cmdline to temp buffer on stack
@@ -1360,7 +1366,7 @@ abs_path:
     jnz @F
     add bx,2
 @@:
-    add sp, 256
+    add sp, MAXPATH
 
 dirfound:               ;<----
     cmp byte ptr [bx],'\'
@@ -1375,10 +1381,6 @@ dirfound:               ;<----
     jz found
 
 ;--- copy dir to 8.3 struct
-_BSS segment dword public 'BSS'
-dirsearch db sizeof SFNENTRY.name_ dup (?)
-dirsearchend db ?
-_BSS ends
 
     push ds
     pop es
@@ -1404,7 +1406,7 @@ ife ?LFN
     sub al, 'a'-'A'
 @@:
 endif
-	cmp ax,'.'
+    cmp ax,'.'
     jnz @F
     mov di, offset dirsearch + 8
     mov cl, 3+1   ; sizeof extension + dot
@@ -1457,8 +1459,7 @@ endif
     jmp scannextdircluster
 @@:
 notfound:
-    mov dx, offset sprintfbuffer
-    mov dirsearchend, 0
+    mov dx, offset sprintfbuffer  ; directory not found - shouldn't happen
     invoke sprintf, dx, offset szDirNotFound, offset dirsearch
     call nuprinterror
 found:
@@ -3793,53 +3794,45 @@ dirview_ascii proc
     call cbuffer_offset
     mov cx, 512 / DIRENTSIZE
 nextentry:
-    cmp byte ptr [si], 0
+    cmp [si].SFNENTRY.name_, 0
     jz done
-    push di
-    mov ah, 0
-    mov al, COL_STATTEXT        ; light grey
-    cmp byte ptr [si], 0E5h
-    jz @F
-    mov ah, 1
-    cmp byte ptr [si+0Bh], 0Fh  ; LFN?
-    jz @F
-    mov ah, 0
-    mov al, COL_YELLOWFG        ; bright yellow
-    test byte ptr [si+0Bh], 10h
-    jnz @F
-    mov al, COL_WHITEFG         ; bright white
-@@:
-    mov dl, 11
-nextchar1:
-    inc di
-    stosb
-    dec dl
-    jnz nextchar1
-    mov dl, 16-11
-    mov al, COL_STATTEXT
-nextchar2:
-    inc di
-    stosb
-    dec dl
-    jnz nextchar2
-    pop di
-
-
-    add di, [vidcolsize]
-    push di
-    mov dl, 16
-nextchar3:
-    inc di
-    stosb
-    dec dl
-    jnz nextchar3
-    pop di
-
-if 1
-    cmp ah, 0
-    jz nolfn
+    mov al, COL_STATTEXT        ; gray
     pusha
-    sub di, [vidcolsize]
+    mov cl, 16
+@@:
+    inc di
+    stosb
+    loop @B
+    popa
+    pusha
+    add di, [vidcolsize]
+    mov cl, 16
+@@:
+    inc di
+    stosb
+    loop @B
+    popa
+    cmp [si].SFNENTRY.name_, 0E5h
+    jz skipitem
+    pusha
+    mov ah, [si].SFNENTRY.bAttr
+    cmp ah, 0Fh                 ; LFN?
+    jz islfn
+    mov al, COL_MAGENTAFG       ; light magenta
+    test ah, DA_VOLUME
+    jnz @F
+    mov al, COL_YELLOWFG        ; light yellow
+    test ah, DA_DIRECTORY
+    jnz @F
+    mov al, COL_WHITEFG         ; white
+@@:
+    mov cl, sizeof SFNENTRY.name_
+@@:
+    inc di
+    stosb
+    loop @B
+    jmp attr_done
+islfn:
     mov si, offset lfntab
 nextofs:
     lodsw
@@ -3852,16 +3845,19 @@ nextlfnchar:
     add di, [vidcolsize]
     sub di, 16*2
 @@:
-    mov byte ptr es:[di+bx+1], COL_GREENFG
+    mov byte ptr es:[di+bx+1], COL_GREENFG    ; display LFNs in light green
     add bx, 2*2
     loop nextlfnchar
     cmp si, offset lfntab + 3*2
     jnz nextofs
+attr_done:
     popa
-nolfn:
-endif
 
-    add di, [vidcolsize]
+skipitem:
+
+    mov ax, [vidcolsize]
+    add di, ax
+    add di, ax
     add si, DIRENTSIZE
     loop nextentry
 done:
